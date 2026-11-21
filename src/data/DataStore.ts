@@ -22,6 +22,8 @@
  * - Every successful write notifies subscribers (see subscribe()).
  */
 
+import type { Backup, BackupSummary } from './backup';
+
 export type Id = string;
 /** ISO 8601 timestamp in UTC. */
 export type Timestamp = string;
@@ -173,6 +175,18 @@ export interface ListLoansOptions {
   reader_id?: Id;
 }
 
+/** What deleteReader() would remove, for the confirm. */
+export interface DeleteReaderPreview {
+  /** Read events ("I read this!" taps). */
+  readEvents: number;
+  /** Different books read. */
+  booksRead: number;
+  journeys: number;
+  returnedLoans: number;
+  /** Loans not yet returned. deleteReader() refuses while this is above 0. */
+  activeLoans: number;
+}
+
 /** Loan length when a library sets none, or a loan has no library. */
 export const DEFAULT_LOAN_DAYS = 30;
 
@@ -213,8 +227,10 @@ export type DataChangeListener = (change: DataChange) => void;
 
 export type DataStoreErrorCode =
   | 'not_found'
-  /** A uniqueness rule would be broken, e.g. a second active journey. */
+  /** A uniqueness rule would be broken, e.g. a duplicate card token. */
   | 'conflict'
+  /** Not allowed while other data depends on it, e.g. deleting a reader with active loans. */
+  | 'blocked'
   | 'invalid'
   | 'unavailable';
 
@@ -250,6 +266,7 @@ export interface DataStore {
   /** This device's household (id HOUSEHOLD_ID), created on first use. */
   getCurrentHousehold(): Promise<Household>;
   getHousehold(id: Id): Promise<Household | null>;
+  /** A name is trimmed and must not be empty ("invalid"). */
   updateHousehold(id: Id, patch: HouseholdPatch): Promise<Household>;
 
   // Readers -----------------------------------------------------------------
@@ -260,8 +277,14 @@ export interface DataStore {
   updateReader(id: Id, patch: ReaderPatch): Promise<Reader>;
   /** Issues a new card token. The old card stops working immediately. */
   rotateCardToken(readerId: Id): Promise<Reader>;
-  /** Deletes the reader, then each of their read events, loans and journeys (one delete per row). */
+  /**
+   * Deletes the reader with their read events, read summaries, journeys and
+   * returned loans (one delete per row, one transaction). Rejects with
+   * "blocked" while the reader has loans not yet returned.
+   */
   deleteReader(id: Id): Promise<void>;
+  /** Counts what deleteReader() would remove, without deleting. "not_found" for an unknown reader. */
+  previewDeleteReader(id: Id): Promise<DeleteReaderPreview>;
 
   // Books (shared metadata cache, not owned by a household) -----------------
   getBook(isbn: Isbn): Promise<Book | null>;
@@ -282,6 +305,7 @@ export interface DataStore {
   getHomeItem(householdId: Id, isbn: Isbn): Promise<HomeItem | null>;
   /** Newest first. */
   listHomeItems(householdId: Id): Promise<HomeItem[]>;
+  /** Removes the book from Home only (the id is its book key). The book and every read of it are kept. */
   removeHomeItem(id: Id): Promise<void>;
 
   // Libraries (the places loans come from) ----------------------------------
@@ -339,6 +363,12 @@ export interface DataStore {
    * and returns it, or null if there is none.
    */
   undoLatestRead(readerId: Id, isbn: BookKey): Promise<ReadEvent | null>;
+  /**
+   * Deletes every read event of this reader for the book, and its summary, in
+   * one transaction. Returns how many events were removed. Journeys already
+   * completed stay completed.
+   */
+  clearReads(readerId: Id, isbn: BookKey): Promise<number>;
   /** Puts a removed event back with the same id (for Undo). */
   restoreReadEvent(event: ReadEvent): Promise<ReadEvent>;
   getReadSummary(readerId: Id, isbn: BookKey): Promise<ReadSummary | null>;
@@ -380,4 +410,19 @@ export interface DataStore {
   completeJourney(id: Id, completedAt?: Timestamp): Promise<ReaderJourney>;
   /** Removes a journey (e.g. a reader switches before finishing) and clears the pointer to it. */
   deleteReaderJourney(id: Id): Promise<void>;
+
+  // Backup and reset --------------------------------------------------------
+  /**
+   * Everything on this device as a backup (see src/data/backup.ts): every
+   * table except read_summaries, and each cover photo a book uses.
+   */
+  exportBackup(): Promise<Backup>;
+  /**
+   * Checks `data` with validateBackup() ("invalid" if it fails, or a photo
+   * doesn't match its hash), then replaces ALL local data with it in one
+   * transaction and rebuilds read_summaries. Returns the restored counts.
+   */
+  importBackup(data: unknown): Promise<BackupSummary>;
+  /** Deletes all local data, including the household. getCurrentHousehold() then starts afresh. */
+  resetDevice(): Promise<void>;
 }

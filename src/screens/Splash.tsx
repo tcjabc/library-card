@@ -41,7 +41,7 @@ export function Splash() {
         className="splash__scanner"
       />
       <footer className="splash__footer">
-        <a className="link-quiet" href={href('/dev')}>
+        <a className="link-quiet" href={href('/grownups')}>
           {t.grownUps}
         </a>
       </footer>

@@ -7,6 +7,7 @@ import {
   type DataChange,
   type ReadEvent,
 } from '../DataStore';
+import { BACKUP_FORMAT, summariseBackup } from '../backup';
 import { hashPin, verifyPin } from '../pin';
 import { equal, ok, rejectsWithCode } from './assert';
 import {
@@ -125,6 +126,13 @@ export const storageChecks: StorageCheck[] = [
     equal((await store.getHousehold(HOUSEHOLD_ID))?.name, 'Renamed', 'stored');
     await rejectsWithCode(store.updateHousehold('nope', { name: 'x' }), 'not_found', 'update unknown -> not_found');
   }),
+  check('household', 'updateHousehold trims the name and refuses an empty one', async (ctx) => {
+    const { store } = await ctx.open();
+    await store.getCurrentHousehold();
+    equal((await store.updateHousehold(HOUSEHOLD_ID, { name: '  The Readers  ' })).name, 'The Readers', 'trimmed');
+    await rejectsWithCode(store.updateHousehold(HOUSEHOLD_ID, { name: '   ' }), 'invalid', 'blank name');
+    equal((await store.getHousehold(HOUSEHOLD_ID))?.name, 'The Readers', 'unchanged after the refusal');
+  }),
 
   // Readers -------------------------------------------------------------------
   check('readers', 'createReader: defaults, household required, unique card token', async (ctx) => {
@@ -159,20 +167,46 @@ export const storageChecks: StorageCheck[] = [
     equal((await store.getReaderByCardToken(rotated.card_token))?.id, a.id, 'new token works');
     await rejectsWithCode(store.rotateCardToken('nope'), 'not_found', 'rotate unknown');
   }),
-  check('readers', 'deleteReader removes the reader and each of their events, summaries, loans and journeys', async (ctx) => {
+  check('readers', 'deleteReader removes the reader with their events, summaries, journeys and returned loans', async (ctx) => {
     const { store, h, a, b } = await withReaders(ctx);
     await store.markRead(b.id, ISBN_A, '2026-01-01T00:00:00Z');
+    await store.markRead(b.id, ISBN_A, '2026-01-01T09:00:00Z');
     await store.markRead(b.id, ISBN_B, '2026-01-02T00:00:00Z');
     await store.markRead(a.id, ISBN_A, '2026-01-03T00:00:00Z');
-    const loan = await store.createLoan({ household_id: h.id, reader_id: b.id, isbn: ISBN_C });
+    const returned = await store.createLoan({ household_id: h.id, reader_id: b.id, isbn: ISBN_C });
+    await store.returnLoan(returned.id);
+    const others = await store.createLoan({ household_id: h.id, reader_id: a.id, isbn: ISBN_D });
     const journey = await store.startJourney(b.id, 'ocean_deep');
+    equal(
+      await store.previewDeleteReader(b.id),
+      { readEvents: 3, booksRead: 2, journeys: 1, returnedLoans: 1, activeLoans: 0 },
+      'dry run counts',
+    );
+    equal((await store.listReadEvents(b.id)).length, 3, 'the dry run deleted nothing');
     await store.deleteReader(b.id);
     equal(await store.getReader(b.id), null, 'reader gone');
     equal((await store.listReadEvents(b.id)).length, 0, 'events gone');
     equal((await store.listReadSummaries(b.id)).length, 0, 'summaries gone');
-    equal(await store.getLoan(loan.id), null, 'loan gone');
+    equal(await store.getLoan(returned.id), null, 'returned loan gone');
     equal((await store.listJourneyHistory(b.id)).map((j) => j.id).includes(journey.id), false, 'journey gone');
     equal(await store.countHouseholdReads(h.id), 1, "the other reader's read stays");
+    ok(await store.getLoan(others.id), "the other reader's loan stays");
+    await rejectsWithCode(store.deleteReader(b.id), 'not_found', 'delete unknown');
+    await rejectsWithCode(store.previewDeleteReader(b.id), 'not_found', 'preview unknown');
+  }),
+  check('readers', 'deleteReader is blocked while the reader has an active loan, then allowed once it is returned', async (ctx) => {
+    const { store, h, b } = await withReaders(ctx);
+    await store.markRead(b.id, ISBN_A, '2026-01-01T00:00:00Z');
+    const loan = await store.createLoan({ household_id: h.id, reader_id: b.id, isbn: ISBN_C });
+    equal((await store.previewDeleteReader(b.id)).activeLoans, 1, 'dry run shows the active loan');
+    await rejectsWithCode(store.deleteReader(b.id), 'blocked', 'blocked by the active loan');
+    ok(await store.getReader(b.id), 'reader kept');
+    equal((await store.listReadEvents(b.id)).length, 1, 'reads kept');
+    ok(await store.getLoan(loan.id), 'loan kept');
+    await store.returnLoan(loan.id);
+    await store.deleteReader(b.id);
+    equal(await store.getReader(b.id), null, 'deleted after returning');
+    equal(await store.getLoan(loan.id), null, 'the returned loan went with them');
   }),
 
   // Subscribe -------------------------------------------------------------------
@@ -269,6 +303,18 @@ export const storageChecks: StorageCheck[] = [
     equal((await store.listHomeItems(h.id)).map((i) => i.isbn), [ISBN_B, ISBN_A], 'newest first');
     await store.removeHomeItem(ISBN_A);
     equal((await store.listHomeItems(h.id)).map((i) => i.isbn), [ISBN_B], 'removed');
+  }),
+  check('home', 'removeHomeItem keeps the book and every read of it', async (ctx) => {
+    const { store, h, a } = await withReaders(ctx);
+    await store.putBook({ isbn: ISBN_A, title: 'Kept', authors: [], cover_url: null, source: 'manual' });
+    await store.addHomeItem(h.id, ISBN_A);
+    await store.markRead(a.id, ISBN_A, '2026-01-01T00:00:00Z');
+    await store.markRead(a.id, ISBN_A, '2026-01-02T00:00:00Z');
+    await store.removeHomeItem(ISBN_A);
+    equal(await store.getHomeItem(h.id, ISBN_A), null, 'not in Home');
+    equal((await store.getBook(ISBN_A))?.title, 'Kept', 'book kept');
+    equal((await store.listReadEvents(a.id, ISBN_A)).length, 2, 'events kept');
+    equal((await store.getReadSummary(a.id, ISBN_A))?.count, 2, 'summary kept');
   }),
 
   // Libraries and loans ----------------------------------------------------------
@@ -696,5 +742,153 @@ export const storageChecks: StorageCheck[] = [
     equal((await store.listActiveLoans('r1')).map((l) => l.id), ['loanA', 'loanB'], 'active loans');
     equal((await store.getReadSummary('r1', ISBN_A))?.count, 1, 'other stores untouched');
     equal((await store.renewLoan('loanA')).due_date, '2026-01-29', 'renew uses the migrated library (14 days)');
+  }),
+
+  // Clear reads --------------------------------------------------------------------
+  check('reads', 'clearReads removes one reader\'s events and summary for one book, in one go', async (ctx) => {
+    const { store, h, a, b } = await withReaders(ctx);
+    await store.markRead(a.id, ISBN_A, '2026-01-01T00:00:00Z');
+    await store.markRead(a.id, ISBN_A, '2026-01-02T00:00:00Z');
+    await store.markRead(a.id, ISBN_B, '2026-01-03T00:00:00Z');
+    await store.markRead(b.id, ISBN_A, '2026-01-04T00:00:00Z');
+    const seen: DataChange[] = [];
+    store.subscribe((c) => seen.push(c));
+    equal(await store.clearReads(a.id, ISBN_A), 2, 'returns how many events went');
+    equal((await store.listReadEvents(a.id, ISBN_A)).length, 0, 'events gone');
+    equal(await store.getReadSummary(a.id, ISBN_A), null, 'summary gone');
+    equal((await store.listReadEvents(a.id, ISBN_B)).length, 1, 'other book kept');
+    equal((await store.listReadEvents(b.id, ISBN_A)).length, 1, 'other reader kept');
+    equal(await store.countHouseholdReads(h.id), 2, 'household count follows');
+    equal(seen.map((c) => c.tables), [['read_events']], 'one change notification');
+    equal(await store.clearReads(a.id, ISBN_A), 0, 'nothing left to clear');
+  }),
+  check('reads', 'clearReads never un-completes a journey', async (ctx) => {
+    const { store, a } = await withReaders(ctx);
+    const journey = await store.startJourney(a.id, 'ocean_deep', '2026-01-01T00:00:00Z');
+    await store.markRead(a.id, ISBN_A, '2026-01-02T00:00:00Z');
+    const done = await store.completeJourney(journey.id, '2026-01-03T00:00:00Z');
+    await store.clearReads(a.id, ISBN_A);
+    const [after] = await store.listJourneyHistory(a.id);
+    equal(after.completed_at, done.completed_at, 'still completed');
+    equal(await store.countCompletedJourneys(a.id), { ocean_deep: 1 }, 'still counted');
+  }),
+
+  // Backup and reset -----------------------------------------------------------------
+  check('backup', 'exportBackup -> importBackup restores everything into an empty device, covers included', async (ctx) => {
+    const { store, h, a, b } = await withReaders(ctx);
+    await store.updateHousehold(h.id, { name: 'Backup Test' });
+    const photo = jpeg(0xe0, 1, 2, 3, 4, 5);
+    const coverUrl = await store.saveCoverImage(photo);
+    const photoRef = `cover:${await sha256Hex(photo)}`;
+    await store.putBook({ isbn: ISBN_A, title: 'With photo', authors: ['X'], cover_url: coverUrl, source: 'manual' });
+    await store.putBook({ isbn: ISBN_B, title: 'Online cover', authors: [], cover_url: 'https://example.org/b.jpg', source: 'openlibrary' });
+    await store.addHomeItem(h.id, ISBN_A);
+    await store.addHomeItem(h.id, ISBN_B);
+    const lib = await store.createLibrary({ household_id: h.id, name: 'Branch', sticker_prefix: '310' });
+    const loan = await store.createLoan({ household_id: h.id, reader_id: a.id, isbn: ISBN_C, library_id: lib.id, sticker_barcode: '310001', due_date: '2026-02-01' });
+    const returned = await store.createLoan({ household_id: h.id, reader_id: b.id, isbn: ISBN_D });
+    await store.returnLoan(returned.id, '2026-01-20T00:00:00Z');
+    await store.markRead(a.id, ISBN_A, '2026-01-01T00:00:00Z');
+    await store.markRead(a.id, ISBN_A, '2026-01-05T00:00:00Z');
+    await store.markRead(b.id, ISBN_B, '2026-01-02T00:00:00Z');
+    const journey = await store.startJourney(a.id, 'ocean_deep', '2026-01-01T00:00:00Z');
+
+    const backup = await store.exportBackup();
+    equal([backup.format, backup.version, backup.schema], [BACKUP_FORMAT, 1, 4], 'format, version, schema');
+    ok(!('read_summaries' in backup.tables), 'summaries are not exported');
+    equal(Object.keys(backup.covers), [photoRef], 'the one photo, under its cover: key');
+    equal((backup.tables.books.find((x) => x.isbn === ISBN_A))?.cover_url, photoRef, 'books keep the cover: reference, not a blob: URL');
+    const before = summariseBackup(backup);
+    equal(before, { readers: 2, books: 2, homeBooks: 2, loans: 2, reads: 3, covers: 1 }, 'summary counts');
+
+    // As if downloaded and picked on another device.
+    const file = JSON.parse(JSON.stringify(backup));
+    const { store: target } = await ctx.open();
+    equal(await target.importBackup(file), before, 'import returns the same counts');
+    equal((await target.getCurrentHousehold()).name, 'Backup Test', 'household');
+    equal((await target.listReaders(HOUSEHOLD_ID)).map((r) => [r.id, r.card_token]), [[a.id, a.card_token], [b.id, b.card_token]], 'readers and card tokens');
+    equal((await target.getReader(a.id))?.active_journey_id, journey.id, 'active journey pointer');
+    equal((await target.getActiveJourney(a.id))?.id, journey.id, 'journey');
+    equal(await target.getReadSummary(a.id, ISBN_A), await store.getReadSummary(a.id, ISBN_A), 'summary rebuilt the same');
+    equal(await target.countHouseholdReads(HOUSEHOLD_ID), 2, 'household reads');
+    equal((await target.getLoan(loan.id))?.sticker_barcode, '310001', 'loan');
+    equal((await target.findActiveLoansBySticker(HOUSEHOLD_ID, '310001')).length, 1, 'sticker index works after import');
+    equal((await target.getLoan(returned.id))?.returned_at, '2026-01-20T00:00:00.000Z', 'returned loan');
+    equal((await target.listLibraries(HOUSEHOLD_ID)).map((l) => l.name), ['Branch'], 'library');
+    equal((await target.listHomeItems(HOUSEHOLD_ID)).length, 2, 'home items');
+    const restored = await target.getBook(ISBN_A);
+    ok(restored?.cover_url?.startsWith('blob:'), 'cover resolves to a fresh blob: URL', restored?.cover_url);
+    ok(await sameBytes(await blobAt(restored?.cover_url), photo), 'photo bytes identical');
+    equal((await target.getBook(ISBN_B))?.cover_url, 'https://example.org/b.jpg', 'online cover kept');
+    equal(summariseBackup(await target.exportBackup()), before, 'exporting again gives the same counts');
+  }),
+  check('backup', 'importBackup replaces this device\'s data rather than merging', async (ctx) => {
+    const { store: source } = await withReaders(ctx);
+    const backup = JSON.parse(JSON.stringify(await source.exportBackup()));
+    const { store, h } = await withReaders(ctx);
+    const extra = await store.createReader({ household_id: h.id, display_name: 'Only here', avatar: '🐙' });
+    await store.addHomeItem(h.id, ISBN_A);
+    await store.markRead(extra.id, ISBN_A, '2026-01-01T00:00:00Z');
+    const seen: DataChange[] = [];
+    store.subscribe((c) => seen.push(c));
+    await store.importBackup(backup);
+    equal(await store.getReader(extra.id), null, 'reader only on this device is gone');
+    equal((await store.listHomeItems(HOUSEHOLD_ID)).length, 0, 'home items replaced');
+    equal(await store.countHouseholdReads(HOUSEHOLD_ID), 0, 'reads and summaries replaced');
+    equal((await store.listReaders(HOUSEHOLD_ID)).length, 2, "the backup's readers");
+    ok(seen.length === 1 && seen[0].tables.includes('readers') && seen[0].tables.includes('read_events'), 'one change for everything', seen);
+  }),
+  check('backup', 'importBackup refuses a broken or wrong file and leaves the data untouched', async (ctx) => {
+    const { store, a } = await withReaders(ctx);
+    await store.markRead(a.id, ISBN_A, '2026-01-01T00:00:00Z');
+    const good = JSON.parse(JSON.stringify(await store.exportBackup()));
+    await rejectsWithCode(store.importBackup({ hello: 'world' }), 'invalid', 'not a backup');
+    await rejectsWithCode(store.importBackup({ ...good, version: 2 }), 'invalid', 'newer version');
+    await rejectsWithCode(store.importBackup({ ...good, schema: 99 }), 'invalid', 'newer schema');
+    const noReaders = { ...good, tables: { ...good.tables, readers: undefined } };
+    await rejectsWithCode(store.importBackup(noReaders), 'invalid', 'missing table');
+
+    // A photo whose bytes don't match its hash.
+    const photoUrl = await store.saveCoverImage(jpeg(0xe0, 9, 9));
+    await store.putBook({ isbn: ISBN_B, title: 'P', authors: [], cover_url: photoUrl, source: 'manual' });
+    const withPhoto = JSON.parse(JSON.stringify(await store.exportBackup()));
+    const ref = Object.keys(withPhoto.covers)[0];
+    withPhoto.covers[ref] = btoa('not the same photo');
+    await rejectsWithCode(store.importBackup(withPhoto), 'invalid', 'damaged photo');
+
+    equal((await store.listReadEvents(a.id)).length, 1, 'reads untouched');
+    equal((await store.listReaders(HOUSEHOLD_ID)).length, 2, 'readers untouched');
+    ok(await store.getBook(ISBN_B), 'books untouched');
+  }),
+  check('backup', 'exportBackup includes legacy photos not yet re-keyed, under their hash', async (ctx) => {
+    const name = ctx.name();
+    const fixture = await createV2Database(name);
+    const store = await ctx.attach(name, { coverStepLimit: 1 });
+    await store.coverStep;
+    const backup = await store.exportBackup();
+    equal(Object.keys(backup.covers).length, 2, 'both photos');
+    const hashes = [await sha256Hex(fixture.coverA), await sha256Hex(fixture.coverB)].map((x) => `cover:${x}`).sort();
+    equal(Object.keys(backup.covers).sort(), hashes, 'keyed by hash');
+    ok(backup.tables.books.every((x) => !x.cover_url || x.cover_url.startsWith('cover:')), 'no legacy references in the file');
+    const { store: target } = await ctx.open();
+    await target.importBackup(JSON.parse(JSON.stringify(backup)));
+    ok(await sameBytes(await blobAt((await target.getBook(ISBN_A))?.cover_url), fixture.coverA), 'A restored');
+    ok(await sameBytes(await blobAt((await target.getBook(ISBN_B))?.cover_url), fixture.coverB), 'B restored');
+  }),
+  check('backup', 'resetDevice deletes everything, and the household starts afresh', async (ctx) => {
+    const { store, dbName, h, a } = await withReaders(ctx);
+    await store.updateHousehold(h.id, { name: 'Old name' });
+    await store.addHomeItem(h.id, ISBN_A);
+    await store.saveCoverImage(jpeg(0xe0, 7));
+    await store.markRead(a.id, ISBN_A, '2026-01-01T00:00:00Z');
+    await store.createLoan({ household_id: h.id, reader_id: a.id, isbn: ISBN_B });
+    await store.startJourney(a.id, 'ocean_deep');
+    await store.resetDevice();
+    for (const table of ['households', 'readers', 'books', 'cover_images', 'home_items', 'loans', 'read_events', 'read_summaries', 'reader_journeys', 'meta']) {
+      equal((await rawAll(dbName, table)).length, 0, `${table} empty`);
+    }
+    const fresh = await store.getCurrentHousehold();
+    equal([fresh.id, fresh.name === 'Old name'], [HOUSEHOLD_ID, false], 'a new household');
+    equal((await store.listReaders(HOUSEHOLD_ID)).length, 0, 'no readers');
   }),
 ];

@@ -17,6 +17,7 @@ import { strings } from './strings';
 import { ToastProvider } from './ui/Toast';
 
 const DevPage = lazy(() => import('./dev/DevPage'));
+const GrownUpsArea = lazy(() => import('./grownups/GrownUpsArea'));
 
 export function App() {
   return (
@@ -50,6 +51,16 @@ function Routes() {
 
   const card = matchPath('/card/:token', path);
   if (card) return <CardLink key={card.token} token={card.token} />;
+
+  if (path === '/grownups' || path.startsWith('/grownups/')) {
+    return (
+      <GrownUpGate>
+        <Suspense fallback={<p className="page muted">{strings.common.loading}</p>}>
+          <GrownUpsArea path={path} />
+        </Suspense>
+      </GrownUpGate>
+    );
+  }
 
   switch (path) {
     case '/hub':

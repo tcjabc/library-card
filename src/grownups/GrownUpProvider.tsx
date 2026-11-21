@@ -7,9 +7,9 @@ import { isGrownUpUnlocked, touchGrownUp, unlockGrownUp } from './session';
 
 /** Hosts the ParentGate sheet used by requireGrownUp(). Mount once, near the app root. */
 export function GrownUpProvider({ children }: { children: ReactNode }) {
-  const [pending, setPending] = useState<{ action: () => void; reason?: string } | null>(null);
+  const [pending, setPending] = useState<{ action: () => void; reason?: string; onCancel?: () => void } | null>(null);
 
-  const requireGrownUp = useCallback((action: () => void, reason?: string) => {
+  const requireGrownUp = useCallback((action: () => void, reason?: string, onCancel?: () => void) => {
     // Check storage now rather than trusting rendered state: the session may
     // have just expired (timers pause while a phone sleeps).
     if (isGrownUpUnlocked()) {
@@ -17,7 +17,7 @@ export function GrownUpProvider({ children }: { children: ReactNode }) {
       action();
       return;
     }
-    setPending({ action, reason });
+    setPending({ action, reason, onCancel });
   }, []);
 
   const value = useMemo(() => ({ requireGrownUp }), [requireGrownUp]);
@@ -26,7 +26,13 @@ export function GrownUpProvider({ children }: { children: ReactNode }) {
     <GrownUpContext.Provider value={value}>
       {children}
       {pending && (
-        <Sheet title={strings.gate.title} onClose={() => setPending(null)}>
+        <Sheet
+          title={strings.gate.title}
+          onClose={() => {
+            pending.onCancel?.();
+            setPending(null);
+          }}
+        >
           <ParentGate
             reason={pending.reason}
             onPass={() => {
@@ -35,7 +41,10 @@ export function GrownUpProvider({ children }: { children: ReactNode }) {
               setPending(null);
               action();
             }}
-            onCancel={() => setPending(null)}
+            onCancel={() => {
+              pending.onCancel?.();
+              setPending(null);
+            }}
           />
         </Sheet>
       )}

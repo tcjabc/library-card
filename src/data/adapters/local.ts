@@ -28,6 +28,18 @@ import {
   type Reader,
   type ReaderJourney,
 } from '../DataStore';
+import {
+  BACKUP_FORMAT,
+  BACKUP_TABLES,
+  BACKUP_VERSION,
+  base64ToBytes,
+  bytesToBase64,
+  sniffImageType,
+  summariseBackup,
+  validateBackup,
+  type Backup,
+  type BackupTables,
+} from '../backup';
 import { newCardToken, newId, toIso } from '../ids';
 import { addToSummary, isRepeatTap, latestEvent, summarize } from '../readRules';
 
@@ -624,6 +636,10 @@ export async function createLocalStore(dbName = DB_NAME, options: LocalStoreOpti
       const existing = await tx.store.get(id);
       if (!existing) throw notFound('Household', id);
       const next: Household = { ...existing, ...patch, id };
+      if (patch.name !== undefined) {
+        next.name = patch.name.trim();
+        if (!next.name) throw new DataStoreError('invalid', 'The household name must not be empty.');
+      }
       await tx.store.put(next);
       await tx.done;
       changed('households');
@@ -714,6 +730,11 @@ export async function createLocalStore(dbName = DB_NAME, options: LocalStoreOpti
         ['readers', 'loans', 'read_events', 'read_summaries', 'reader_journeys'],
         'readwrite',
       );
+      if (!(await tx.objectStore('readers').get(id))) throw notFound('Reader', id);
+      const loans = await tx.objectStore('loans').index('by_reader').getAll(id);
+      if (loans.some((loan) => loan.returned_at === null)) {
+        throw new DataStoreError('blocked', 'This reader still has library books out. Return or delete those loans first.');
+      }
       // One delete per child row, so every delete can later be replayed as a
       // single-record change.
       for (const key of await tx.objectStore('read_events').index('by_reader_read_at').getAllKeys(prefixRange(id))) {
@@ -722,15 +743,28 @@ export async function createLocalStore(dbName = DB_NAME, options: LocalStoreOpti
       for (const key of await tx.objectStore('read_summaries').getAllKeys(prefixRange(id))) {
         await tx.objectStore('read_summaries').delete(key);
       }
-      for (const key of await tx.objectStore('loans').index('by_reader').getAllKeys(id)) {
-        await tx.objectStore('loans').delete(key);
-      }
+      for (const loan of loans) await tx.objectStore('loans').delete(loan.id);
       for (const key of await tx.objectStore('reader_journeys').index('by_reader_started').getAllKeys(prefixRange(id))) {
         await tx.objectStore('reader_journeys').delete(key);
       }
       await tx.objectStore('readers').delete(id);
       await tx.done;
       changed('readers', 'loans', 'read_events', 'reader_journeys');
+    },
+
+    async previewDeleteReader(id) {
+      const tx = (await getDb()).transaction(['readers', 'loans', 'read_events', 'read_summaries', 'reader_journeys']);
+      if (!(await tx.objectStore('readers').getKey(id))) throw notFound('Reader', id);
+      const loans = await tx.objectStore('loans').index('by_reader').getAll(id);
+      const preview = {
+        readEvents: await tx.objectStore('read_events').index('by_reader_read_at').count(prefixRange(id)),
+        booksRead: await tx.objectStore('read_summaries').count(prefixRange(id)),
+        journeys: await tx.objectStore('reader_journeys').index('by_reader_started').count(prefixRange(id)),
+        returnedLoans: loans.filter((loan) => loan.returned_at !== null).length,
+        activeLoans: loans.filter((loan) => loan.returned_at === null).length,
+      };
+      await tx.done;
+      return preview;
     },
 
     // Books -----------------------------------------------------------------
@@ -1073,6 +1107,16 @@ export async function createLocalStore(dbName = DB_NAME, options: LocalStoreOpti
       return latest;
     },
 
+    async clearReads(readerId, isbn) {
+      const tx = (await getDb()).transaction(['read_events', 'read_summaries'], 'readwrite');
+      const keys = await tx.objectStore('read_events').index('by_reader_isbn_read_at').getAllKeys(bookRange(readerId, isbn));
+      for (const key of keys) await tx.objectStore('read_events').delete(key);
+      await tx.objectStore('read_summaries').delete([readerId, isbn]);
+      await tx.done;
+      if (keys.length > 0) changed('read_events');
+      return keys.length;
+    },
+
     async restoreReadEvent(event) {
       if (!event?.id || !event.reader_id || !event.isbn || !event.read_at) {
         throw new DataStoreError('invalid', 'Not a read event.');
@@ -1171,7 +1215,8 @@ export async function createLocalStore(dbName = DB_NAME, options: LocalStoreOpti
       for (const journey of mine) {
         if (journey.completed_at !== null) counts[journey.journey_id] = (counts[journey.journey_id] ?? 0) + 1;
       }
-      return counts;
+      // Keys in journey id order, so the result is the same whatever order the records come in.
+      return Object.fromEntries(Object.entries(counts).sort(([x], [y]) => x.localeCompare(y)));
     },
 
     async completeJourney(id, completedAt) {
@@ -1199,7 +1244,114 @@ export async function createLocalStore(dbName = DB_NAME, options: LocalStoreOpti
       await tx.done;
       changed('reader_journeys', 'readers');
     },
+
+    // Backup and reset ------------------------------------------------------
+    async exportBackup() {
+      // Let the legacy cover step finish, so photos are (mostly) in cover_images.
+      await coverStep;
+      const tx = (await getDb()).transaction([...BACKUP_TABLES, 'cover_images', 'covers']);
+      const tables = {} as BackupTables;
+      for (const table of BACKUP_TABLES) {
+        (tables as unknown as Record<string, unknown[]>)[table] = await tx.objectStore(table).getAll();
+      }
+      // The photos books use, by reference. Read inside the transaction, encode after it.
+      const blobs = new Map<string, Blob>();
+      for (const book of tables.books) {
+        const ref = book.cover_url;
+        if (!isLocalCoverRef(ref) || blobs.has(ref)) continue;
+        const blob = await coverBlob(tx as unknown as CoverTx, ref);
+        if (blob) blobs.set(ref, blob);
+      }
+      await tx.done;
+
+      // Legacy "local-cover:<isbn>" photos are exported under their hash, like the rest.
+      const covers: Record<string, string> = {};
+      const renamed = new Map<string, string>();
+      for (const [ref, blob] of blobs) {
+        const key = ref.startsWith(COVER_PREFIX) ? ref : `${COVER_PREFIX}${await sha256Hex(blob)}`;
+        if (key !== ref) renamed.set(ref, key);
+        covers[key] = bytesToBase64(new Uint8Array(await blob.arrayBuffer()));
+      }
+      tables.books = tables.books.map((book) => {
+        if (!isLocalCoverRef(book.cover_url)) return book;
+        const ref = renamed.get(book.cover_url) ?? book.cover_url;
+        return { ...book, cover_url: ref in covers ? ref : null };
+      });
+      tables.reader_journeys = tables.reader_journeys.map(normaliseJourney);
+
+      const backup: Backup = {
+        format: BACKUP_FORMAT,
+        version: BACKUP_VERSION,
+        schema: DB_VERSION,
+        exported_at: nowIso(),
+        tables,
+        covers,
+      };
+      return backup;
+    },
+
+    async importBackup(data) {
+      const check = validateBackup(data, { maxSchema: DB_VERSION });
+      if (!check.ok) {
+        throw new DataStoreError('invalid', `Not a usable backup (${check.problem}${check.detail ? `: ${check.detail}` : ''}).`);
+      }
+      const { backup } = check;
+      // Decode and verify every photo before touching the database.
+      const images: CoverImageRecord[] = [];
+      for (const [ref, text] of Object.entries(backup.covers)) {
+        const bytes = base64ToBytes(text);
+        const blob = new Blob([bytes as BlobPart], { type: sniffImageType(bytes) });
+        const hash = ref.slice(COVER_PREFIX.length);
+        if ((await sha256Hex(blob)) !== hash) throw new DataStoreError('invalid', `Cover photo ${ref} is damaged.`);
+        images.push({ hash, blob, saved_at: backup.exported_at });
+      }
+      // Summaries are rebuilt from the events.
+      const byBook = new Map<string, ReadEvent[]>();
+      for (const event of backup.tables.read_events) {
+        const key = `${event.reader_id}\u0000${event.isbn}`;
+        byBook.set(key, [...(byBook.get(key) ?? []), event]);
+      }
+
+      const d = await getDb();
+      const all = [...d.objectStoreNames];
+      const tx = d.transaction(all, 'readwrite');
+      for (const name of all) await tx.objectStore(name).clear();
+      for (const table of BACKUP_TABLES) {
+        const target = tx.objectStore(table) as unknown as { put(value: unknown): Promise<unknown> };
+        for (const row of backup.tables[table] as unknown[]) await target.put(row);
+      }
+      for (const image of images) await tx.objectStore('cover_images').put(image);
+      for (const events of byBook.values()) await tx.objectStore('read_summaries').put(summarize(events)!);
+      await tx.objectStore('meta').put({ key: CURRENT_HOUSEHOLD_KEY, value: HOUSEHOLD_ID });
+      await tx.objectStore('meta').put({ key: COVERS_REKEYED_KEY, value: true });
+      await tx.done;
+      revokeAllCoverUrls();
+      changed(...ALL_TABLES);
+      return summariseBackup(backup);
+    },
+
+    async resetDevice() {
+      const d = await getDb();
+      const all = [...d.objectStoreNames];
+      const tx = d.transaction(all, 'readwrite');
+      for (const name of all) await tx.objectStore(name).clear();
+      await tx.done;
+      revokeAllCoverUrls();
+      changed(...ALL_TABLES);
+    },
   };
 
   return store;
 }
+
+const ALL_TABLES: DataTable[] = [
+  'households',
+  'readers',
+  'books',
+  'covers',
+  'home_items',
+  'libraries',
+  'loans',
+  'read_events',
+  'reader_journeys',
+];

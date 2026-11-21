@@ -21,6 +21,24 @@ export function useHashPath(): string {
   return useSyncExternalStore(subscribe, currentPath, () => '/');
 }
 
+/** The query part of a hash URL: "#/grownups/loans?reader=r1" -> reader=r1. */
+export function parseHashQuery(hash: string): URLSearchParams {
+  const raw = hash.replace(/^#/, '');
+  const at = raw.indexOf('?');
+  return new URLSearchParams(at === -1 ? '' : raw.slice(at + 1));
+}
+
+const currentQuery = () => {
+  const at = window.location.hash.indexOf('?');
+  return at === -1 ? '' : window.location.hash.slice(at + 1);
+};
+
+/** The current hash query; re-renders when it changes. */
+export function useHashQuery(): URLSearchParams {
+  const query = useSyncExternalStore(subscribe, currentQuery, () => '');
+  return new URLSearchParams(query);
+}
+
 /** Build an href for an in-app path, e.g. href('/dev') -> "#/dev". */
 export function href(path: string): string {
   return `#${path.startsWith('/') ? path : `/${path}`}`;

@@ -51,6 +51,7 @@ describe('coverage', () => {
       'getCurrentHousehold', 'getHousehold', 'updateHousehold',
       // readers
       'createReader', 'getReader', 'getReaderByCardToken', 'listReaders', 'updateReader', 'rotateCardToken', 'deleteReader',
+      'previewDeleteReader',
       // books and covers
       'getBook', 'getBooks', 'putBook', 'saveCoverImage',
       // home
@@ -60,10 +61,12 @@ describe('coverage', () => {
       'createLoan', 'getLoan', 'listLoans', 'listActiveLoans', 'listReturnedLoans', 'findActiveLoansBySticker',
       'updateLoan', 'renewLoan', 'unrenewLoan', 'returnLoan', 'unreturnLoan', 'deleteLoan',
       // reads
-      'markRead', 'undoLatestRead', 'restoreReadEvent', 'getReadSummary', 'listReadSummaries', 'listReadEvents',
+      'markRead', 'undoLatestRead', 'clearReads', 'restoreReadEvent', 'getReadSummary', 'listReadSummaries', 'listReadEvents',
       'countReadsSince', 'countHouseholdReads', 'listHouseholdReadSummaries',
       // journeys
       'startJourney', 'getActiveJourney', 'listJourneyHistory', 'countCompletedJourneys', 'completeJourney', 'deleteReaderJourney',
+      // backup and reset
+      'exportBackup', 'importBackup', 'resetDevice',
       // change notifications, and local-only helpers used by the checks
       'subscribe', 'close', 'testOnlyAddHousehold',
     ];

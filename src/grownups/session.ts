@@ -122,5 +122,5 @@ export function useGrownUpUnlocked(): boolean {
 
 /** Paths that make up the grown-up area. Leaving them ends the session. */
 export function isGrownUpPath(path: string): boolean {
-  return path === '/dev' || path.startsWith('/grown-ups');
+  return path === '/dev' || path === '/grownups' || path.startsWith('/grownups/');
 }

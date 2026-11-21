@@ -1,17 +1,18 @@
 import { useCallback, useId, useState, type FormEvent } from 'react';
-import { DEFAULT_LOAN_DAYS, useDataQuery, type DataStore, type Household, type Library } from '../data';
-import { useGrownUpSession } from '../grownups/useGrownUpSession';
-import { SAMPLE_ISBN, asWebUrl, fillSearchTemplate, searchTemplateFromUrl } from '../library/searchTemplate';
-import { stickerPrefix } from '../library/sticker';
-import { BookScanner } from '../scan/BookScanner';
-import { fmt, strings } from '../strings';
-import { Sheet } from '../ui/Sheet';
-import { useToast } from '../ui/Toast';
+import { DEFAULT_LOAN_DAYS, useDataQuery, type DataStore, type Household, type Library } from '../../data';
+import { useGrownUpSession } from '../useGrownUpSession';
+import { SAMPLE_ISBN, asWebUrl, fillSearchTemplate, searchTemplateFromUrl } from '../../library/searchTemplate';
+import { stickerPrefix } from '../../library/sticker';
+import { BookScanner } from '../../scan/BookScanner';
+import { fmt, strings } from '../../strings';
+import { Sheet } from '../../ui/Sheet';
+import type { TabProps } from './types';
+import { useToast } from '../../ui/Toast';
 
-const t = strings.dev.libraries;
+const t = strings.grownups.libraries;
 
-/** Grown-up tool: the household's libraries (until the Phase 5 grown-up area). */
-export function LibrariesPanel({ store, household }: { store: DataStore; household: Household }) {
+/** Grown-ups > Libraries: the places loans come from. */
+export function LibrariesTab({ store, household }: TabProps) {
   const toast = useToast();
   const { requireGrownUp } = useGrownUpSession();
   const [editing, setEditing] = useState<Library | 'new' | null>(null);

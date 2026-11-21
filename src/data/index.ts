@@ -13,3 +13,14 @@ export { useDataQuery, useDataStore, type DataQueryResult } from './react';
 export { hashPin, verifyPin } from './pin';
 export { isNoIsbnBookKey, newNoIsbnBookKey } from './ids';
 export { findStickerDuplicates, pickStickerWinner, type StickerResolution } from './loanRules';
+export {
+  BACKUP_FORMAT,
+  backupFileName,
+  parseBackupText,
+  summariseBackup,
+  validateBackup,
+  type Backup,
+  type BackupCheck,
+  type BackupProblem,
+  type BackupSummary,
+} from './backup';

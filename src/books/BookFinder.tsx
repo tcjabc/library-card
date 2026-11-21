@@ -79,7 +79,7 @@ export function BookFinder({ store, onBook }: { store: DataStore; onBook: (book:
             )}
             {state.isbn && (
               <button type="button" className="btn" onClick={() => setSheet({ kind: 'new', isbn: state.isbn! })}>
-                {strings.dev.addManually}
+                {strings.grownups.books.addManually}
               </button>
             )}
             <button type="button" className="btn" onClick={() => setState({ kind: 'scan' })}>
@@ -107,12 +107,12 @@ export function BookFinder({ store, onBook }: { store: DataStore; onBook: (book:
             className="input"
             inputMode="numeric"
             autoComplete="off"
-            placeholder={strings.dev.manualPlaceholder}
+            placeholder={strings.grownups.books.manualPlaceholder}
             value={typed}
             onChange={(e) => setTyped(e.target.value)}
           />
           <button type="submit" className="btn" disabled={!typed.trim()}>
-            {strings.dev.manualSubmit}
+            {strings.grownups.books.manualSubmit}
           </button>
         </form>
       )}
