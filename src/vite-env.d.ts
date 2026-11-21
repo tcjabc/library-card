@@ -7,6 +7,8 @@ interface ImportMetaEnv {
   readonly VITE_BASE?: string;
   /** Optional. Raises the Google Books fallback's anonymous rate limit. */
   readonly VITE_GOOGLE_BOOKS_API_KEY?: string;
+  /** The sync relay's base URL (https://…, or http://localhost:… in development). Unset: no sync. */
+  readonly VITE_SYNC_RELAY_URL?: string;
   readonly VITE_SUPABASE_URL?: string;
   readonly VITE_SUPABASE_ANON_KEY?: string;
 }

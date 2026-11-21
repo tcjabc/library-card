@@ -129,6 +129,12 @@ function syncMethods(store: LocalDataStore, internals: StoreInternals, state: Re
 
     async setConfig(patch) {
       const current = await getConfig();
+      if (patch.householdKey === '') {
+        // Forget the key on this device (turning sync off). Local data, records and outbox stay.
+        const off = { householdKey: '', relayUrl: current?.relayUrl ?? '', enabled: false, roomId: '', enabledAt: current?.enabledAt ?? '' };
+        await (await raw()).put('meta', { key: SYNC_META.config, value: off });
+        return off;
+      }
       const householdKey = patch.householdKey !== undefined ? checkedKey(patch.householdKey) : current?.householdKey;
       if (!householdKey) throw new DataStoreError('invalid', 'Sync needs a household key.');
       const roomId = householdKey === current?.householdKey ? current.roomId : (await deriveKeys(householdKey)).roomId;
@@ -246,14 +252,16 @@ function syncMethods(store: LocalDataStore, internals: StoreInternals, state: Re
       return queued;
     },
 
-    async mergeOutbox() {
+    async mergeOutbox(received = []) {
+      const known = new Set([...received].map((r) => `${r.rec}\u0000${r.f}\u0000${r.t}`));
       const tx = (await raw()).transaction(['records', 'outbox'], 'readwrite');
       const entries = await tx.objectStore('outbox').getAll();
       let kept = 0;
       let dropped = 0;
       for (const e of entries) {
         const record = await tx.objectStore('records').get(e.rec);
-        if (record && record.ts[e.f] === e.t) {
+        // Keep it only if this device's value is still the newest and the relay doesn't have it yet.
+        if (record && record.ts[e.f] === e.t && !known.has(`${e.rec}\u0000${e.f}\u0000${e.t}`)) {
           kept++;
         } else {
           await tx.objectStore('outbox').delete([e.rec, e.f]);
@@ -286,31 +294,33 @@ function syncMethods(store: LocalDataStore, internals: StoreInternals, state: Re
       const current = await getConfig();
       const tx = (await raw()).transaction([...SYNCED_TABLES, 'records', 'outbox', 'meta'] as never, 'readwrite');
       let records = 0;
-      let queued = 0;
+      let queued: number;
       let skipped = 0;
       try {
-        await storeOf(tx, 'records').clear();
-        await storeOf(tx, 'outbox').clear();
         let clock = await loadClock(tx);
         for (const table of SYNCED_TABLES) {
           const rows: Record<string, unknown>[] = await storeOf(tx, table).getAll();
           for (const row of rows) {
             const target = rowToRecord(table, row);
             if (!target) continue;
-            const replica = { clock, records: new Map() };
+            // Fields already recorded keep their stamps, so an older value here doesn't beat a newer
+            // one in the household; a row with no record yet (data from before sync) gets new stamps.
+            const existing: StoredRecord | undefined = await storeOf(tx, 'records').get(target.rec);
+            const replica = { clock, records: new Map(existing ? [[existing.id, fromStored(existing)]] : []) };
             const ops = putRecord(replica, target.rec, target.fields, { now: internals.now(), newId: () => 'pending' });
             if (!ops.every((op) => validate(op).ok)) {
               skipped++;
               continue;
             }
             clock = replica.clock;
-            await storeOf(tx, 'records').put(toStored(fromStoredish(replica.records.get(target.rec)), table));
-            for (const op of ops) await storeOf(tx, 'outbox').put({ rec: op.rec, f: op.f, v: op.v, t: op.t, dev: op.dev });
+            if (ops.length) await storeOf(tx, 'records').put(toStored(fromStoredish(replica.records.get(target.rec)), table));
             records++;
-            queued += ops.length;
           }
         }
         await saveClock(tx, clock);
+        // Every field of every record, with its current stamp (the relay dedupes what it already has).
+        await storeOf(tx, 'outbox').clear();
+        queued = await queueAll(tx);
         await storeOf(tx, 'meta').put({ key: SYNC_META.cursor, value: 0 });
         const config: SyncConfig = {
           householdKey: key,

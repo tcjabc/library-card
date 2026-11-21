@@ -27,7 +27,7 @@ export interface ApplyResult {
 /** What the sync engine needs from storage. */
 export interface SyncEngineStore {
   getConfig(): Promise<SyncConfig | null>;
-  /** Change config fields. A different household key resets the cursor and queues everything again. */
+  /** Change config fields. A different household key resets the cursor and queues everything again; '' forgets the key. */
   setConfig(patch: Partial<SyncConfig>): Promise<SyncConfig>;
   /** Queued ops, oldest stamp first, each with its keyed, deterministic id (vendor opId). */
   pendingOps(limit?: number): Promise<Op[]>;
@@ -46,12 +46,15 @@ export interface SyncEngineStore {
    * since been overwritten by something received, so only fields where this device's value is
    * newer stay queued.
    */
-  mergeOutbox(): Promise<{ kept: number; dropped: number }>;
+  mergeOutbox(received?: Iterable<Pick<Op, 'rec' | 'f' | 't'>>): Promise<{ kept: number; dropped: number }>;
   getLastSynced(): Promise<string | null>;
   setLastSynced(at: string): Promise<void>;
   /** Called after a local write that queued ops has committed. Returns an unsubscribe function. */
   onChangesEnqueued(listener: () => void): () => void;
-  /** Turn sync on with a household key: records are rebuilt from the current data (fresh stamps) and every field is queued. */
+  /**
+   * Turn sync on with a household key: rows without a record get one (fresh stamps), recorded
+   * fields keep their stamps, and every field of every record is queued.
+   */
   enableSync(householdKey: string, options?: { relayUrl?: string }): Promise<{ records: number; queued: number; skipped: number }>;
 }
 

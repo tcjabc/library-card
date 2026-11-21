@@ -309,6 +309,79 @@ export const en = {
     wordsUnknownNear: 'Word {n} ("{word}") isn\'t in the list. Did you mean "{near}"?',
     wordsCount: 'There are 12 recovery words. You entered {count}.',
     wordsChecksum: 'A word is wrong or out of order. Check them against your copy.',
+    // Used by the vendored sync engine (src/sync/vendor) through its i18n shim. Peek Budget's
+    // English, except where it named Peek Budget and the texts for a deleted household.
+    needsWords: 'Sync needs the 12 words on this device. Join again with your recovery words.',
+    keyUnavailable: 'The household key is not available on this device.',
+    offline: 'This device is offline. Changes are kept and sent later.',
+    clockAhead: "Some changes are waiting: this device's clock is more than a day ahead.",
+    deleted: 'This household was deleted from the relay. Everything stays on this device. Start a new household or turn sync off.',
+    error: {
+      401: "The relay didn't accept this household key. Check the key on both devices.",
+      410: 'This household was deleted from the relay.',
+      413: 'A change is too large for the relay.',
+      429: 'The relay is busy. Retrying shortly.',
+      507: 'The sync room on the relay is full.',
+      '5xx': 'The relay had a problem. Retrying.',
+      refused: 'The relay refused the request ({status}).',
+      relayAnswered: 'The relay answered {status}.',
+      unreachable: "Can't reach the relay.",
+      failed: 'Sync failed.',
+      order: 'The relay sent entries out of order.',
+      stopped: 'The relay stopped before sending everything. Try again.',
+      relayAddress: 'The relay address on this device is not valid.',
+      keyInUse: 'That key is already in use. Start again.',
+      notOn: "Sync isn't on for this device.",
+    },
+    join: {
+      noHousehold: 'No household found for these words. Check them and try again.',
+      offline: "Can't reach the sync service. Check your connection and try again.",
+      deleted: 'This household was deleted. Start a new one instead.',
+    },
+    replace: {
+      title: "Replace this device's items?",
+      message: {
+        one: "The {count} item on this device will be replaced by the household's. Items that are only on this device will be lost. This can't be undone.",
+        other: "The {count} items on this device will be replaced by the household's. Items that are only on this device will be lost. This can't be undone.",
+      },
+      confirm: 'Replace',
+    },
+    startNew: {
+      title: 'Start a new household?',
+      message: "This device was synced with a household before. Your other devices stay on that household and won't see this one. To sync with them again, join with that household's 12 words instead.",
+      confirm: 'Start new',
+    },
+    turnOff: {
+      title: 'Turn off sync on this device?',
+      message: 'This device stops syncing and forgets the recovery words. Your items stay here, and your other devices keep syncing. To sync again, join with the 12 words.',
+      confirm: 'Turn off',
+    },
+    showWords: {
+      title: 'Show the recovery words?',
+      message: 'Anyone who sees them can read your data. Make sure no one is looking at your screen.',
+      confirm: 'Show',
+    },
+    state: {
+      off: 'Off',
+      syncing: 'Syncing…',
+      ok: 'Up to date',
+      offline: 'Offline',
+      error: 'Error',
+      deleted: 'Household deleted',
+    },
+    status: {
+      withError: '{state}: {error}',
+      withNote: '{state}. {note}',
+    },
+    summary: {
+      needsWords: 'Needs the 12 words on this device',
+      off: 'Off',
+      paused: 'Paused on this device',
+      on: 'On · {state}',
+    },
+    scan: {
+      notRecovery: "That QR code isn't a Library Card recovery code.",
+    },
   },
 
   grownups: {

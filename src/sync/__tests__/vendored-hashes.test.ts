@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -47,6 +47,11 @@ describe('VENDORED.md', () => {
         'src/sync/vendor/wordlist.js',
         'src/sync/vendor/crypto.js',
         'src/sync/vendor/i18n.js',
+        'src/sync/vendor/sync.js',
+        'src/sync/vendor/secure-key.js',
+        'src/sync/vendor/pairing.js',
+        'src/sync/vendor/qr-scan.js',
+        'src/sync/__tests__/ported/sync-engine.node.test.js',
       ]),
     );
     for (const row of rows) {
@@ -65,6 +70,15 @@ describe('VENDORED.md', () => {
       else expect(actual).not.toBe(row.upstreamSha);
     });
   }
+
+  it('every .js in src/sync/vendor/ and every ported test has a row', () => {
+    const listed = new Set(rows.map((r) => r.ours));
+    for (const dir of ['src/sync/vendor/', 'src/sync/__tests__/ported/']) {
+      for (const name of readdirSync(new URL(dir, root)).filter((n) => n.endsWith('.js'))) {
+        expect(listed.has(`${dir}${name}`), `${dir}${name} is in VENDORED.md`).toBe(true);
+      }
+    }
+  });
 
   it('every vendored .js has a hand-written .d.ts beside it', () => {
     for (const row of rows.filter((r) => r.ours.startsWith('src/sync/vendor/'))) {
