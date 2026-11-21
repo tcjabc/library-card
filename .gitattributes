@@ -2,3 +2,8 @@
 # never convert their line endings.
 src/sync/vendor/*.js -text
 src/sync/__tests__/ported/*.js -text
+relay/src/*.js -text
+relay/test/room-logic.test.js -text
+relay/wrangler.toml -text
+relay/README.md -text
+relay/package.json -text

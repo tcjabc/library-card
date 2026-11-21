@@ -57,6 +57,7 @@ Phone browsers only allow the camera on secure (HTTPS) pages. Pick one:
 | `npm run lint`                | ESLint                                              |
 | `npm test`                    | Unit and storage tests (Vitest, Node, fake IndexedDB) |
 | `npm run test:watch`          | The same, re-run on every change                    |
+| `npm run test:relay`          | The sync relay's tests (after `npm install --prefix relay`) |
 | `npm run generate-pwa-assets` | Regenerate app icons from `public/favicon.svg`      |
 
 ## Configuration
@@ -121,6 +122,7 @@ src/
   session/       The active reader on this device
   screens/       Kid screens: splash, card sign-in, hub, bookshelf, library,
                  journeys/ (gallery, journey track, celebration, staircase)
+  sync/vendor/   Vendored sync core, recovery words and crypto (see VENDORED.md)
   journeys/      Journey config (journeys.ts) and pure, unit-tested helpers:
                  progress, staircase layout, completion check, celebration flag
   lib/           Small helpers: dates, text, image resizing
@@ -193,6 +195,32 @@ worth doing on real phones: their IndexedDB differs from the fake one in Node.
 Both run on throwaway databases, including real v1 to v3 and v2 to v3 migrations.
 
 _Schemas, migrations and auth for hosted adapters will be added with each one._
+
+## Sync relay
+
+> **Not deployed yet.** The app doesn't use it so far; sync arrives in a later phase.
+
+`relay/` is its own package: a Cloudflare Worker (Durable Objects for each
+household's change log, R2 for cover photos) that passes **encrypted** changes
+and photos between a household's devices. It stores ciphertext only: sealed
+envelopes, their ids and timestamps, and encrypted photo bytes. It never sees
+the household key, book titles, children's names or reading history. It was
+copied from Peek Budget's relay and changed (see [VENDORED.md](VENDORED.md));
+[relay/README.md](relay/README.md) has the API, limits and what the relay can see.
+
+Run it locally (no Cloudflare account needed):
+
+```sh
+npm install --prefix relay
+npm run dev --prefix relay      # wrangler dev on http://localhost:8787
+npm run test:relay              # its tests, run locally in workerd
+```
+
+Deploying comes later: create the R2 bucket (`npx wrangler r2 bucket create
+library-card-blobs`), set `ALLOWED_ORIGINS` to the app's origin at deploy time
+(`wrangler deploy --var` or the Cloudflare dashboard; the committed config only
+allows localhost), then `npx wrangler deploy` from `relay/`. CI runs the relay
+tests before building the app, so a relay failure blocks the deploy.
 
 ## Privacy
 

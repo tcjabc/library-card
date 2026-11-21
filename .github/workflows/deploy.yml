@@ -24,8 +24,18 @@ jobs:
         with:
           node-version: 24
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            relay/package-lock.json
 
       - run: npm ci
+
+      # The sync relay is its own package. Its tests run first (locally, in workerd), so a relay
+      # failure blocks the deploy. No Cloudflare account or secret is used.
+      - run: npm ci --prefix relay
+      - run: npm test --prefix relay
+        env:
+          WRANGLER_SEND_METRICS: 'false'
 
       - run: npm run lint
 

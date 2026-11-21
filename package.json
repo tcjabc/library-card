@@ -14,6 +14,7 @@
     "generate-pwa-assets": "pwa-assets-generator",
     "dev:phone": "vite --mode phone",
     "test": "vitest run",
+    "test:relay": "npm test --prefix relay",
     "test:watch": "vitest"
   },
   "dependencies": {

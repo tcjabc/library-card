@@ -1,0 +1,42 @@
+# Library Card sync relay. No secrets live here or anywhere in the relay: rooms are claimed by the
+# first device that pushes (it stores only a SHA-256 of that device's token).
+# Copied from Peek Budget's relay and changed: see VENDORED.md (source and commit).
+name = "library-card-relay"
+main = "src/index.js"
+compatibility_date = "2026-10-28"
+workers_dev = true
+# Keep variables set in the Cloudflare dashboard (such as the real ALLOWED_ORIGINS) when deploying,
+# instead of resetting them to the values below.
+keep_vars = true
+
+[vars]
+# Browser origins allowed to call the relay. Committed: local dev servers only, on any port. Set the
+# app's real origin when deploying (see relay/README.md), e.g.
+#   npx wrangler deploy --var "ALLOWED_ORIGINS:<the app's origin>,http://localhost:*,https://localhost:*"
+# or under the Worker's Settings > Variables in the Cloudflare dashboard. An entry ending in ":*"
+# allows any port. Requests without an Origin header (native code, curl) aren't affected; they still
+# need a valid room token.
+ALLOWED_ORIGINS = "http://localhost:*,https://localhost:*"
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "LibraryRoom"
+
+[[migrations]]
+tag = "library-card-v1"
+new_sqlite_classes = ["LibraryRoom"]
+
+# Encrypted cover photos, stored under "<room id>/<photo id>". The relay only ever sees ciphertext.
+[[r2_buckets]]
+binding = "BLOBS"
+bucket_name = "library-card-blobs"
+
+# Privacy: no per-request invocation logs (they record the URL and request metadata), and nothing
+# in the code logs bodies, tokens or envelopes. What remains is the relay's own console output,
+# which is limited to error names.
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+invocation_logs = false

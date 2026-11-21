@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# Local Wrangler state (relay/)
+.wrangler/
+
 # Build output
 dist/
 dev-dist/
