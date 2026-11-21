@@ -153,9 +153,7 @@ export function SettingsTab({ store, household }: TabProps) {
           <button type="button" className="btn btn--primary" disabled={downloading} onClick={() => void download()}>
             ⬇️ {downloading ? t.preparing : t.download}
           </button>
-          <label htmlFor={ids.file} className="btn">
-            ⬆️ {t.restore}
-          </label>
+          {/* The input comes first so its focus can style the label (see base.css). */}
           <input
             ref={fileInput}
             id={ids.file}
@@ -164,6 +162,9 @@ export function SettingsTab({ store, household }: TabProps) {
             accept="application/json,.json"
             onChange={(e) => void pickFile(e)}
           />
+          <label htmlFor={ids.file} className="btn">
+            ⬆️ {t.restore}
+          </label>
         </div>
         {lastDownload && (
           <p className="small muted" role="status">

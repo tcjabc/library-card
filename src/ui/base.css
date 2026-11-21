@@ -44,7 +44,9 @@ a {
   color: var(--color-brand);
 }
 
-:focus-visible {
+:focus-visible,
+/* A visually hidden file input shows its focus on the label that stands in for it. */
+input[type='file'].visually-hidden:focus-visible + label {
   outline: var(--border-thick) solid var(--color-focus);
   outline-offset: 2px;
 }
