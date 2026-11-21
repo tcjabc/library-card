@@ -3,9 +3,17 @@
  * the app is ISBN-13, digits only.
  */
 
-/** Strips separators. Keeps a trailing X (ISBN-10 check digit). */
+/**
+ * Strips an "ISBN", "ISBN-10:" or "ISBN-13:" label, then separators. Keeps a
+ * trailing X (ISBN-10 check digit). The label goes first: once hyphens are
+ * gone, "ISBN-13:" would read as "ISBN13:" and leave the 13 behind.
+ */
 function clean(raw: string): string {
-  return raw.replace(/[\s\-‐-―]/g, '').replace(/^ISBN(?:-1[03])?:?/i, '').toUpperCase();
+  return raw
+    .trim()
+    .replace(/^ISBN(?:[\s\-‐-―]*1[03])?[\s:]*/i, '')
+    .replace(/[\s\-‐-―]/g, '')
+    .toUpperCase();
 }
 
 export function isValidIsbn10(value: string): boolean {
