@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { fmt, strings } from '../strings';
+import {
+  NO_ATTEMPTS,
+  afterWrongAnswer,
+  isLockedOut,
+  lockoutSecondsLeft,
+  readAttempts,
+  writeAttempts,
+  type Attempts,
+} from './attempts';
 import { newGateQuestion, type GateQuestion } from './question';
 
 /**
@@ -10,38 +19,7 @@ import { newGateQuestion, type GateQuestion } from './question';
  * reload can't skip the wait.
  */
 
-const MAX_STRIKES = 3;
-const LOCKOUT_MS = 30_000;
 const MAX_DIGITS = 2;
-const ATTEMPTS_KEY = 'library-card:gate-attempts';
-
-interface Attempts {
-  strikes: number;
-  lockedUntil: number | null;
-}
-
-function readAttempts(): Attempts {
-  try {
-    const raw = window.sessionStorage.getItem(ATTEMPTS_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as Partial<Attempts>;
-      const lockedUntil = typeof parsed.lockedUntil === 'number' && parsed.lockedUntil > Date.now() ? parsed.lockedUntil : null;
-      return { strikes: lockedUntil ? MAX_STRIKES : Number(parsed.strikes) || 0, lockedUntil };
-    }
-  } catch {
-    // Ignore unreadable storage.
-  }
-  return { strikes: 0, lockedUntil: null };
-}
-
-function writeAttempts(attempts: Attempts): void {
-  try {
-    if (attempts.strikes === 0 && attempts.lockedUntil === null) window.sessionStorage.removeItem(ATTEMPTS_KEY);
-    else window.sessionStorage.setItem(ATTEMPTS_KEY, JSON.stringify(attempts));
-  } catch {
-    // Storage blocked: attempts only last for this screen.
-  }
-}
 
 export interface ParentGateProps {
   onPass: () => void;
@@ -54,13 +32,13 @@ export function ParentGate({ onPass, onCancel, reason }: ParentGateProps) {
   const t = strings.gate;
   const [question, setQuestion] = useState<GateQuestion>(() => newGateQuestion());
   const [entry, setEntry] = useState('');
-  const [attempts, setAttempts] = useState<Attempts>(readAttempts);
+  const [attempts, setAttempts] = useState<Attempts>(() => readAttempts());
   const [message, setMessage] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const questionId = useId();
 
-  const locked = attempts.lockedUntil !== null && attempts.lockedUntil > now;
-  const secondsLeft = locked ? Math.ceil((attempts.lockedUntil! - now) / 1000) : 0;
+  const locked = isLockedOut(attempts, now);
+  const secondsLeft = lockoutSecondsLeft(attempts, now);
 
   // Countdown while locked out; unlocks itself with a fresh question.
   useEffect(() => {
@@ -71,9 +49,8 @@ export function ParentGate({ onPass, onCancel, reason }: ParentGateProps) {
       setNow(current);
       if (current >= until) {
         clearInterval(id);
-        const cleared = { strikes: 0, lockedUntil: null };
-        writeAttempts(cleared);
-        setAttempts(cleared);
+        writeAttempts(NO_ATTEMPTS);
+        setAttempts(NO_ATTEMPTS);
         setMessage(null);
         setQuestion((q) => newGateQuestion(q));
       }
@@ -94,20 +71,18 @@ export function ParentGate({ onPass, onCancel, reason }: ParentGateProps) {
   const submit = useCallback(() => {
     if (locked || entry === '') return;
     if (Number(entry) === question.answer) {
-      writeAttempts({ strikes: 0, lockedUntil: null });
+      writeAttempts(NO_ATTEMPTS);
       onPass();
       return;
     }
-    const strikes = attempts.strikes + 1;
-    const next: Attempts =
-      strikes >= MAX_STRIKES ? { strikes, lockedUntil: Date.now() + LOCKOUT_MS } : { strikes, lockedUntil: null };
+    const next = afterWrongAnswer(attempts, Date.now());
     writeAttempts(next);
     setAttempts(next);
     setNow(Date.now());
     setEntry('');
     setMessage(next.lockedUntil ? null : t.wrong);
     setQuestion((q) => newGateQuestion(q));
-  }, [locked, entry, question.answer, attempts.strikes, onPass, t.wrong]);
+  }, [locked, entry, question.answer, attempts, onPass, t.wrong]);
 
   // A hardware keyboard works too (desktop, accessibility); no text field is used.
   const handlers = useRef({ press, erase, submit });

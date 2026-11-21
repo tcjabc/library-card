@@ -29,6 +29,9 @@ jobs:
 
       - run: npm run lint
 
+      # A failing test stops the deploy.
+      - run: npm test
+
       - name: Build
         run: npm run build
         env:

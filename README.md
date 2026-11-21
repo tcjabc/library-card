@@ -53,6 +53,8 @@ Phone browsers only allow the camera on secure (HTTPS) pages. Pick one:
 | `npm run build`               | Type-check and build to `dist/` (includes the service worker) |
 | `npm run preview`             | Serve the production build locally                  |
 | `npm run lint`                | ESLint                                              |
+| `npm test`                    | Unit and storage tests (Vitest, Node, fake IndexedDB) |
+| `npm run test:watch`          | The same, re-run on every change                    |
 | `npm run generate-pwa-assets` | Regenerate app icons from `public/favicon.svg`      |
 
 ## Configuration
@@ -74,7 +76,8 @@ in them.
 
 1. Push the repo to GitHub.
 2. In **Settings → Pages**, set **Source** to **GitHub Actions**.
-3. Push to `main`. `.github/workflows/deploy.yml` lints, builds and deploys.
+3. Push to `main`. `.github/workflows/deploy.yml` lints, tests, builds and deploys.
+   A failing test stops the deploy.
 
 The workflow sets `VITE_BASE` to `/<repo-name>/`. For a user site
 (`<name>.github.io`) or a custom domain, add a repository variable
@@ -91,7 +94,8 @@ src/
     DataStore.ts   The storage interface and entity types
     index.ts       getDataStore(), useDataQuery(), hashPin()/verifyPin()
     pin.ts         Parent PIN hashing shared by every adapter
-    selftest.ts    Storage self-test (run from #/dev)
+    selftest.ts    In-app storage self-test (run from #/dev)
+    testing/       Storage checks shared by the self-test and Vitest
     adapters/      One file per backend
   books/         ISBN validation, lookup and the add / fix book sheet
   cards/         Library card QR URLs
@@ -151,8 +155,10 @@ rule stops feature code from importing an adapter directly.
     persisted. A photo is deleted once no book uses it.
 12. Store `parent_pin_hash` exactly as `hashPin()` returns it.
 
-Run the self-test on `#/dev` after changing the local adapter. It runs on
-throwaway databases, including real v1 to v3 and v2 to v3 migrations.
+After changing the local adapter, run `npm test`. The storage checks in
+`src/data/testing/` also run in the app (`#/dev`, Storage self-test), which is
+worth doing on real phones: their IndexedDB differs from the fake one in Node.
+Both run on throwaway databases, including real v1 to v3 and v2 to v3 migrations.
 
 _Schemas, migrations and auth for hosted adapters will be added with each one._
 

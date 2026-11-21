@@ -13,7 +13,6 @@ import {
   DataStoreError,
   HOUSEHOLD_ID,
   MAX_COVER_BYTES,
-  READ_TAP_GUARD_MS,
   type Book,
   type BookKey,
   type DataChangeListener,
@@ -30,6 +29,7 @@ import {
   type ReaderJourney,
 } from '../DataStore';
 import { newCardToken, newId, toIso } from '../ids';
+import { addToSummary, isRepeatTap, latestEvent, summarize } from '../readRules';
 
 /**
  * Local-only adapter backed by IndexedDB. Data never leaves the device.
@@ -344,26 +344,6 @@ async function migrateV2Data(tx: AnyTx<'versionchange'>): Promise<void> {
   for (const summary of summaries.values()) await tx.objectStore('read_summaries').put(summary);
 }
 
-/** A summary after adding one event. */
-function addToSummary(summary: ReadSummary | null, event: ReadEvent): ReadSummary {
-  if (!summary) {
-    return {
-      reader_id: event.reader_id,
-      isbn: event.isbn,
-      household_id: event.household_id,
-      first_read_at: event.read_at,
-      last_read_at: event.read_at,
-      count: 1,
-    };
-  }
-  return {
-    ...summary,
-    first_read_at: event.read_at < summary.first_read_at ? event.read_at : summary.first_read_at,
-    last_read_at: event.read_at > summary.last_read_at ? event.read_at : summary.last_read_at,
-    count: summary.count + 1,
-  };
-}
-
 /** All keys [prefix, *] in a [string, string] compound index. */
 function prefixRange(prefix: string, from = ''): IDBKeyRange {
   return IDBKeyRange.bound([prefix, from], [prefix, MAX_STRING]);
@@ -399,15 +379,6 @@ async function sha256Hex(blob: Blob): Promise<string> {
   return Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** Latest event first, then by id, matching undoLatestRead's rule. */
-function latestEvent(events: ReadEvent[]): ReadEvent | null {
-  let best: ReadEvent | null = null;
-  for (const e of events) {
-    if (!best || e.read_at > best.read_at || (e.read_at === best.read_at && e.id > best.id)) best = e;
-  }
-  return best;
-}
-
 type ReadTx = AnyTx<'readwrite'>;
 
 /** Rebuilds one reader+book summary from its events (deletes it when none are left). */
@@ -418,9 +389,8 @@ async function recomputeSummary(tx: ReadTx, readerId: Id, isbn: BookKey): Promis
     await summaries.delete([readerId, isbn]);
     return null;
   }
-  let summary: ReadSummary | null = null;
-  for (const event of events) summary = addToSummary(summary, event);
-  await summaries.put(summary!);
+  const summary = summarize(events)!;
+  await summaries.put(summary);
   return summary;
 }
 
@@ -975,7 +945,7 @@ export async function createLocalStore(dbName = DB_NAME, options: LocalStoreOpti
       if (readAt === undefined) {
         // Double-tap guard: ignore a repeat within READ_TAP_GUARD_MS of the latest read.
         const latest = latestEvent(await events.index('by_reader_isbn_read_at').getAll(bookRange(readerId, isbn)));
-        if (latest && Math.abs(now() - Date.parse(latest.read_at)) < READ_TAP_GUARD_MS) {
+        if (isRepeatTap(latest?.read_at, now())) {
           await tx.done;
           return null;
         }
