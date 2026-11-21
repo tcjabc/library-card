@@ -20,6 +20,7 @@ import { LibrariesPanel } from './LibrariesPanel';
 import { LoansPanel } from './LoansPanel';
 import { ReadersPanel } from './ReadersPanel';
 import { SelfTestPanel } from './SelfTestPanel';
+import { StaircasePanel } from './StaircasePanel';
 import './DevPage.css';
 
 /**
@@ -70,6 +71,7 @@ export default function DevPage() {
           <BooksPanel store={store} household={household} />
           <LibrariesPanel store={store} household={household} />
           <LoansPanel store={store} household={household} />
+          <StaircasePanel />
           <SelfTestPanel />
         </>
       )}

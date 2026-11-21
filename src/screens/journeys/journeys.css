@@ -1,0 +1,403 @@
+/*
+ * Reading Journeys, the celebration and the Family Staircase. Every value
+ * comes from theme.css tokens; --journey-color is set per journey from its
+ * --journey-* token (see journeyStyle()).
+ */
+
+/* Gallery ----------------------------------------------------------------- */
+
+.journey-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 10rem), 1fr));
+  gap: var(--space-4);
+}
+
+.journey-card {
+  appearance: none;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: calc(var(--tap-target-lg) * 2);
+  padding: var(--space-5) var(--space-3) var(--space-4);
+  border: var(--border-thick) solid transparent;
+  border-radius: var(--radius-xl);
+  background: var(--journey-color);
+  color: var(--color-on-journey);
+  font: inherit;
+  font-weight: var(--weight-bold);
+  text-align: center;
+  box-shadow: var(--shadow-card);
+  cursor: pointer;
+  transition: transform var(--duration-fast) ease-out;
+}
+
+.journey-card:active {
+  transform: scale(0.97);
+}
+
+.journey-card:disabled {
+  cursor: default;
+}
+
+.journey-card--active {
+  border-color: var(--color-accent);
+  outline: var(--border-guide) solid var(--color-accent);
+  outline-offset: var(--space-1);
+}
+
+.journey-card__emoji {
+  font-size: var(--text-3xl);
+  line-height: 1;
+}
+
+.journey-card__title {
+  font-size: var(--text-lg);
+  line-height: 1.2;
+}
+
+.journey-card__detail {
+  font-size: var(--text-md);
+}
+
+.journey-card--active .journey-card__detail {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
+.journey-card__done {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-journey-done);
+  color: var(--color-on-journey-done);
+  font-size: var(--text-sm);
+  line-height: 1.2;
+}
+
+/* Journey screen ------------------------------------------------------------ */
+
+.journey-page__nav {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.journey-page__nav .back-link {
+  align-self: center;
+}
+
+.journey-page__to-go {
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-full);
+  background: var(--journey-color);
+  color: var(--color-on-journey);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-bold);
+}
+
+.journey-track {
+  position: relative;
+  list-style: none;
+  margin: 0;
+  padding: var(--space-4) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-radius: var(--radius-xl);
+  background: color-mix(in srgb, var(--journey-color) 14%, var(--color-surface));
+}
+
+/* The path the steps sit on. */
+.journey-track::before {
+  content: '';
+  position: absolute;
+  top: var(--space-6);
+  bottom: var(--space-6);
+  left: 50%;
+  width: var(--space-2);
+  transform: translateX(-50%);
+  border-radius: var(--radius-full);
+  background: var(--journey-color);
+  opacity: 0.4;
+}
+
+.journey-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--journey-step);
+}
+
+.journey-step__stage {
+  text-align: right;
+  font-size: var(--text-md);
+  font-weight: var(--weight-bold);
+  line-height: 1.2;
+}
+
+.journey-step__dot {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--tap-target);
+  height: var(--tap-target);
+  border: var(--border-thick) solid var(--journey-color);
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--text-md);
+  font-weight: var(--weight-bold);
+}
+
+.journey-step--filled .journey-step__dot {
+  background: var(--journey-color);
+  color: var(--color-on-journey);
+}
+
+.journey-step--current .journey-step__dot {
+  width: var(--tap-target-lg);
+  height: var(--tap-target-lg);
+  border: var(--border-guide) solid var(--color-accent);
+  background: var(--color-surface);
+}
+
+.journey-step__cover {
+  justify-self: start;
+  width: var(--journey-cover);
+}
+
+.journey-step__cover .cover--placeholder,
+.stair__cover .cover--placeholder {
+  padding: var(--space-1);
+}
+
+.journey-step__cover .cover__title,
+.stair__cover .cover__title {
+  display: none;
+}
+
+.journey-step__cover .cover__emoji,
+.stair__cover .cover__emoji {
+  font-size: var(--text-md);
+}
+
+.journey-track__end {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  font-size: var(--text-md);
+  font-weight: var(--weight-bold);
+}
+
+.journey-track__end-emoji {
+  font-size: var(--text-2xl);
+  line-height: 1;
+}
+
+.journey-avatar,
+.stair__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  animation: journey-bounce var(--duration-bounce) ease-in-out infinite;
+}
+
+.journey-avatar {
+  font-size: var(--text-xl);
+}
+
+.journey-track__end .journey-avatar {
+  width: var(--tap-target-lg);
+  height: var(--tap-target-lg);
+  border: var(--border-guide) solid var(--color-accent);
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+}
+
+@keyframes journey-bounce {
+  50% {
+    transform: translateY(calc(var(--space-1) * -1));
+  }
+}
+
+/* Celebration ---------------------------------------------------------------- */
+
+.celebration {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-celebration);
+  display: grid;
+  place-items: center;
+  padding: max(var(--space-5), env(safe-area-inset-top)) var(--space-5) max(var(--space-5), env(safe-area-inset-bottom));
+  overflow-y: auto;
+  background: var(--journey-color, var(--color-brand));
+  color: var(--color-on-journey);
+  text-align: center;
+}
+
+.celebration__body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-5);
+  max-width: var(--content-max);
+}
+
+.celebration__badge {
+  display: grid;
+  place-items: center;
+  width: calc(var(--avatar-size-lg) * 1.6);
+  height: calc(var(--avatar-size-lg) * 1.6);
+  border: var(--border-guide) solid var(--color-accent);
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+  font-size: var(--text-emoji);
+  line-height: 1;
+  box-shadow: var(--shadow-raised);
+  animation: celebration-pop var(--duration-confetti) cubic-bezier(0.3, 1.6, 0.5, 1) both;
+}
+
+.celebration__title {
+  margin: 0;
+  font-size: var(--text-3xl);
+  line-height: 1.1;
+}
+
+@keyframes celebration-pop {
+  from {
+    transform: scale(0.3) rotate(-12deg);
+    opacity: 0;
+  }
+}
+
+/* Family Staircase ----------------------------------------------------------- */
+
+.stairs__probe {
+  position: absolute;
+  width: 0;
+  height: var(--stair-step);
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.stairs {
+  position: relative;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.stair {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--stair-step);
+  display: flex;
+  contain: layout style;
+}
+
+.stair--right {
+  flex-direction: row-reverse;
+}
+
+.stair__block {
+  flex: 0 0 var(--stair-width);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-1) 0;
+  padding: var(--space-1) var(--space-3);
+  border-top: var(--border-guide) solid var(--reader-color);
+  border-bottom: var(--border-thick) solid var(--color-stair-edge);
+  border-radius: var(--radius-md);
+  background: var(--color-stair);
+  box-shadow: var(--shadow-card);
+}
+
+.stair__number {
+  min-width: 2.5ch;
+  font-size: var(--text-md);
+  font-weight: var(--weight-bold);
+  color: var(--color-text-muted);
+}
+
+.stair__cover {
+  flex-shrink: 0;
+  width: var(--stair-cover);
+}
+
+.stair__avatars {
+  margin-left: auto;
+  display: flex;
+  gap: var(--space-1);
+}
+
+.stair__avatar {
+  width: var(--avatar-size);
+  height: var(--avatar-size);
+  border: var(--border-thick) solid var(--reader-color);
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+  font-size: var(--text-xl);
+}
+
+.stair__beside {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-1);
+  text-align: center;
+}
+
+.stair__novelty {
+  font-size: var(--text-2xl);
+  line-height: 1;
+}
+
+.stair__milestone {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--color-milestone);
+  color: var(--color-on-milestone);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  line-height: 1.25;
+}
+
+.stair__first {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  color: var(--color-text-muted);
+  line-height: 1.25;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .journey-card,
+  .journey-avatar,
+  .stair__avatar,
+  .celebration__badge {
+    animation: none;
+    transition: none;
+  }
+}

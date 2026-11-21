@@ -4,8 +4,11 @@ import { GrownUpProvider } from './grownups/GrownUpProvider';
 import { endGrownUpSession, isGrownUpPath } from './grownups/session';
 import { matchPath, navigate, useHashPath } from './router';
 import { CardLink } from './screens/CardLink';
-import { ComingSoon, StaircaseSoon } from './screens/ComingSoon';
 import { Hub } from './screens/Hub';
+import { CelebrationHost } from './screens/journeys/CelebrationHost';
+import { FamilyStaircase } from './screens/journeys/FamilyStaircase';
+import { JourneyGallery } from './screens/journeys/JourneyGallery';
+import { JourneyScreen } from './screens/journeys/JourneyScreen';
 import { LibraryBooks } from './screens/library/LibraryBooks';
 import { Shelf } from './screens/Shelf';
 import { Splash } from './screens/Splash';
@@ -20,6 +23,7 @@ export function App() {
     <ToastProvider>
       <GrownUpProvider>
         <Routes />
+        <CelebrationHost />
       </GrownUpProvider>
     </ToastProvider>
   );
@@ -54,10 +58,12 @@ function Routes() {
       return <RequireReader>{(reader) => <Shelf reader={reader} />}</RequireReader>;
     case '/library':
       return <RequireReader>{(reader) => <LibraryBooks reader={reader} />}</RequireReader>;
+    case '/journeys':
+      return <RequireReader>{(reader) => <JourneyGallery reader={reader} />}</RequireReader>;
     case '/journey':
-      return <RequireReader>{() => <ComingSoon title={strings.hub.journey} emoji="🗺️" />}</RequireReader>;
+      return <RequireReader>{(reader) => <JourneyScreen reader={reader} />}</RequireReader>;
     case '/staircase':
-      return <RequireReader>{(reader) => <StaircaseSoon reader={reader} />}</RequireReader>;
+      return <RequireReader>{(reader) => <FamilyStaircase reader={reader} />}</RequireReader>;
     case '/dev':
       return (
         <GrownUpGate>

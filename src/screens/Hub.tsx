@@ -5,6 +5,7 @@ import { dueStatus, needsAttention } from '../library/due';
 import { href, navigate } from '../router';
 import { clearActiveReader } from '../session/activeReader';
 import { fmt, strings } from '../strings';
+import { useCompletionCheckOnOpen, useJourneyStatus } from './journeys/useJourneyStatus';
 
 /** #/hub — the reader's home screen. */
 export function Hub({ reader }: { reader: Reader }) {
@@ -15,6 +16,8 @@ export function Hub({ reader }: { reader: Reader }) {
   const { data: loans } = useDataQuery(loansQuery, ['loans']);
   const today = useToday();
   const dueCount = (loans ?? []).filter((loan) => needsAttention(dueStatus(loan.due_date, today))).length;
+  const { status, loading: journeyLoading, store } = useJourneyStatus(reader.id);
+  useCompletionCheckOnOpen(store, reader.id);
 
   const notMe = () => {
     clearActiveReader();
@@ -48,15 +51,28 @@ export function Hub({ reader }: { reader: Reader }) {
             </span>
           )}
         </a>
-        <a className="tile tile--journey" href={href('/journey')}>
-          <span className="tile__emoji" aria-hidden="true">🗺️</span>
+        <a
+          className="tile tile--journey"
+          href={href(status ? '/journey' : '/journeys')}
+          aria-label={
+            status
+              ? fmt(t.journeyLabel, { journey: status.journey.title, progress: status.progress, steps: status.journey.steps })
+              : undefined
+          }
+        >
+          <span className="tile__emoji" aria-hidden="true">{status?.journey.emoji ?? '🗺️'}</span>
           <span className="tile__label">{t.journey}</span>
+          {!journeyLoading && (
+            <span className="tile__detail">
+              {status ? fmt(t.journeyProgress, { progress: status.progress, steps: status.journey.steps }) : t.journeyPick}
+            </span>
+          )}
         </a>
         <a className="tile tile--staircase" href={href('/staircase')}>
           <span className="tile__emoji" aria-hidden="true">🪜</span>
           <span className="tile__label">{t.staircase}</span>
           {familyReads !== undefined && (
-            <span className="tile__detail">{fmt(familyReads === 1 ? t.familyReadsOne : t.familyReads, { count: familyReads })}</span>
+            <span className="tile__detail">{fmt(familyReads === 1 ? t.familyReadsOne : t.familyReads, { count: familyReads.toLocaleString() })}</span>
           )}
         </a>
       </nav>

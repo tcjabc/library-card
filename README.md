@@ -6,15 +6,16 @@ A reading tracker for kids, built as an installable web app (PWA).
 - Two libraries: **Home** (books you own, with a per-child "I read this!") and
   **Borrowed** (library loans with an optional due date).
 - Reads drive **Reading Journeys** (each reader picks one and climbs it until
-  it's done) and a shared **Household Journey** (an endless staircase of
+  it's done) and a shared **Family Staircase** (an endless staircase of
   everyone's reads).
 
 The repo has no personal data, accounts or seed content. By default
 everything is stored on the device in IndexedDB.
 
-> **Status: Phase 3.** Library-card sign-in, the kid hub, My Bookshelf and
+> **Status: Phase 4.** Library-card sign-in, the kid hub, My Bookshelf,
 > Library Books (borrow by scanning the book and the library sticker, renew,
-> return, re-read). Grown-up tools (readers and cards, books, libraries, loans)
+> return, re-read), Reading Journeys with a celebration at the finish, and the
+> Family Staircase. Grown-up tools (readers and cards, books, libraries, loans)
 > live on a gated page at `#/dev` until the full grown-up area arrives.
 
 ## Quick start (zero config)
@@ -118,8 +119,10 @@ src/
   cards/         Library card QR URLs
   scan/          Camera scanner (QR mode and book mode)
   session/       The active reader on this device
-  screens/       Kid screens: splash, card sign-in, hub, bookshelf
-  journeys/      Reading Journey definitions (data only)
+  screens/       Kid screens: splash, card sign-in, hub, bookshelf, library,
+                 journeys/ (gallery, journey track, celebration, staircase)
+  journeys/      Journey config (journeys.ts) and pure, unit-tested helpers:
+                 progress, staircase layout, completion check, celebration flag
   lib/           Small helpers: dates, text, image resizing
   strings/       All UI text (en.ts)
   ui/            Shared styles and components
@@ -169,7 +172,12 @@ rule stops feature code from importing an adapter directly.
    `countHouseholdReads()` counts reader and book pairs. Both are indexed counts.
 8. At most one active journey per reader, held in `readers.active_journey_id`.
    `startJourney()`, `completeJourney()` and `deleteReaderJourney()` keep it
-   right. `getActiveJourney()` returns `null` for a missing or completed journey.
+   right. Starting a journey while another is active stops the old one first
+   (sets its `abandoned_at`) in the same transaction. `getActiveJourney()`
+   returns `null` for a missing, completed or abandoned journey. Completion is
+   permanent: `completeJourney()` keeps the first `completed_at`, and undoing
+   reads never clears it. Records stored before `abandoned_at` existed read it
+   as `null`.
 9. Every delete removes one record by id; cascades delete each child row.
 10. Call `subscribe()` listeners after every write, including writes from other
     tabs or devices (`remote: true`).

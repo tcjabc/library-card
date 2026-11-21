@@ -12,7 +12,12 @@ export function prefersReducedMotion(): boolean {
   return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
-export function confettiBurst(from: Element | { x: number; y: number }): void {
+export interface ConfettiOptions {
+  /** 'big' throws more pieces, further: for celebrations. */
+  size?: 'small' | 'big';
+}
+
+export function confettiBurst(from: Element | { x: number; y: number }, options: ConfettiOptions = {}): void {
   if (prefersReducedMotion()) return;
   const point =
     from instanceof Element
@@ -28,10 +33,12 @@ export function confettiBurst(from: Element | { x: number; y: number }): void {
   layer.style.left = `${point.x}px`;
   layer.style.top = `${point.y}px`;
 
-  for (let i = 0; i < PIECES; i++) {
+  const big = options.size === 'big';
+  const pieces = big ? PIECES * 2 : PIECES;
+  for (let i = 0; i < pieces; i++) {
     const piece = document.createElement('span');
-    const angle = (Math.PI * 2 * i) / PIECES + Math.random() * 0.4;
-    const distance = 60 + Math.random() * 70;
+    const angle = (Math.PI * 2 * i) / pieces + Math.random() * 0.4;
+    const distance = big ? 110 + Math.random() * 200 : 60 + Math.random() * 70;
     piece.className = 'confetti__piece';
     piece.style.setProperty('--dx', `${Math.cos(angle) * distance}px`);
     piece.style.setProperty('--dy', `${Math.sin(angle) * distance - 40}px`);

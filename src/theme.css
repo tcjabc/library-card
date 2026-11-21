@@ -70,6 +70,34 @@
   --confetti-4: #2b8a3e;
   --confetti-5: #15aabf;
 
+  /* Journeys: one theme colour each, dark enough for --color-on-journey text in both themes. */
+  --journey-ocean-deep: #1c4f8a;
+  --journey-redwood-tree: #237032;
+  --journey-ocean-cliff: #0b7285;
+  --journey-skyscraper: #495057;
+  --journey-rapunzel-tower: #862e9c;
+  --journey-hot-air-balloon: #c92a2a;
+  --journey-ladder-to-the-moon: #364fc7;
+  --journey-rocket-through-space: #2c2f6b;
+  --color-on-journey: #ffffff;
+  --color-journey-done: #2b8a3e;
+  --color-on-journey-done: #ffffff;
+
+  /* Family Staircase: a colour per reader (picked from the reader id). */
+  /* Eight clearly different hues, so siblings never look alike. */
+  --reader-1: #e8590c; /* orange */
+  --reader-2: #1971c2; /* blue */
+  --reader-3: #2f9e44; /* green */
+  --reader-4: #ae3ec9; /* purple */
+  --reader-5: #fab005; /* yellow */
+  --reader-6: #0c8599; /* teal */
+  --reader-7: #f06595; /* pink */
+  --reader-8: #a0522d; /* brown */
+  --color-stair: #ffe8cc;
+  --color-stair-edge: #f4c38a;
+  --color-milestone: #f59f00;
+  --color-on-milestone: #2b1d00;
+
   /* Overlays */
   --color-backdrop: rgba(20, 24, 33, 0.55);
   --color-toast: #1f2430;
@@ -129,15 +157,23 @@
   --cover-aspect: 2 / 3;
   /* ID-1 card (credit-card size), 85.6 x 54 mm. */
   --card-aspect: 1.586;
+  /* Journeys and the staircase */
+  --journey-step: 4.5rem;
+  --journey-cover: 2.5rem;
+  --stair-step: 5rem;
+  --stair-width: 62%;
+  --stair-cover: 2.25rem;
 
   /* Motion */
   --duration-fast: 120ms;
   --duration-confetti: 900ms;
+  --duration-bounce: 1.6s;
 
   /* Layering */
   --z-sheet: 50;
   --z-toast: 60;
   --z-confetti: 70;
+  --z-celebration: 55;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -175,6 +211,8 @@
     --cover-placeholder-3: #5c4a0e;
     --cover-placeholder-4: #5c3a14;
     --color-on-cover-placeholder: #f1f3f5;
+    --color-stair: #3a2c1c;
+    --color-stair-edge: #5c4630;
     --color-toast: #eef0f5;
     --color-on-toast: #141821;
   }

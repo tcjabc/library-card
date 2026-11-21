@@ -140,7 +140,10 @@ export interface ReaderJourney {
   /** Id of a Journey definition from src/journeys/journeys.ts. */
   journey_id: string;
   started_at: Timestamp;
+  /** Set once the journey is finished. Permanent: undoing reads never clears it. */
   completed_at: Timestamp | null;
+  /** Set when the reader switched to another journey before finishing this one. */
+  abandoned_at: Timestamp | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -351,21 +354,29 @@ export interface DataStore {
   countReadsSince(readerId: Id, since: Timestamp): Promise<number>;
   /** Distinct (reader, book) pairs with at least one read: the Household Journey. */
   countHouseholdReads(householdId: Id): Promise<number>;
+  /** Every reader's summaries in the household (the Family Staircase), in no particular order. */
+  listHouseholdReadSummaries(householdId: Id): Promise<ReadSummary[]>;
 
   // Reading journeys --------------------------------------------------------
   /**
-   * Creates a journey and makes it the reader's active_journey_id. Rejects
-   * with "conflict" if the reader already has an active journey.
+   * Starts a journey and makes it the reader's active_journey_id. A journey
+   * that was still active is stopped first (abandoned_at is set), all in one
+   * transaction.
    */
   startJourney(readerId: Id, journeyId: string, startedAt?: Timestamp): Promise<ReaderJourney>;
   /**
    * The journey readers.active_journey_id points to, or null if it is unset,
-   * missing or completed.
+   * missing, completed or abandoned.
    */
   getActiveJourney(readerId: Id): Promise<ReaderJourney | null>;
-  /** Newest started first, including completed ones. */
-  listReaderJourneys(readerId: Id): Promise<ReaderJourney[]>;
-  /** Sets completed_at and clears the reader's active_journey_id if it pointed here. */
+  /** Every journey the reader started, newest first: active, completed and abandoned. */
+  listJourneyHistory(readerId: Id): Promise<ReaderJourney[]>;
+  /** How many times the reader completed each journey: journey_id -> count. */
+  countCompletedJourneys(readerId: Id): Promise<Record<string, number>>;
+  /**
+   * Sets completed_at (the first completion is kept) and clears the reader's
+   * active_journey_id if it pointed here. Permanent.
+   */
   completeJourney(id: Id, completedAt?: Timestamp): Promise<ReaderJourney>;
   /** Removes a journey (e.g. a reader switches before finishing) and clears the pointer to it. */
   deleteReaderJourney(id: Id): Promise<void>;

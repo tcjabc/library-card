@@ -171,7 +171,7 @@ export const storageChecks: StorageCheck[] = [
     equal((await store.listReadEvents(b.id)).length, 0, 'events gone');
     equal((await store.listReadSummaries(b.id)).length, 0, 'summaries gone');
     equal(await store.getLoan(loan.id), null, 'loan gone');
-    equal((await store.listReaderJourneys(b.id)).map((j) => j.id).includes(journey.id), false, 'journey gone');
+    equal((await store.listJourneyHistory(b.id)).map((j) => j.id).includes(journey.id), false, 'journey gone');
     equal(await store.countHouseholdReads(h.id), 1, "the other reader's read stays");
   }),
 
@@ -492,16 +492,76 @@ export const storageChecks: StorageCheck[] = [
     await store.markRead(c.id, ISBN_A, '2026-01-05T00:00:00Z');
     equal(await store.countHouseholdReads(h.id), 3, 'A×A, A×B, B×A');
     equal(await store.countHouseholdReads(other.id), 1, 'other household');
+    const all = await store.listHouseholdReadSummaries(h.id);
+    equal(all.map((x) => `${x.reader_id === a.id ? 'A' : 'B'}:${x.isbn}:${x.count}`).sort(), [`A:${ISBN_A}:2`, `A:${ISBN_B}:1`, `B:${ISBN_A}:1`].sort(), 'listHouseholdReadSummaries');
+    equal((await store.listHouseholdReadSummaries(other.id)).length, 1, 'per household');
   }),
 
   // Journeys ----------------------------------------------------------------------
-  check('journeys', 'startJourney sets active_journey_id; a second active journey is a conflict', async (ctx) => {
+  check('journeys', 'startJourney sets active_journey_id; starting another abandons the active one', async (ctx) => {
     const { store, a } = await withReaders(ctx);
-    const j = await store.startJourney(a.id, 'ocean_deep');
+    const j = await store.startJourney(a.id, 'ocean_deep', '2026-01-01T00:00:00Z');
+    equal([j.completed_at, j.abandoned_at], [null, null], 'new journey is open');
     equal((await store.getReader(a.id))?.active_journey_id, j.id, 'pointer set');
     equal((await store.getActiveJourney(a.id))?.id, j.id, 'getActiveJourney');
-    await rejectsWithCode(store.startJourney(a.id, 'skyscraper'), 'conflict', 'second active');
+    const next = await store.startJourney(a.id, 'skyscraper', '2026-01-05T00:00:00Z');
+    equal((await store.getActiveJourney(a.id))?.id, next.id, 'the new one is active');
+    const history = await store.listJourneyHistory(a.id);
+    equal(history.map((x) => [x.journey_id, x.abandoned_at, x.completed_at]), [
+      ['skyscraper', null, null],
+      ['ocean_deep', T('2026-01-05T00:00:00Z'), null],
+    ], 'old one abandoned at the switch, history newest first');
     await rejectsWithCode(store.startJourney('nope', 'skyscraper'), 'not_found', 'unknown reader');
+  }),
+  check('journeys', 'getActiveJourney ignores abandoned and completed journeys', async (ctx) => {
+    const { store, dbName, a } = await withReaders(ctx);
+    const j = await store.startJourney(a.id, 'ocean_deep');
+    const raw = await rawGet<Record<string, unknown>>(dbName, 'reader_journeys', j.id);
+    const { openDB } = await import('idb');
+    const db = await openDB(dbName);
+    await db.put('reader_journeys', { ...raw, abandoned_at: '2026-01-01T00:00:00.000Z' });
+    db.close();
+    equal(await store.getActiveJourney(a.id), null, 'abandoned is not active even if pointed at');
+    const k = await store.startJourney(a.id, 'redwood_tree');
+    await store.completeJourney(k.id);
+    equal(await store.getActiveJourney(a.id), null, 'completed is not active');
+  }),
+  check('journeys', 'journeys stored before abandoned_at existed read as not abandoned', async (ctx) => {
+    const { store, dbName, a } = await withReaders(ctx);
+    const j = await store.startJourney(a.id, 'ocean_deep', '2026-01-01T00:00:00Z');
+    const { openDB } = await import('idb');
+    const db = await openDB(dbName);
+    const row = (await db.get('reader_journeys', j.id)) as Record<string, unknown>;
+    delete row.abandoned_at;
+    await db.put('reader_journeys', row);
+    db.close();
+    equal((await store.getActiveJourney(a.id))?.abandoned_at, null, 'active, abandoned_at null');
+    equal((await store.listJourneyHistory(a.id))[0].abandoned_at, null, 'history normalises it');
+    const next = await store.startJourney(a.id, 'skyscraper', '2026-02-01T00:00:00Z');
+    equal((await store.listJourneyHistory(a.id)).map((x) => x.abandoned_at), [null, T('2026-02-01T00:00:00Z')], 'and it can be abandoned');
+    ok(!!next, 'new journey started');
+  }),
+  check('journeys', 'completion is permanent: undoing the reads keeps it completed', async (ctx) => {
+    const { store, a } = await withReaders(ctx);
+    const j = await store.startJourney(a.id, 'ocean_deep', '2026-01-01T00:00:00Z');
+    await store.markRead(a.id, ISBN_A, '2026-01-02T00:00:00Z');
+    await store.completeJourney(j.id, '2026-01-03T00:00:00Z');
+    await store.undoLatestRead(a.id, ISBN_A);
+    equal((await store.listJourneyHistory(a.id))[0].completed_at, T('2026-01-03T00:00:00Z'), 'still completed');
+    equal((await store.countCompletedJourneys(a.id)).ocean_deep, 1, 'still counted');
+  }),
+  check('journeys', 'countCompletedJourneys counts completions per journey', async (ctx) => {
+    const { store, a, b } = await withReaders(ctx);
+    for (const id of ['ocean_deep', 'ocean_deep', 'skyscraper']) {
+      const j = await store.startJourney(a.id, id);
+      await store.completeJourney(j.id);
+    }
+    await store.startJourney(a.id, 'redwood_tree'); // active, not counted
+    await store.startJourney(a.id, 'ocean_cliff'); // abandons redwood_tree, not counted
+    const other = await store.startJourney(b.id, 'ocean_deep');
+    await store.completeJourney(other.id);
+    equal(await store.countCompletedJourneys(a.id), { ocean_deep: 2, skyscraper: 1 }, 'per journey, this reader only');
+    equal(await store.countCompletedJourneys('nobody'), {}, 'nobody');
   }),
   check('journeys', 'completeJourney and deleteReaderJourney clear the pointer', async (ctx) => {
     const { store, a } = await withReaders(ctx);
@@ -513,7 +573,7 @@ export const storageChecks: StorageCheck[] = [
     const j2 = await store.startJourney(a.id, 'skyscraper', '2026-03-01T00:00:00Z');
     await store.deleteReaderJourney(j2.id);
     equal((await store.getReader(a.id))?.active_journey_id, null, 'cleared on delete');
-    equal((await store.listReaderJourneys(a.id)).map((x) => x.id), [j.id], 'history keeps the completed one');
+    equal((await store.listJourneyHistory(a.id)).map((x) => x.id), [j.id], 'history keeps the completed one');
     await rejectsWithCode(store.completeJourney('nope'), 'not_found', 'complete unknown');
   }),
   check('journeys', 'a pointer to a missing journey reads as none and does not block a new one', async (ctx) => {

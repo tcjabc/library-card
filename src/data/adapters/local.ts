@@ -368,6 +368,14 @@ function bookRange(readerId: Id, isbn: BookKey): IDBKeyRange {
   return IDBKeyRange.bound([readerId, isbn, ''], [readerId, isbn, MAX_STRING]);
 }
 
+/** Journeys stored before Phase 4 have no abandoned_at. */
+function normaliseJourney(journey: ReaderJourney): ReaderJourney {
+  return { ...journey, abandoned_at: journey.abandoned_at ?? null };
+}
+
+const isActiveJourney = (journey: ReaderJourney | undefined): journey is ReaderJourney =>
+  !!journey && journey.completed_at === null && (journey.abandoned_at ?? null) === null;
+
 function notFound(kind: string, id: string): DataStoreError {
   return new DataStoreError('not_found', `${kind} not found: ${id}`);
 }
@@ -1112,25 +1120,30 @@ export async function createLocalStore(dbName = DB_NAME, options: LocalStoreOpti
       return (await getDb()).countFromIndex('read_summaries', 'by_household', householdId);
     },
 
+    async listHouseholdReadSummaries(householdId) {
+      return (await getDb()).getAllFromIndex('read_summaries', 'by_household', householdId);
+    },
+
     // Reading journeys ------------------------------------------------------
     async startJourney(readerId, journeyId, startedAt) {
-      // The check and both writes share one readwrite transaction, which
-      // IndexedDB serialises, so two concurrent starts cannot both succeed.
+      // Stopping the old journey, creating the new one and moving the pointer
+      // share one readwrite transaction, which IndexedDB serialises, so the
+      // reader always ends up with exactly one active journey.
       const tx = (await getDb()).transaction(['readers', 'reader_journeys'], 'readwrite');
       const reader = await tx.objectStore('readers').get(readerId);
       if (!reader) throw notFound('Reader', readerId);
+      const at = startedAt ? toIso(startedAt) : nowIso();
       const current = reader.active_journey_id ? await tx.objectStore('reader_journeys').get(reader.active_journey_id) : undefined;
-      if (current && current.completed_at === null) {
-        tx.abort();
-        await tx.done.catch(() => undefined);
-        throw new DataStoreError('conflict', 'Reader already has an active journey.');
+      if (isActiveJourney(current)) {
+        await tx.objectStore('reader_journeys').put({ ...normaliseJourney(current), abandoned_at: at });
       }
       const journey: ReaderJourney = {
         id: newId(),
         reader_id: readerId,
         journey_id: journeyId,
-        started_at: startedAt ? toIso(startedAt) : nowIso(),
+        started_at: at,
         completed_at: null,
+        abandoned_at: null,
       };
       await tx.objectStore('reader_journeys').add(journey);
       await tx.objectStore('readers').put({ ...reader, active_journey_id: journey.id });
@@ -1144,12 +1157,21 @@ export async function createLocalStore(dbName = DB_NAME, options: LocalStoreOpti
       const reader = await d.get('readers', readerId);
       if (!reader?.active_journey_id) return null;
       const journey = await d.get('reader_journeys', reader.active_journey_id);
-      return journey && journey.completed_at === null ? journey : null;
+      return isActiveJourney(journey) ? normaliseJourney(journey) : null;
     },
 
-    async listReaderJourneys(readerId) {
+    async listJourneyHistory(readerId) {
       const mine = await (await getDb()).getAllFromIndex('reader_journeys', 'by_reader_started', prefixRange(readerId));
-      return mine.reverse();
+      return mine.reverse().map(normaliseJourney);
+    },
+
+    async countCompletedJourneys(readerId) {
+      const mine = await (await getDb()).getAllFromIndex('reader_journeys', 'by_reader_started', prefixRange(readerId));
+      const counts: Record<string, number> = {};
+      for (const journey of mine) {
+        if (journey.completed_at !== null) counts[journey.journey_id] = (counts[journey.journey_id] ?? 0) + 1;
+      }
+      return counts;
     },
 
     async completeJourney(id, completedAt) {
@@ -1157,7 +1179,7 @@ export async function createLocalStore(dbName = DB_NAME, options: LocalStoreOpti
       const existing = await tx.objectStore('reader_journeys').get(id);
       if (!existing) throw notFound('Reader journey', id);
       const next: ReaderJourney = {
-        ...existing,
+        ...normaliseJourney(existing),
         completed_at: existing.completed_at ?? (completedAt ? toIso(completedAt) : nowIso()),
       };
       await tx.objectStore('reader_journeys').put(next);

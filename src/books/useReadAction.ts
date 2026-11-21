@@ -1,5 +1,7 @@
 import { useCallback, useState, type MouseEvent } from 'react';
 import type { DataStore, ReadEvent, Reader } from '../data';
+import { checkJourneyCompletion } from '../journeys/completion';
+import { navigate } from '../router';
 import { fmt, strings } from '../strings';
 import { confettiBurst } from '../ui/confetti';
 import { useToast } from '../ui/Toast';
@@ -8,6 +10,10 @@ import { useToast } from '../ui/Toast';
  * "I read this!" / "Read again!" for any screen: every tap adds one read
  * event (a repeat within 10 seconds is ignored by the data layer), with
  * confetti and an Undo toast that removes that event.
+ *
+ * After each read it checks the reader's journey: a finished journey is
+ * completed and its celebration flagged (the overlay in App shows it). A
+ * reader with no journey gets a "Pick a journey!" button on the toast.
  */
 export function useReadAction(store: DataStore | null, reader: Reader) {
   const toast = useToast();
@@ -55,9 +61,19 @@ export function useReadAction(store: DataStore | null, reader: Reader) {
         const event = await store.markRead(reader.id, isbn);
         if (!event) return; // a second tap within a few seconds, ignored on purpose
         confettiBurst(burstAt);
+        const message = fmt(readBefore ? strings.shelf.markedAgainToast : strings.shelf.markedToast, { title });
+        const undoAction = { label: strings.shelf.undo, onAction: () => undo(event) };
+        // The read is saved; a failed journey check must not look like a failed read.
+        const noJourney = await journeyAfterRead(store, reader.id).catch((error: unknown) => {
+          console.error('[journey] completion check failed', error);
+          return false;
+        });
         toast({
-          message: fmt(readBefore ? strings.shelf.markedAgainToast : strings.shelf.markedToast, { title }),
-          action: { label: strings.shelf.undo, onAction: () => undo(event) },
+          message,
+          action: undoAction,
+          secondaryAction: noJourney
+            ? { label: strings.journey.pickJourney, onAction: () => navigate('/journeys') }
+            : undefined,
         });
       });
     },
@@ -65,4 +81,14 @@ export function useReadAction(store: DataStore | null, reader: Reader) {
   );
 
   return { read, pending, withPending };
+}
+
+/**
+ * Completes the active journey if this read finished it. Returns true when
+ * the reader has no journey going (and didn't just finish one, which the
+ * celebration already covers).
+ */
+async function journeyAfterRead(store: DataStore, readerId: string): Promise<boolean> {
+  if (await checkJourneyCompletion(store, readerId)) return false;
+  return (await store.getActiveJourney(readerId)) === null;
 }

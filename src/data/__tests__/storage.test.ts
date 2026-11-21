@@ -61,9 +61,9 @@ describe('coverage', () => {
       'updateLoan', 'renewLoan', 'unrenewLoan', 'returnLoan', 'unreturnLoan', 'deleteLoan',
       // reads
       'markRead', 'undoLatestRead', 'restoreReadEvent', 'getReadSummary', 'listReadSummaries', 'listReadEvents',
-      'countReadsSince', 'countHouseholdReads',
+      'countReadsSince', 'countHouseholdReads', 'listHouseholdReadSummaries',
       // journeys
-      'startJourney', 'getActiveJourney', 'listReaderJourneys', 'completeJourney', 'deleteReaderJourney',
+      'startJourney', 'getActiveJourney', 'listJourneyHistory', 'countCompletedJourneys', 'completeJourney', 'deleteReaderJourney',
       // change notifications, and local-only helpers used by the checks
       'subscribe', 'close', 'testOnlyAddHousehold',
     ];

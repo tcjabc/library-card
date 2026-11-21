@@ -611,6 +611,20 @@ img {
   flex-shrink: 0;
 }
 
+/* Two buttons don't fit beside the message on a phone: they go underneath. */
+.toast--two-actions {
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+}
+
+.toast--two-actions .toast__message {
+  flex-basis: 100%;
+  text-align: center;
+}
+
 @keyframes toast-in {
   from {
     opacity: 0;
