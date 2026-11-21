@@ -1,9 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
 import { strings } from '../strings';
+import {
+  defaultFacing,
+  listCameras,
+  loadCameraChoice,
+  nextCameraChoice,
+  resolveFacing,
+  saveCameraChoice,
+  videoConstraints,
+  type CameraChoice,
+  type CameraInfo,
+  type CameraMode,
+  type Facing,
+} from './cameras';
 import type { Detector, ScanFormat } from './detector';
 import './Scanner.css';
 
 export type { ScanFormat } from './detector';
+export type { CameraMode } from './cameras';
 
 export interface ScanResult {
   value: string;
@@ -18,17 +32,27 @@ export interface ScannerProps {
   /** Called once per distinct code; repeats of the same code are debounced. */
   onResult: (result: ScanResult) => void;
   onError?: (kind: ScannerErrorKind, error: unknown) => void;
+  /**
+   * "card": front camera by default, card-shaped aiming frame.
+   * "book" (default): back camera by default, barcode frame.
+   * The last camera chosen is remembered per mode on this device.
+   */
+  camera?: CameraMode;
+  /** Shown over the preview instead of the default hint. */
+  hint?: string;
+  /** Replaces the hint temporarily, e.g. "Try the other barcode". */
+  notice?: string | null;
   /** The same value is ignored until it has been out of view this long. Default 2500 ms. */
   debounceMs?: number;
   /** Keep the camera running but stop reporting results. */
   paused?: boolean;
-  /** Replaces the default hint, e.g. "Try the other barcode". */
-  notice?: string | null;
   className?: string;
 }
 
 // Time between detection attempts. ZXing on a phone takes ~20-60 ms per frame.
 const SCAN_INTERVAL_MS = 150;
+// Some Android cameras need a moment to release before the other one can open.
+const BUSY_RETRY_MS = 400;
 
 // Not yet in lib.dom.d.ts.
 interface ExtendedCapabilities extends MediaTrackCapabilities {
@@ -38,22 +62,32 @@ interface ExtendedCapabilities extends MediaTrackCapabilities {
 
 type Status = 'starting' | 'running' | 'error';
 
+// Camera opens are queued across all Scanner instances so a switch (or a
+// StrictMode remount) never has two getUserMedia calls in flight at once.
+let cameraQueue: Promise<unknown> = Promise.resolve();
+
 export function Scanner({
   formats,
   onResult,
   onError,
+  camera = 'book',
+  hint,
+  notice,
   debounceMs = 2500,
   paused = false,
-  notice,
   className,
 }: ScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const trackRef = useRef<MediaStreamTrack | null>(null);
+  const camerasRef = useRef<CameraInfo[]>([]);
   const [status, setStatus] = useState<Status>('starting');
   const [errorKind, setErrorKind] = useState<ScannerErrorKind | null>(null);
   const [torchSupported, setTorchSupported] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const [cameraCount, setCameraCount] = useState(0);
+  const [choice, setChoice] = useState<CameraChoice>(() => loadCameraChoice(camera) ?? {});
+  const [active, setActive] = useState<{ facing: Facing | null; deviceId: string | null }>({ facing: null, deviceId: null });
 
   // Latest callbacks/options without restarting the camera when they change.
   const onResultRef = useRef(onResult);
@@ -70,10 +104,24 @@ export function Scanner({
   const formatList: readonly ScanFormat[] = typeof formats === 'string' ? [formats] : formats;
   const formatsKey = [...formatList].sort().join(',');
 
+  // Keep the switch button in step with cameras being plugged in or removed.
+  useEffect(() => {
+    const media = navigator.mediaDevices;
+    if (!media?.addEventListener) return;
+    const onChange = () =>
+      void listCameras().then((cams) => {
+        camerasRef.current = cams;
+        setCameraCount(cams.length);
+      });
+    media.addEventListener('devicechange', onChange);
+    return () => media.removeEventListener('devicechange', onChange);
+  }, []);
+
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
     const wanted = formatsKey.split(',') as ScanFormat[];
+    const fallback = defaultFacing(camera);
 
     let disposed = false;
     let stream: MediaStream | null = null;
@@ -97,12 +145,14 @@ export function Scanner({
       video.pause();
       video.srcObject = null;
       setTorchOn(false);
+      setTorchSupported(false);
     };
 
     const tick = async () => {
       if (disposed || !stream || !detector) return;
       if (!pausedRef.current && video.readyState >= video.HAVE_CURRENT_DATA && video.videoWidth > 0) {
         try {
+          // Always decodes the camera's own (unmirrored) frame; mirroring is CSS only.
           const codes = await detector.detect(video);
           if (disposed) return;
           const now = Date.now();
@@ -121,6 +171,29 @@ export function Scanner({
       if (!disposed && stream) timer = setTimeout(tick, SCAN_INTERVAL_MS);
     };
 
+    const openStream = async (): Promise<MediaStream> => {
+      const cams = await listCameras().catch(() => [] as CameraInfo[]);
+      const constraints = videoConstraints(choice, cams, fallback);
+      const usesDevice = 'deviceId' in constraints;
+      const attemptOpen = (video: MediaTrackConstraints | true) =>
+        navigator.mediaDevices.getUserMedia({ audio: false, video });
+      try {
+        return await attemptOpen(constraints);
+      } catch (error) {
+        const name = (error as DOMException)?.name;
+        if (name === 'NotReadableError' && !disposed) {
+          // The previous camera may still be closing.
+          await new Promise((r) => setTimeout(r, BUSY_RETRY_MS));
+          return attemptOpen(constraints);
+        }
+        if (usesDevice && (name === 'OverconstrainedError' || name === 'NotFoundError')) {
+          return attemptOpen({ facingMode: { ideal: fallback } });
+        }
+        if (name === 'OverconstrainedError') return attemptOpen(true);
+        throw error;
+      }
+    };
+
     const startCamera = async () => {
       setStatus('starting');
       setErrorKind(null);
@@ -136,29 +209,17 @@ export function Scanner({
       if (disposed) return;
 
       let next: MediaStream;
+      const opening = cameraQueue.then(() => (disposed ? null : openStream()));
+      cameraQueue = opening.catch(() => undefined);
       try {
-        next = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: {
-            facingMode: { ideal: 'environment' },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          },
-        });
+        const opened = await opening;
+        if (!opened) return;
+        next = opened;
       } catch (error) {
-        const name = (error as DOMException)?.name;
-        if (name === 'OverconstrainedError') {
-          try {
-            next = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
-          } catch (retryError) {
-            return fail(classify(retryError), retryError);
-          }
-        } else {
-          return fail(classify(error), error);
-        }
+        return fail(classify(error), error);
       }
 
-      // Unmounted (or hidden) while the permission prompt was open.
+      // Unmounted, switched or hidden while the camera was opening.
       if (disposed || document.hidden) {
         next.getTracks().forEach((t) => t.stop());
         return;
@@ -176,8 +237,20 @@ export function Scanner({
       }
       if (disposed) return;
 
+      // Labels (and so facing) are readable now that permission is granted.
+      const cams = await listCameras().catch(() => [] as CameraInfo[]);
+      if (disposed) return;
+      camerasRef.current = cams;
+      setCameraCount(cams.length);
+      if (track) {
+        const settings = track.getSettings?.() ?? {};
+        setActive({
+          facing: resolveFacing(track, cams, choice.facing ?? fallback),
+          deviceId: settings.deviceId ?? null,
+        });
+        applyTrackFeatures(track, setTorchSupported);
+      }
       setStatus('running');
-      if (track) applyTrackFeatures(track, setTorchSupported);
       timer = setTimeout(tick, SCAN_INTERVAL_MS);
     };
 
@@ -196,7 +269,7 @@ export function Scanner({
       document.removeEventListener('visibilitychange', onVisibility);
       stopCamera();
     };
-  }, [formatsKey, attempt]);
+  }, [formatsKey, attempt, choice, camera]);
 
   const toggleTorch = async () => {
     const track = trackRef.current;
@@ -211,15 +284,29 @@ export function Scanner({
     }
   };
 
+  const switchCamera = () => {
+    const next = nextCameraChoice(active, camerasRef.current);
+    saveCameraChoice(camera, next);
+    // Changing the choice re-runs the camera effect: its cleanup stops this
+    // stream before the next one is opened.
+    setChoice(next);
+  };
+
   const t = strings.scanner;
+  const guide = camera === 'card' ? 'card' : 'barcode';
+  const mirrored = active.facing === 'user' && status === 'running';
   return (
-    <div className={['scanner', className].filter(Boolean).join(' ')}>
+    <div className={['scanner', mirrored && 'scanner--mirrored', className].filter(Boolean).join(' ')}>
       <video ref={videoRef} className="scanner__video" playsInline muted autoPlay aria-label={t.videoLabel} />
-      {status === 'running' && <div className="scanner__frame" aria-hidden="true" />}
+      {status === 'running' && (
+        <div className={`scanner__frame scanner__frame--${guide}`} aria-hidden="true">
+          {guide === 'card' && <span className="scanner__frame-icon">🪪</span>}
+        </div>
+      )}
       {status === 'starting' && <p className="scanner__status">{t.starting}</p>}
       {status === 'running' && (
         <p className={notice ? 'scanner__hint scanner__hint--notice' : 'scanner__hint'} role={notice ? 'status' : undefined}>
-          {notice ?? t.hint}
+          {notice ?? hint ?? t.hint}
         </p>
       )}
       {status === 'error' && errorKind && (
@@ -231,6 +318,11 @@ export function Scanner({
             </button>
           )}
         </div>
+      )}
+      {status !== 'starting' && cameraCount > 1 && (
+        <button type="button" className="btn btn--round scanner__switch" aria-label={t.switchCamera} onClick={switchCamera}>
+          <span aria-hidden="true">🔄</span>
+        </button>
       )}
       {status === 'running' && torchSupported && (
         <button
@@ -287,6 +379,7 @@ function errorMessage(kind: ScannerErrorKind): string {
 /**
  * Enables continuous autofocus where offered and reports torch support.
  * Capabilities are often empty until the first frame on Android, so retry once.
+ * Front cameras normally report no torch, so the button hides after a switch.
  */
 function applyTrackFeatures(track: MediaStreamTrack, setTorchSupported: (v: boolean) => void) {
   const check = () => {

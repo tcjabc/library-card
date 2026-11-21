@@ -30,6 +30,9 @@
   --color-scanner-mask: rgba(0, 0, 0, 0.35);
   --color-scanner-notice: #f59f00;
   --color-on-scanner-notice: #2b1d00;
+  --color-scanner-button: rgba(255, 255, 255, 0.92);
+  --color-on-scanner-button: #1f2430;
+  --shadow-on-video: 0 1px 3px rgba(0, 0, 0, 0.85);
 
   /* Kid screens */
   --color-tile-shelf: #dbe4ff;
@@ -96,6 +99,7 @@
   --radius-full: 999px;
   --border-thin: 1px;
   --border-thick: 3px;
+  --border-guide: 5px;
   --shadow-card: 0 2px 8px rgba(31, 36, 48, 0.08);
   --shadow-raised: 0 6px 20px rgba(31, 36, 48, 0.14);
 
@@ -108,8 +112,11 @@
   --avatar-size: 2.75rem;
   --avatar-size-lg: 5.5rem;
   --qr-size: 10rem;
+  --numpad-max: 22rem;
   --cover-min: 6.5rem;
   --cover-aspect: 2 / 3;
+  /* ID-1 card (credit-card size), 85.6 x 54 mm. */
+  --card-aspect: 1.586;
 
   /* Motion */
   --duration-fast: 120ms;

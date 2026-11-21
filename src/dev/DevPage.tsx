@@ -9,6 +9,7 @@ import {
   type HomeItem,
   type Household,
 } from '../data';
+import { useGrownUpSession } from '../grownups/useGrownUpSession';
 import { href } from '../router';
 import { BookScanner } from '../scan/BookScanner';
 import { fmt, strings } from '../strings';
@@ -73,6 +74,7 @@ export default function DevPage() {
 
 function BooksPanel({ store, household }: { store: DataStore; household: Household }) {
   const toast = useToast();
+  const { requireGrownUp } = useGrownUpSession();
   const [scanning, setScanning] = useState(false);
   const [lookup, setLookup] = useState<Lookup>({ state: 'idle' });
   const [manual, setManual] = useState('');
@@ -241,7 +243,11 @@ function BooksPanel({ store, household }: { store: DataStore; household: Househo
                 >
                   {t.fixBook}
                 </button>
-                <button type="button" className="btn btn--small btn--quiet" onClick={() => void removeFromHome(item)}>
+                <button
+                  type="button"
+                  className="btn btn--small btn--quiet"
+                  onClick={() => requireGrownUp(() => void removeFromHome(item), strings.gate.reasonDelete)}
+                >
                   {t.remove}
                 </button>
               </li>

@@ -2,6 +2,7 @@ import QRCode from 'qrcode';
 import { useCallback, useEffect, useId, useState, type FormEvent } from 'react';
 import { buildCardUrl } from '../cards/cardUrl';
 import { useDataQuery, type DataStore, type Household, type Reader } from '../data';
+import { useGrownUpSession } from '../grownups/useGrownUpSession';
 import { AVATARS, DEFAULT_AVATAR } from '../readers/avatars';
 import { fmt, strings } from '../strings';
 import { useToast } from '../ui/Toast';
@@ -86,6 +87,7 @@ export function ReadersPanel({ store, household }: { store: DataStore; household
 
 function ReaderRow({ reader, store }: { reader: Reader; store: DataStore }) {
   const toast = useToast();
+  const { requireGrownUp } = useGrownUpSession();
   const cardUrl = buildCardUrl(reader.card_token);
   const [qr, setQr] = useState<{ url: string; dataUrl: string } | null>(null);
 
@@ -130,7 +132,7 @@ function ReaderRow({ reader, store }: { reader: Reader; store: DataStore }) {
           <a className="btn" href={cardUrl}>
             {t.openCard}
           </a>
-          <button type="button" className="btn" onClick={() => void rotate()}>
+          <button type="button" className="btn" onClick={() => requireGrownUp(() => void rotate(), strings.gate.reasonRotate)}>
             {t.rotateToken}
           </button>
         </div>

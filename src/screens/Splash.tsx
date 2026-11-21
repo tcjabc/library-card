@@ -31,9 +31,15 @@ export function Splash() {
           📚
         </p>
         <h1 className="kid-title">{t.title}</h1>
-        <p className="muted">{t.subtitle}</p>
       </header>
-      <Scanner formats="qr_code" onResult={onResult} notice={notice} className="splash__scanner" />
+      <Scanner
+        formats="qr_code"
+        camera="card"
+        hint={t.cardGuide}
+        onResult={onResult}
+        notice={notice}
+        className="splash__scanner"
+      />
       <footer className="splash__footer">
         <a className="link-quiet" href={href('/dev')}>
           {t.grownUps}

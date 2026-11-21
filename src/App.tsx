@@ -1,4 +1,7 @@
-import { lazy, Suspense, useEffect } from 'react';
+import { lazy, Suspense, useEffect, useRef } from 'react';
+import { GrownUpGate } from './grownups/GrownUpGate';
+import { GrownUpProvider } from './grownups/GrownUpProvider';
+import { endGrownUpSession, isGrownUpPath } from './grownups/session';
 import { matchPath, navigate, useHashPath } from './router';
 import { CardLink } from './screens/CardLink';
 import { ComingSoon, StaircaseSoon } from './screens/ComingSoon';
@@ -14,7 +17,9 @@ const DevPage = lazy(() => import('./dev/DevPage'));
 export function App() {
   return (
     <ToastProvider>
-      <Routes />
+      <GrownUpProvider>
+        <Routes />
+      </GrownUpProvider>
     </ToastProvider>
   );
 }
@@ -25,6 +30,15 @@ function Routes() {
   // Each screen starts at the top, as it would on a new page.
   useEffect(() => {
     window.scrollTo(0, 0);
+  }, [path]);
+
+  // Leaving the grown-up area ends the grown-up session, so a child handed
+  // the device back can't return to it. Watching the route (not unmounting)
+  // keeps a reload inside the area from ending it.
+  const previousPath = useRef(path);
+  useEffect(() => {
+    if (isGrownUpPath(previousPath.current) && !isGrownUpPath(path)) endGrownUpSession();
+    previousPath.current = path;
   }, [path]);
 
   if (path === '/') return <Splash />;
@@ -45,9 +59,11 @@ function Routes() {
       return <RequireReader>{(reader) => <StaircaseSoon reader={reader} />}</RequireReader>;
     case '/dev':
       return (
-        <Suspense fallback={<p className="page muted">{strings.common.loading}</p>}>
-          <DevPage />
-        </Suspense>
+        <GrownUpGate>
+          <Suspense fallback={<p className="page muted">{strings.common.loading}</p>}>
+            <DevPage />
+          </Suspense>
+        </GrownUpGate>
       );
     default:
       return <NotFound />;

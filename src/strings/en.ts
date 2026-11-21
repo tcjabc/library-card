@@ -27,7 +27,7 @@ export const en = {
 
   splash: {
     title: 'Scan your library card!',
-    subtitle: 'Hold your card up to the camera.',
+    cardGuide: 'Hold your card up to the camera',
     notACard: 'Hmm, that’s not a library card. Try your card’s square code!',
     grownUps: 'Grown-ups',
   },
@@ -98,10 +98,43 @@ export const en = {
     saveError: 'The book couldn’t be saved. Please try again.',
   },
 
+  gate: {
+    title: 'Grown-ups only',
+    intro: 'Ask a grown-up to answer this.',
+    reasonRotate: 'A grown-up needs to answer this before making a new card code.',
+    reasonDelete: 'A grown-up needs to answer this before removing a book.',
+    question: 'What’s {a} times {b}?',
+    answerLabel: 'Your answer',
+    answerPlaceholder: '?',
+    padLabel: 'Number pad',
+    delete: 'Delete',
+    ok: 'OK',
+    cancel: 'Back',
+    wrong: 'Not quite. Here’s a new one.',
+    waitTitle: 'Let’s take a little break',
+    wait: 'Try again in {seconds} seconds.',
+    waitOne: 'Try again in 1 second.',
+  },
+
+  numbers: {
+    0: 'zero',
+    1: 'one',
+    2: 'two',
+    3: 'three',
+    4: 'four',
+    5: 'five',
+    6: 'six',
+    7: 'seven',
+    8: 'eight',
+    9: 'nine',
+    10: 'ten',
+  },
+
   scanner: {
     starting: 'Starting camera…',
     hint: 'Point the camera at a barcode',
     otherBarcode: 'Try the other barcode, near the price!',
+    switchCamera: 'Switch camera',
     torchOn: 'Turn light on',
     torchOff: 'Turn light off',
     errorPermission: 'Camera access was blocked. Allow the camera in your browser settings, then try again.',
@@ -122,7 +155,7 @@ export const en = {
 
   dev: {
     title: 'Grown-up tools',
-    intro: 'Temporary tools for setting up readers and books. A PIN-protected grown-up area replaces this page later.',
+    intro: 'Temporary tools for setting up readers and books. A full grown-up area replaces this page later.',
     adapter: 'Storage adapter: {name}',
     back: 'Back',
     storageError: 'Storage is unavailable: {message}',

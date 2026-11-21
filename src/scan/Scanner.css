@@ -16,13 +16,42 @@
   display: block;
 }
 
+/* Front camera: mirror the preview only. Decoding reads the raw frame. */
+.scanner--mirrored .scanner__video {
+  transform: scaleX(-1);
+}
+
 .scanner__frame {
   position: absolute;
-  inset: 22% 10%;
   border: var(--border-thick) solid var(--color-scanner-frame);
-  border-radius: var(--radius-md);
   box-shadow: 0 0 0 100vmax var(--color-scanner-mask);
   pointer-events: none;
+}
+
+/* Book barcodes: a wide strip. */
+.scanner__frame--barcode {
+  inset: 30% 8%;
+  border-radius: var(--radius-md);
+}
+
+/* Library card: card-shaped, centred, generous so small hands needn't aim. */
+.scanner__frame--card {
+  left: 50%;
+  top: 46%;
+  width: 84%;
+  aspect-ratio: var(--card-aspect);
+  transform: translate(-50%, -50%);
+  border-width: var(--border-guide);
+  border-radius: var(--radius-xl);
+}
+
+.scanner__frame-icon {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  transform: translate(-50%, -60%);
+  font-size: var(--text-3xl);
+  line-height: 1;
 }
 
 .scanner__status,
@@ -42,6 +71,8 @@
 
 .scanner__hint {
   bottom: var(--space-4);
+  font-size: var(--text-lg);
+  text-shadow: var(--shadow-on-video);
 }
 
 .scanner__hint--notice {
@@ -63,8 +94,21 @@
   text-align: center;
 }
 
-.scanner__torch {
+/* Scoped under .scanner so these win over .btn, which loads later. */
+.scanner .scanner__torch,
+.scanner .scanner__switch {
   position: absolute;
   top: var(--space-3);
+  background: var(--color-scanner-button);
+  color: var(--color-on-scanner-button);
+  border-color: transparent;
+}
+
+.scanner__torch {
   right: var(--space-3);
+}
+
+.scanner__switch {
+  left: var(--space-3);
+  z-index: 1;
 }
