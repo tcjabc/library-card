@@ -1,4 +1,5 @@
 import { createLocalStore, type LocalDataStore, type LocalStoreOptions } from '../adapters/local';
+import { createSyncStore } from '../sync/adapter';
 import {
   DEFAULT_LOAN_DAYS,
   HOUSEHOLD_ID,
@@ -55,8 +56,12 @@ export interface StorageCheck {
 
 let counter = 0;
 
+/** Which adapter the checks run against. Both must behave the same. */
+export type CheckAdapter = 'local' | 'sync';
+export const CHECK_ADAPTERS: readonly CheckAdapter[] = ['local', 'sync'];
+
 /** A context whose databases are all closed and deleted by cleanup(). */
-export function createCheckContext(): { ctx: CheckContext; cleanup(): Promise<void> } {
+export function createCheckContext(adapter: CheckAdapter = 'local'): { ctx: CheckContext; cleanup(): Promise<void> } {
   const stores: LocalDataStore[] = [];
   const names = new Set<string>();
   const name = () => {
@@ -66,7 +71,7 @@ export function createCheckContext(): { ctx: CheckContext; cleanup(): Promise<vo
   };
   const attach = async (dbName: string, options?: LocalStoreOptions) => {
     names.add(dbName);
-    const store = await createLocalStore(dbName, options);
+    const store = adapter === 'sync' ? await createSyncStore(dbName, options) : await createLocalStore(dbName, options);
     stores.push(store);
     return store;
   };
@@ -643,11 +648,14 @@ export const storageChecks: StorageCheck[] = [
   }),
 
   // Migrations ------------------------------------------------------------------------
-  check('migration', 'a fresh database is created at v4 with no legacy reads store', async (ctx) => {
+  check('migration', 'a fresh database is created at v5 with no legacy reads store', async (ctx) => {
     const { store, dbName } = await ctx.open();
     await store.coverStep;
     const { version, stores } = await rawStoreNames(dbName);
-    equal(version, 4, 'version');
+    equal(version, 5, 'version');
+    ok(stores.includes('records') && stores.includes('outbox'), 'sync stores', stores);
+    equal(await rawIndexNames(dbName, 'records'), ['by_parent'], 'records index');
+    equal(await rawIndexNames(dbName, 'outbox'), ['by_t'], 'outbox index');
     equal((await rawIndexNames(dbName, 'loans')).sort(), ['by_household_borrowed', 'by_library', 'by_library_sticker', 'by_reader', 'by_sticker'], 'loan indexes');
     ok(!stores.includes('reads') && stores.includes('read_events') && stores.includes('read_summaries'), 'stores', stores);
     equal((await rawGet<{ value: boolean }>(dbName, 'meta', 'covers_rekeyed'))?.value, true, 'nothing to re-key');
@@ -727,11 +735,23 @@ export const storageChecks: StorageCheck[] = [
     const third = await ctx.attach(name);
     equal((await third.coverStep).moved, 0, 'a finished step is a no-op');
   }),
+  check('migration', 'v4 -> v5: records and outbox stores added, every row kept, nothing recorded', async (ctx) => {
+    const name = ctx.name();
+    const fixture = await createV3Database(name); // upgrades through v4 to v5
+    const store = await ctx.attach(name);
+    const { version, stores } = await rawStoreNames(name);
+    equal(version, 5, 'version');
+    ok(stores.includes('records') && stores.includes('outbox'), 'new stores', stores);
+    equal((await rawAll(name, 'records')).length, 0, 'migrated rows have no records until sync is turned on');
+    equal((await rawAll(name, 'outbox')).length, 0, 'and nothing is queued');
+    equal((await rawAll(name, 'loans')).length, fixture.loans.length, 'loans kept');
+    ok((await store.getHousehold(HOUSEHOLD_ID)) !== null, 'household kept');
+  }),
   check('migration', 'v3 -> v4: loan sticker indexes replaced, every loan kept', async (ctx) => {
     const name = ctx.name();
     const fixture = await createV3Database(name);
     const store = await ctx.attach(name);
-    equal((await rawStoreNames(name)).version, 4, 'version');
+    equal((await rawStoreNames(name)).version, 5, 'version');
     const indexes = await rawIndexNames(name, 'loans');
     ok(!indexes.includes('by_household_sticker') && indexes.includes('by_library_sticker') && indexes.includes('by_sticker'), 'indexes', indexes);
     const loans = await rawAll<Record<string, unknown>>(name, 'loans');
@@ -794,7 +814,8 @@ export const storageChecks: StorageCheck[] = [
     const journey = await store.startJourney(a.id, 'ocean_deep', '2026-01-01T00:00:00Z');
 
     const backup = await store.exportBackup();
-    equal([backup.format, backup.version, backup.schema], [BACKUP_FORMAT, 1, 4], 'format, version, schema');
+    equal([backup.format, backup.version, backup.schema], [BACKUP_FORMAT, 1, 5], 'format, version, schema');
+    ok(!('records' in backup.tables) && !('outbox' in backup.tables), 'sync bookkeeping is never exported');
     ok(!('read_summaries' in backup.tables), 'summaries are not exported');
     equal(Object.keys(backup.covers), [photoRef], 'the one photo, under its cover: key');
     equal((backup.tables.books.find((x) => x.isbn === ISBN_A))?.cover_url, photoRef, 'books keep the cover: reference, not a blob: URL');
@@ -884,7 +905,7 @@ export const storageChecks: StorageCheck[] = [
     await store.createLoan({ household_id: h.id, reader_id: a.id, isbn: ISBN_B });
     await store.startJourney(a.id, 'ocean_deep');
     await store.resetDevice();
-    for (const table of ['households', 'readers', 'books', 'cover_images', 'home_items', 'loans', 'read_events', 'read_summaries', 'reader_journeys', 'meta']) {
+    for (const table of ['households', 'readers', 'books', 'cover_images', 'home_items', 'loans', 'read_events', 'read_summaries', 'reader_journeys', 'records', 'outbox', 'meta']) {
       equal((await rawAll(dbName, table)).length, 0, `${table} empty`);
     }
     const fresh = await store.getCurrentHousehold();

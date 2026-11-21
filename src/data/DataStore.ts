@@ -231,6 +231,8 @@ export type DataStoreErrorCode =
   | 'conflict'
   /** Not allowed while other data depends on it, e.g. deleting a reader with active loans. */
   | 'blocked'
+  /** Not allowed while sync is on, e.g. restoring a backup (the sync adapter only). */
+  | 'sync_enabled'
   | 'invalid'
   | 'unavailable';
 

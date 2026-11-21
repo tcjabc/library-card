@@ -291,10 +291,11 @@ export const en = {
     staircaseFakeOn: 'The staircase shows {count} pretend steps in this tab.',
 
     selfTestHeading: 'Storage self-test',
-    selfTestIntro: 'Checks the local storage adapter against a throwaway database. Your data is not touched.',
-    selfTestRun: 'Run self-test',
+    selfTestIntro: 'Checks a storage adapter against throwaway databases. Your data is not touched. "Sync" runs the same checks on the sync adapter (records and outbox); nothing is sent anywhere.',
+    selfTestRun: 'Run self-test (local)',
+    selfTestRunSync: 'Run self-test (sync)',
     selfTestRunning: 'Running…',
-    selfTestSummary: '{passed} of {total} checks passed',
+    selfTestSummary: '{passed} of {total} checks passed ({adapter})',
   },
 
   // Messages from the vendored sync code (src/sync/vendor/i18n.js maps Peek Budget's keys here).

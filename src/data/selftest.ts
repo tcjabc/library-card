@@ -5,10 +5,11 @@
  * on real phones, where Safari's and Chrome's IndexedDB differ from the
  * fake one the Node tests use.
  *
- *   (await import('/src/data/selftest.ts')).runLocalSelfTest()
+ *   (await import('/src/data/selftest.ts')).runLocalSelfTest()        // the local adapter
+ *   (await import('/src/data/selftest.ts')).runLocalSelfTest('sync')  // the sync adapter
  */
 import { CheckFailure } from './testing/assert';
-import { createCheckContext, storageChecks } from './testing/storageChecks';
+import { createCheckContext, storageChecks, type CheckAdapter } from './testing/storageChecks';
 
 export interface SelfTestResult {
   name: string;
@@ -16,10 +17,10 @@ export interface SelfTestResult {
   detail?: string;
 }
 
-export async function runLocalSelfTest(): Promise<SelfTestResult[]> {
+export async function runLocalSelfTest(adapter: CheckAdapter = 'local'): Promise<SelfTestResult[]> {
   const results: SelfTestResult[] = [];
   for (const check of storageChecks) {
-    const { ctx, cleanup } = createCheckContext();
+    const { ctx, cleanup } = createCheckContext(adapter);
     const name = `${check.group}: ${check.name}`;
     try {
       await check.run(ctx);

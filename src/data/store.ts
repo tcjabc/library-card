@@ -1,9 +1,11 @@
 import { DataStoreError, type DataStore } from './DataStore';
 
-export type AdapterName = 'local';
+export type AdapterName = 'local' | 'sync';
 
 const ADAPTERS: Record<AdapterName, () => Promise<DataStore>> = {
   local: () => import('./adapters/local').then((m) => m.createLocalStore()),
+  // The local adapter with every change recorded for sync (records + outbox). Opt-in for now.
+  sync: () => import('./sync/adapter').then((m) => m.createSyncStore()),
   // supabase: () => import('./adapters/supabase').then((m) => m.createSupabaseStore()),
   // d1: () => import('./adapters/d1').then((m) => m.createD1Store()),
 };

@@ -5,18 +5,22 @@ type Results = { name: string; pass: boolean; detail?: string }[];
 
 const t = strings.dev;
 
-/** Runs the local adapter's storage self-test against throwaway databases. */
+type Adapter = 'local' | 'sync';
+
+/** Runs the storage self-test against throwaway databases, on the local or the sync adapter. */
 export function SelfTestPanel() {
   const [results, setResults] = useState<Results | null>(null);
-  const [running, setRunning] = useState(false);
+  const [ranOn, setRanOn] = useState<Adapter | null>(null);
+  const [running, setRunning] = useState<Adapter | null>(null);
 
-  const run = async () => {
-    setRunning(true);
+  const run = async (adapter: Adapter) => {
+    setRunning(adapter);
     try {
       const { runLocalSelfTest } = await import('../data/selftest');
-      setResults(await runLocalSelfTest());
+      setResults(await runLocalSelfTest(adapter));
+      setRanOn(adapter);
     } finally {
-      setRunning(false);
+      setRunning(null);
     }
   };
 
@@ -27,14 +31,17 @@ export function SelfTestPanel() {
       <h2>{t.selfTestHeading}</h2>
       <p className="muted small">{t.selfTestIntro}</p>
       <div className="row">
-        <button type="button" className="btn" onClick={() => void run()} disabled={running}>
-          {running ? t.selfTestRunning : t.selfTestRun}
+        <button type="button" className="btn" onClick={() => void run('local')} disabled={running !== null}>
+          {running === 'local' ? t.selfTestRunning : t.selfTestRun}
+        </button>
+        <button type="button" className="btn" onClick={() => void run('sync')} disabled={running !== null}>
+          {running === 'sync' ? t.selfTestRunning : t.selfTestRunSync}
         </button>
       </div>
       {results && (
         <>
           <p className={failed ? 'alert alert--danger' : 'alert'} role="status" data-testid="selftest-summary">
-            {fmt(t.selfTestSummary, { passed: results.length - failed, total: results.length })}
+            {fmt(t.selfTestSummary, { passed: results.length - failed, total: results.length, adapter: ranOn ?? 'local' })}
           </p>
           <ul className="selftest small">
             {results.map((r) => (

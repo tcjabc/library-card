@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createLocalStore } from '../adapters/local';
 import { CheckFailure } from '../testing/assert';
-import { createCheckContext, storageChecks, type CheckContext } from '../testing/storageChecks';
+import { CHECK_ADAPTERS, createCheckContext, storageChecks, type CheckAdapter, type CheckContext } from '../testing/storageChecks';
 
 /**
  * The shared storage checks (also run by the in-app self-test), on Node with
@@ -14,23 +14,28 @@ afterEach(async () => {
   cleanups = [];
 });
 
-function context(): CheckContext {
-  const { ctx, cleanup } = createCheckContext();
+function context(adapter: CheckAdapter): CheckContext {
+  const { ctx, cleanup } = createCheckContext(adapter);
   cleanups.push(cleanup);
   return ctx;
 }
 
 const groups = [...new Set(storageChecks.map((c) => c.group))];
-for (const group of groups) {
-  describe(group, () => {
-    for (const check of storageChecks.filter((c) => c.group === group)) {
-      it(check.name, async () => {
-        try {
-          await check.run(context());
-        } catch (error) {
-          // Show the check's own detail in the Vitest report.
-          if (error instanceof CheckFailure && error.detail) error.message += `\n  ${error.detail}`;
-          throw error;
+// Every check runs against both adapters: "sync" must behave exactly like "local".
+for (const adapter of CHECK_ADAPTERS) {
+  describe(adapter, () => {
+    for (const group of groups) {
+      describe(group, () => {
+        for (const check of storageChecks.filter((c) => c.group === group)) {
+          it(check.name, async () => {
+            try {
+              await check.run(context(adapter));
+            } catch (error) {
+              // Show the check's own detail in the Vitest report.
+              if (error instanceof CheckFailure && error.detail) error.message += `\n  ${error.detail}`;
+              throw error;
+            }
+          });
         }
       });
     }

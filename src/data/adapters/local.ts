@@ -57,10 +57,14 @@ import { addToSummary, isRepeatTap, latestEvent, summarize } from '../readRules'
  *   v4  Loan sticker lookups: [library_id, sticker_barcode] plus a
  *       household-wide sticker index replace [household_id, sticker_barcode].
  *       Indexes only; no data changes.
+ *   v5  Sync: `records` (sync-core records keyed by wire id "<table>:<id>") and
+ *       `outbox` (the latest pending op per [record, field]). Device id, clock,
+ *       cursor, last-synced time and sync config are `meta` keys. New stores
+ *       only; no data changes. Present for every adapter, used by "sync".
  */
 
 const DB_NAME = 'library-card';
-const DB_VERSION = 4;
+export const DB_VERSION = 5;
 
 // Highest possible string suffix for compound-key range upper bounds.
 const MAX_STRING = '￿';
@@ -96,7 +100,28 @@ interface LegacyRead {
 
 interface MetaRecord {
   key: string;
-  value: string | boolean;
+  /** Plain JSON. */
+  value: unknown;
+}
+
+/** A sync-core record ({ id, fields, ts }) as stored, with its table and parent for indexing. */
+export interface StoredRecord {
+  id: string;
+  fields: Record<string, unknown>;
+  ts: Record<string, string>;
+  /** The table part of the wire id. */
+  t: string;
+  /** Wire id of the parent record (a reader's), when the table has one. */
+  p?: string;
+}
+
+/** The latest op not yet sent for one field of one record. The op id is derived when it is sent. */
+export interface OutboxEntry {
+  rec: string;
+  f: string;
+  v: unknown;
+  t: string;
+  dev: string;
 }
 
 interface LibraryCardDB extends DBSchema {
@@ -163,9 +188,20 @@ interface LibraryCardDB extends DBSchema {
     value: ReaderJourney;
     indexes: { by_reader_started: [Id, string] };
   };
+  records: {
+    key: string;
+    value: StoredRecord;
+    indexes: { by_parent: string };
+  };
+  outbox: {
+    key: [string, string];
+    value: OutboxEntry;
+    indexes: { by_t: string };
+  };
 }
 
-type DB = IDBPDatabase<LibraryCardDB>;
+export type DB = IDBPDatabase<LibraryCardDB>;
+export type { LibraryCardDB };
 type AnyTx<Mode extends IDBTransactionMode> = IDBPTransaction<
   LibraryCardDB,
   ArrayLike<StoreNames<LibraryCardDB>>,
@@ -238,6 +274,13 @@ function openLibraryDb(name: string): Promise<DB> {
         if (loans.indexNames.contains('by_household_sticker' as never)) loans.deleteIndex('by_household_sticker' as never);
         loans.createIndex('by_library_sticker', ['library_id', 'sticker_barcode']);
         loans.createIndex('by_sticker', 'sticker_barcode');
+      }
+
+      if (oldVersion < 5) {
+        const records = db.createObjectStore('records', { keyPath: 'id' });
+        records.createIndex('by_parent', 'p');
+        const outbox = db.createObjectStore('outbox', { keyPath: ['rec', 'f'] });
+        outbox.createIndex('by_t', 't');
       }
     },
     blocking(_currentVersion, blockedVersion, event) {
@@ -413,10 +456,10 @@ async function sha256Hex(blob: Blob): Promise<string> {
   return Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-type ReadTx = AnyTx<'readwrite'>;
+export type ReadTx = AnyTx<'readwrite'>;
 
 /** Rebuilds one reader+book summary from its events (deletes it when none are left). */
-async function recomputeSummary(tx: ReadTx, readerId: Id, isbn: BookKey): Promise<ReadSummary | null> {
+export async function recomputeSummary(tx: ReadTx, readerId: Id, isbn: BookKey): Promise<ReadSummary | null> {
   const events = await tx.objectStore('read_events').index('by_reader_isbn_read_at').getAll(bookRange(readerId, isbn));
   const summaries = tx.objectStore('read_summaries');
   if (events.length === 0) {
@@ -426,6 +469,27 @@ async function recomputeSummary(tx: ReadTx, readerId: Id, isbn: BookKey): Promis
   const summary = summarize(events)!;
   await summaries.put(summary);
   return summary;
+}
+
+/**
+ * What the local adapter hands the sync layer (src/data/sync/adapter.ts) so it can add its methods.
+ * The local adapter itself knows nothing about sync.
+ */
+export interface StoreInternals {
+  /** The database without the sync recording wrapper. */
+  rawDb(): Promise<DB>;
+  /** Tell this tab's subscribers, and (unless `remote`) other tabs, that tables changed. */
+  emit(tables: DataTable[], remote: boolean): void;
+  /** Tell other tabs (they hear it as remote). */
+  broadcast(tables: DataTable[]): void;
+  now(): number;
+  revokeAllCoverUrls(): void;
+}
+
+/** Sync hooks: wrap every database handle the adapter uses, then extend the finished store. */
+export interface SyncHooks<Extra extends object> {
+  wrap(db: DB): DB;
+  extend(store: LocalDataStore, internals: StoreInternals): Extra;
 }
 
 export interface LocalStoreOptions {
@@ -445,6 +509,15 @@ export interface LocalDataStore extends DataStore {
 }
 
 export async function createLocalStore(dbName = DB_NAME, options: LocalStoreOptions = {}): Promise<LocalDataStore> {
+  return createStoreWith(dbName, options, undefined);
+}
+
+/** The local adapter, optionally wrapped and extended by the sync layer. */
+export async function createStoreWith<Extra extends object>(
+  dbName: string,
+  options: LocalStoreOptions,
+  hooks: SyncHooks<Extra> | undefined,
+): Promise<LocalDataStore & Extra> {
   if (typeof indexedDB === 'undefined') {
     throw new DataStoreError('unavailable', 'IndexedDB is not available in this browser.');
   }
@@ -463,7 +536,18 @@ export async function createLocalStore(dbName = DB_NAME, options: LocalStoreOpti
       });
     });
   watchClose(db);
-  const getDb = () => conn;
+  // With sync hooks, every handle the methods below use records writes to synced tables.
+  const wrapped = new WeakMap<DB, DB>();
+  const getDb = async (): Promise<DB> => {
+    const d = await conn;
+    if (!hooks) return d;
+    let w = wrapped.get(d);
+    if (!w) {
+      w = hooks.wrap(d);
+      wrapped.set(d, w);
+    }
+    return w;
+  };
 
   // --- Change notifications -------------------------------------------------
   const listeners = new Set<DataChangeListener>();
@@ -1341,10 +1425,18 @@ export async function createLocalStore(dbName = DB_NAME, options: LocalStoreOpti
     },
   };
 
-  return store;
+  if (!hooks) return store as LocalDataStore & Extra;
+  const extra = hooks.extend(store, {
+    rawDb: () => conn,
+    emit,
+    broadcast: (tables) => channel?.postMessage({ tables }),
+    now,
+    revokeAllCoverUrls,
+  });
+  return Object.assign(store, extra);
 }
 
-const ALL_TABLES: DataTable[] = [
+export const ALL_TABLES: DataTable[] = [
   'households',
   'readers',
   'books',
