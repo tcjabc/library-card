@@ -125,22 +125,34 @@ rule stops feature code from importing an adapter directly.
    a `DataStore`.
 2. Register it in the `ADAPTERS` map in `src/data/index.ts`.
 3. Follow the conventions at the top of `DataStore.ts`: ISO 8601 UTC
-   timestamps, `YYYY-MM-DD` due dates, ISBN-13 keys, `null` for missing
-   values, `DataStoreError` codes for failures, one read per reader+ISBN, one
-   home item per household+ISBN, at most one active journey per reader.
-4. Store `reads.household_id` so `countHouseholdReads` is one indexed count.
-5. Call `subscribe()` listeners after every write, including writes from other
-   tabs or devices (`remote: true`).
-6. `getCurrentHousehold()` returns the household this device works with
-   (local: created on first run; synced: the signed-in user's).
-7. `saveCoverImage()` stores a photo and returns a `cover_url`. A synced
-   backend would upload to object storage and return its URL. The local adapter
-   keeps the Blob in IndexedDB and hands out session-only `blob:` URLs, which
-   are never persisted.
-8. Store `parent_pin_hash` exactly as `hashPin()` returns it.
+   timestamps, `YYYY-MM-DD` due dates, book keys (ISBN-13, or `noisbn-<id>`),
+   `null` for missing values, and `DataStoreError` codes for failures.
+4. One household per device, with the id `HOUSEHOLD_ID` (`"main"`).
+   `getCurrentHousehold()` creates it on first use. There is no create, list or
+   delete for households.
+5. Home items: one per household and book, and the item id is the book key.
+6. Reads are events: every `markRead()` adds one (re-reads count), except that a
+   tap within `READ_TAP_GUARD_MS` (10 s) of the reader's latest read of that
+   book returns `null`. `undoLatestRead()` removes the latest event (latest
+   `read_at`, then id), and `restoreReadEvent()` puts one back with the same id.
+7. Keep a read summary per reader and book (`first_read_at`, `last_read_at`,
+   `count`) up to date in the same transaction as every event change.
+   `countReadsSince()` counts books by their first read, and
+   `countHouseholdReads()` counts reader and book pairs. Both are indexed counts.
+8. At most one active journey per reader, held in `readers.active_journey_id`.
+   `startJourney()`, `completeJourney()` and `deleteReaderJourney()` keep it
+   right. `getActiveJourney()` returns `null` for a missing or completed journey.
+9. Every delete removes one record by id; cascades delete each child row.
+10. Call `subscribe()` listeners after every write, including writes from other
+    tabs or devices (`remote: true`).
+11. `saveCoverImage()` stores a photo of at most `MAX_COVER_BYTES` (512 KB) and
+    returns a `cover_url`. The local adapter keeps photos by content as
+    `cover:<sha256>` and hands out session-only `blob:` URLs, which are never
+    persisted. A photo is deleted once no book uses it.
+12. Store `parent_pin_hash` exactly as `hashPin()` returns it.
 
 Run the self-test on `#/dev` after changing the local adapter. It runs on
-throwaway databases, including a real v1 to v2 migration.
+throwaway databases, including real v1 to v3 and v2 to v3 migrations.
 
 _Schemas, migrations and auth for hosted adapters will be added with each one._
 

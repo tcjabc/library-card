@@ -32,7 +32,7 @@ export interface DataQueryResult<T> {
  * (in this tab or another). Wrap `query` in useCallback: it re-runs when the
  * function identity changes.
  *
- *   const reads = useDataQuery(useCallback((s) => s.listReads(id), [id]), ['reads']);
+ *   const reads = useDataQuery(useCallback((s) => s.listReadSummaries(id), [id]), ['read_events']);
  *
  * `tables` limits re-runs to changes touching those tables (default: any change).
  * Pass `null` as the query to skip it (e.g. while an id is unknown).

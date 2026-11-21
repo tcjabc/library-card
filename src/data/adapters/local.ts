@@ -11,21 +11,25 @@ import { strings } from '../../strings';
 import {
   DEFAULT_LOAN_DAYS,
   DataStoreError,
+  HOUSEHOLD_ID,
+  MAX_COVER_BYTES,
+  READ_TAP_GUARD_MS,
   type Book,
+  type BookKey,
   type DataChangeListener,
   type DataStore,
   type DataTable,
   type HomeItem,
   type Household,
   type Id,
-  type Isbn,
   type Library,
   type Loan,
-  type Read,
+  type ReadEvent,
+  type ReadSummary,
   type Reader,
   type ReaderJourney,
 } from '../DataStore';
-import { newCardToken, newId, nowIso, toIso } from '../ids';
+import { newCardToken, newId, toIso } from '../ids';
 
 /**
  * Local-only adapter backed by IndexedDB. Data never leaves the device.
@@ -34,70 +38,74 @@ import { newCardToken, newId, nowIso, toIso } from '../ids';
  *   v1  Phase 1 tables.
  *   v2  reads.household_id (+ index), libraries, covers, meta;
  *       loans.library_id / sticker_barcode / renew_count.
+ *   v3  One household per device, id "main". home_items keyed by book key.
+ *       reads -> read_events (one per tap) + derived read_summaries.
+ *       readers.active_journey_id. Cover photos keyed by SHA-256 in
+ *       cover_images (moved from `covers` by a step after the upgrade).
  */
 
 const DB_NAME = 'library-card';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 // Highest possible string suffix for compound-key range upper bounds.
 const MAX_STRING = '￿';
 
-/** Stored in books.cover_url for photos kept in the covers store. Resolved to a blob: URL on read. */
-const LOCAL_COVER_PREFIX = 'local-cover:';
+/** books.cover_url for a photo in cover_images: "cover:<sha256 hex>". */
+const COVER_PREFIX = 'cover:';
+/** Pre-v3 books.cover_url for a photo in the legacy `covers` store, keyed by ISBN. */
+const LEGACY_COVER_PREFIX = 'local-cover:';
 
 const CURRENT_HOUSEHOLD_KEY = 'current_household_id';
+const COVERS_REKEYED_KEY = 'covers_rekeyed';
 
-interface CoverRecord {
-  isbn: Isbn;
+interface CoverImageRecord {
+  hash: string;
   blob: Blob;
   saved_at: string;
 }
 
+/** Legacy (v2) cover record. Only read by the re-key step. */
+interface LegacyCoverRecord {
+  isbn: BookKey;
+  blob: Blob;
+  saved_at: string;
+}
+
+/** Legacy (v1/v2) read row. Only exists inside the upgrade transaction. */
+interface LegacyRead {
+  reader_id: Id;
+  household_id?: Id;
+  isbn: BookKey;
+  read_at: string;
+}
+
 interface MetaRecord {
   key: string;
-  value: string;
+  value: string | boolean;
 }
 
 interface LibraryCardDB extends DBSchema {
-  meta: {
-    key: string;
-    value: MetaRecord;
-  };
-  households: {
-    key: Id;
-    value: Household;
-  };
+  meta: { key: string; value: MetaRecord };
+  households: { key: Id; value: Household };
   readers: {
     key: Id;
     value: Reader;
-    indexes: {
-      by_household: Id;
-      by_card_token: string;
-    };
+    indexes: { by_household: Id; by_card_token: string };
   };
   books: {
-    key: Isbn;
+    key: BookKey;
     value: Book;
+    indexes: { by_cover: string };
   };
-  covers: {
-    key: Isbn;
-    value: CoverRecord;
-  };
+  cover_images: { key: string; value: CoverImageRecord };
+  /** Legacy, emptied by the cover re-key step. Deleted at the next schema version. */
+  covers: { key: BookKey; value: LegacyCoverRecord };
   home_items: {
-    key: Id;
+    key: BookKey;
     value: HomeItem;
-    indexes: {
-      by_household_isbn: [Id, Isbn];
-      by_household_added: [Id, string];
-    };
+    indexes: { by_household_isbn: [Id, BookKey]; by_household_added: [Id, string] };
   };
-  libraries: {
-    key: Id;
-    value: Library;
-    indexes: {
-      by_household: Id;
-    };
-  };
+  libraries: { key: Id; value: Library; indexes: { by_household: Id } };
   loans: {
     key: Id;
     value: Loan;
@@ -109,20 +117,34 @@ interface LibraryCardDB extends DBSchema {
       by_household_sticker: [Id, string];
     };
   };
+  /** Legacy, deleted by the v3 upgrade. Typed so the v1/v2 steps can still run. */
   reads: {
-    key: [Id, Isbn];
-    value: Read;
+    key: [Id, BookKey];
+    value: LegacyRead;
+    indexes: { by_reader_read_at: [Id, string]; by_household: Id };
+  };
+  read_events: {
+    key: Id;
+    value: ReadEvent;
     indexes: {
+      by_reader_isbn_read_at: [Id, BookKey, string];
       by_reader_read_at: [Id, string];
+      by_household: Id;
+    };
+  };
+  read_summaries: {
+    key: [Id, BookKey];
+    value: ReadSummary;
+    indexes: {
+      by_reader_first: [Id, string];
+      by_reader_last: [Id, string];
       by_household: Id;
     };
   };
   reader_journeys: {
     key: Id;
     value: ReaderJourney;
-    indexes: {
-      by_reader_started: [Id, string];
-    };
+    indexes: { by_reader_started: [Id, string] };
   };
 }
 
@@ -153,7 +175,6 @@ function openLibraryDb(name: string): Promise<DB> {
         loans.createIndex('by_household_borrowed', ['household_id', 'borrowed_at']);
         loans.createIndex('by_reader', 'reader_id');
 
-        // Compound primary key enforces one read per reader+isbn.
         const reads = db.createObjectStore('reads', { keyPath: ['reader_id', 'isbn'] });
         reads.createIndex('by_reader_read_at', ['reader_id', 'read_at']);
 
@@ -173,6 +194,24 @@ function openLibraryDb(name: string): Promise<DB> {
         tx.objectStore('reads').createIndex('by_household', 'household_id');
 
         if (oldVersion >= 1) await migrateV1Data(tx);
+      }
+
+      if (oldVersion < 3) {
+        db.createObjectStore('cover_images', { keyPath: 'hash' });
+        tx.objectStore('books').createIndex('by_cover', 'cover_url');
+
+        const events = db.createObjectStore('read_events', { keyPath: 'id' });
+        events.createIndex('by_reader_isbn_read_at', ['reader_id', 'isbn', 'read_at']);
+        events.createIndex('by_reader_read_at', ['reader_id', 'read_at']);
+        events.createIndex('by_household', 'household_id');
+
+        const summaries = db.createObjectStore('read_summaries', { keyPath: ['reader_id', 'isbn'] });
+        summaries.createIndex('by_reader_first', ['reader_id', 'first_read_at']);
+        summaries.createIndex('by_reader_last', ['reader_id', 'last_read_at']);
+        summaries.createIndex('by_household', 'household_id');
+
+        if (oldVersion >= 1) await migrateV2Data(tx);
+        db.deleteObjectStore('reads');
       }
     },
     blocking(_currentVersion, blockedVersion, event) {
@@ -195,7 +234,7 @@ async function migrateV1Data(tx: AnyTx<'versionchange'>): Promise<void> {
   const householdOf = new Map<Id, Id | null>();
   let readCursor = await tx.objectStore('reads').openCursor();
   while (readCursor) {
-    const read = readCursor.value as Partial<Read> & Pick<Read, 'reader_id' | 'isbn' | 'read_at'>;
+    const read = readCursor.value;
     if (!read.household_id) {
       let householdId = householdOf.get(read.reader_id);
       if (householdId === undefined) {
@@ -229,9 +268,110 @@ async function migrateV1Data(tx: AnyTx<'versionchange'>): Promise<void> {
   }
 }
 
+/**
+ * v2 -> v3 data changes. Runs inside the upgrade transaction (IndexedDB work
+ * only; cover hashing needs crypto.subtle and runs after the upgrade).
+ */
+async function migrateV2Data(tx: AnyTx<'versionchange'>): Promise<void> {
+  const meta = tx.objectStore('meta');
+  const households = tx.objectStore('households');
+
+  // 1. The current household becomes "main"; references to it follow.
+  const storedCurrent = (await meta.get(CURRENT_HOUSEHOLD_KEY))?.value;
+  const currentId =
+    typeof storedCurrent === 'string' && (await households.getKey(storedCurrent))
+      ? storedCurrent
+      : (await households.getAllKeys())[0];
+  if (currentId && currentId !== HOUSEHOLD_ID) {
+    const household = await households.get(currentId);
+    if (household) {
+      await households.put({ ...household, id: HOUSEHOLD_ID });
+      await households.delete(currentId);
+    }
+  }
+  if (currentId) await meta.put({ key: CURRENT_HOUSEHOLD_KEY, value: HOUSEHOLD_ID });
+  const remap = (id: Id) => (currentId && id === currentId ? HOUSEHOLD_ID : id);
+
+  // 5. readers.active_journey_id: the latest started, uncompleted journey.
+  const active = new Map<Id, ReaderJourney>();
+  for (const journey of await tx.objectStore('reader_journeys').getAll()) {
+    if (journey.completed_at !== null) continue;
+    const current = active.get(journey.reader_id);
+    if (!current || journey.started_at > current.started_at) active.set(journey.reader_id, journey);
+  }
+  const readers = tx.objectStore('readers');
+  for (const reader of await readers.getAll()) {
+    const legacy = reader as Reader & { active_journey_id?: Id | null };
+    await readers.put({
+      ...legacy,
+      household_id: remap(legacy.household_id),
+      active_journey_id: active.get(legacy.id)?.id ?? null,
+    });
+  }
+
+  // 2. home_items of the household are keyed by their book key.
+  const home = tx.objectStore('home_items');
+  for (const item of await home.getAll()) {
+    const householdId = remap(item.household_id);
+    const id = householdId === HOUSEHOLD_ID ? item.isbn : item.id;
+    if (id !== item.id) await home.delete(item.id);
+    await home.put({ ...item, id, household_id: householdId });
+  }
+
+  for (const library of await tx.objectStore('libraries').getAll()) {
+    await tx.objectStore('libraries').put({ ...library, household_id: remap(library.household_id) });
+  }
+  for (const loan of await tx.objectStore('loans').getAll()) {
+    await tx.objectStore('loans').put({ ...loan, household_id: remap(loan.household_id) });
+  }
+
+  // 3 + 4. Each read becomes one event (original read_at); summaries are built from them.
+  const summaries = new Map<string, ReadSummary>();
+  const events = tx.objectStore('read_events');
+  for (const read of await tx.objectStore('reads').getAll()) {
+    if (!read.household_id) continue; // orphaned (reader gone), as dropped in v2
+    const event: ReadEvent = {
+      id: newId(),
+      household_id: remap(read.household_id),
+      reader_id: read.reader_id,
+      isbn: read.isbn,
+      read_at: read.read_at,
+    };
+    await events.put(event);
+    const key = `${event.reader_id}\u0000${event.isbn}`;
+    summaries.set(key, addToSummary(summaries.get(key) ?? null, event));
+  }
+  for (const summary of summaries.values()) await tx.objectStore('read_summaries').put(summary);
+}
+
+/** A summary after adding one event. */
+function addToSummary(summary: ReadSummary | null, event: ReadEvent): ReadSummary {
+  if (!summary) {
+    return {
+      reader_id: event.reader_id,
+      isbn: event.isbn,
+      household_id: event.household_id,
+      first_read_at: event.read_at,
+      last_read_at: event.read_at,
+      count: 1,
+    };
+  }
+  return {
+    ...summary,
+    first_read_at: event.read_at < summary.first_read_at ? event.read_at : summary.first_read_at,
+    last_read_at: event.read_at > summary.last_read_at ? event.read_at : summary.last_read_at,
+    count: summary.count + 1,
+  };
+}
+
 /** All keys [prefix, *] in a [string, string] compound index. */
 function prefixRange(prefix: string, from = ''): IDBKeyRange {
   return IDBKeyRange.bound([prefix, from], [prefix, MAX_STRING]);
+}
+
+/** All events of one reader for one book, in read_at order. */
+function bookRange(readerId: Id, isbn: BookKey): IDBKeyRange {
+  return IDBKeyRange.bound([readerId, isbn, ''], [readerId, isbn, MAX_STRING]);
 }
 
 function notFound(kind: string, id: string): DataStoreError {
@@ -254,15 +394,58 @@ function checkLoanDays(value: number): void {
   }
 }
 
-/** The local adapter adds close(), used by tests to delete throwaway databases. */
-export interface LocalDataStore extends DataStore {
-  close(): Promise<void>;
+async function sha256Hex(blob: Blob): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer()));
+  return Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-export async function createLocalStore(dbName = DB_NAME): Promise<LocalDataStore> {
+/** Latest event first, then by id, matching undoLatestRead's rule. */
+function latestEvent(events: ReadEvent[]): ReadEvent | null {
+  let best: ReadEvent | null = null;
+  for (const e of events) {
+    if (!best || e.read_at > best.read_at || (e.read_at === best.read_at && e.id > best.id)) best = e;
+  }
+  return best;
+}
+
+type ReadTx = AnyTx<'readwrite'>;
+
+/** Rebuilds one reader+book summary from its events (deletes it when none are left). */
+async function recomputeSummary(tx: ReadTx, readerId: Id, isbn: BookKey): Promise<ReadSummary | null> {
+  const events = await tx.objectStore('read_events').index('by_reader_isbn_read_at').getAll(bookRange(readerId, isbn));
+  const summaries = tx.objectStore('read_summaries');
+  if (events.length === 0) {
+    await summaries.delete([readerId, isbn]);
+    return null;
+  }
+  let summary: ReadSummary | null = null;
+  for (const event of events) summary = addToSummary(summary, event);
+  await summaries.put(summary!);
+  return summary;
+}
+
+export interface LocalStoreOptions {
+  /** Clock for timestamps and the double-tap guard (tests). */
+  now?: () => number;
+  /** Tests: stop the cover re-key step after this many photos, as if interrupted. */
+  coverStepLimit?: number;
+}
+
+/** The local adapter adds a few things for tests and maintenance. Feature code never sees them. */
+export interface LocalDataStore extends DataStore {
+  close(): Promise<void>;
+  /** Resolves once the cover re-key step has run (it starts when the store opens). */
+  coverStep: Promise<{ moved: number; remaining: number }>;
+  /** Tests only: a second household, which the interface no longer offers. */
+  testOnlyAddHousehold(id: Id, name: string): Promise<Household>;
+}
+
+export async function createLocalStore(dbName = DB_NAME, options: LocalStoreOptions = {}): Promise<LocalDataStore> {
   if (typeof indexedDB === 'undefined') {
     throw new DataStoreError('unavailable', 'IndexedDB is not available in this browser.');
   }
+  const now = options.now ?? (() => Date.now());
+  const nowIso = () => new Date(now()).toISOString();
   const db = await openLibraryDb(dbName);
 
   // Some browsers (notably Safari) can close the connection under storage
@@ -297,57 +480,121 @@ export async function createLocalStore(dbName = DB_NAME): Promise<LocalDataStore
   };
   channel?.addEventListener('message', (event: MessageEvent<{ tables?: DataTable[] }>) => {
     const tables = event.data?.tables ?? [];
-    // Another tab may have replaced a cover photo; drop our blob: URLs so
-    // the next read creates fresh ones from the stored blobs.
+    // Another tab may have replaced or moved a cover photo; drop our blob:
+    // URLs so the next read creates fresh ones from the stored blobs.
     if (tables.includes('covers')) revokeAllCoverUrls();
     emit(tables, true);
   });
 
   // --- Cover photos ---------------------------------------------------------
-  // One live blob: URL per ISBN for this page. Never persisted.
-  const coverUrls = new Map<Isbn, string>();
-  const revokeCoverUrl = (isbn: Isbn) => {
-    const url = coverUrls.get(isbn);
+  // One live blob: URL per stored reference ("cover:<hash>" or the legacy
+  // "local-cover:<isbn>") for this page. Never persisted.
+  const coverUrls = new Map<string, string>();
+  const revokeCoverUrl = (ref: string) => {
+    const url = coverUrls.get(ref);
     if (url) URL.revokeObjectURL(url);
-    coverUrls.delete(isbn);
+    coverUrls.delete(ref);
   };
   const revokeAllCoverUrls = () => {
     for (const url of coverUrls.values()) URL.revokeObjectURL(url);
     coverUrls.clear();
   };
 
-  /** books.cover_url as stored -> URL the UI can render. */
-  const resolveCover = (book: Book, record: CoverRecord | undefined): Book => {
-    if (!book.cover_url?.startsWith(LOCAL_COVER_PREFIX)) return book;
-    const isbn = book.cover_url.slice(LOCAL_COVER_PREFIX.length);
-    let url = coverUrls.get(isbn);
-    if (!url && record) {
-      url = URL.createObjectURL(record.blob);
-      coverUrls.set(isbn, url);
+  const isLocalCoverRef = (ref: string | null | undefined): ref is string =>
+    !!ref && (ref.startsWith(COVER_PREFIX) || ref.startsWith(LEGACY_COVER_PREFIX));
+
+  type CoverStores = ('books' | 'cover_images' | 'covers')[];
+  type CoverTx = IDBPTransaction<LibraryCardDB, CoverStores, IDBTransactionMode>;
+  type CoverWriteTx = IDBPTransaction<LibraryCardDB, CoverStores, 'readwrite'>;
+
+  /** The stored blob for a local cover reference, from either store. */
+  const coverBlob = async (tx: CoverTx, ref: string): Promise<Blob | undefined> => {
+    if (ref.startsWith(COVER_PREFIX)) return (await tx.objectStore('cover_images').get(ref.slice(COVER_PREFIX.length)))?.blob;
+    return (await tx.objectStore('covers').get(ref.slice(LEGACY_COVER_PREFIX.length)))?.blob;
+  };
+
+  /** books.cover_url as stored -> URL the UI can render. Accepts both prefixes. */
+  const resolveCover = async (tx: CoverTx, book: Book): Promise<Book> => {
+    const ref = book.cover_url;
+    if (!isLocalCoverRef(ref)) return book;
+    let url = coverUrls.get(ref);
+    if (!url) {
+      const blob = await coverBlob(tx, ref);
+      if (blob) {
+        url = URL.createObjectURL(blob);
+        coverUrls.set(ref, url);
+      }
     }
     return { ...book, cover_url: url ?? null };
   };
-
-  const coverIsbnOf = (book: Book): Isbn | null =>
-    book.cover_url?.startsWith(LOCAL_COVER_PREFIX) ? book.cover_url.slice(LOCAL_COVER_PREFIX.length) : null;
 
   /** UI cover URL -> value to store. blob: URLs must be ones this adapter issued. */
   const storableCover = (url: string | null): string | null => {
     if (!url) return null;
     if (url.startsWith('blob:')) {
-      for (const [isbn, live] of coverUrls) if (live === url) return `${LOCAL_COVER_PREFIX}${isbn}`;
+      for (const [ref, live] of coverUrls) if (live === url) return ref;
       throw new DataStoreError('invalid', 'This cover image is no longer available. Save the photo again.');
     }
     return url;
   };
 
+  /** Deletes a local photo once no book uses it any more. Returns true if one was deleted. */
+  const dropUnusedCover = async (tx: CoverWriteTx, ref: string): Promise<boolean> => {
+    if ((await tx.objectStore('books').index('by_cover').count(ref)) > 0) return false;
+    if (ref.startsWith(COVER_PREFIX)) await tx.objectStore('cover_images').delete(ref.slice(COVER_PREFIX.length));
+    else await tx.objectStore('covers').delete(ref.slice(LEGACY_COVER_PREFIX.length));
+    return true;
+  };
+
+  /**
+   * Moves legacy photos (keyed by ISBN) to cover_images (keyed by SHA-256) and
+   * points their books at "cover:<hash>". One transaction per photo, after
+   * hashing outside it; a repeat run picks up wherever an interrupted one
+   * stopped. The resolver reads both stores meanwhile.
+   */
+  const rekeyLegacyCovers = async (limit = Infinity): Promise<{ moved: number; remaining: number }> => {
+    const d = await getDb();
+    if ((await d.get('meta', COVERS_REKEYED_KEY))?.value === true) return { moved: 0, remaining: 0 };
+    const legacy = await d.getAll('covers');
+    let moved = 0;
+    for (const record of legacy) {
+      if (moved >= limit) break;
+      const hash = await sha256Hex(record.blob);
+      const tx = d.transaction(['covers', 'cover_images', 'books'], 'readwrite');
+      const oldRef = `${LEGACY_COVER_PREFIX}${record.isbn}`;
+      const newRef = `${COVER_PREFIX}${hash}`;
+      if (!(await tx.objectStore('cover_images').getKey(hash))) {
+        await tx.objectStore('cover_images').put({ hash, blob: record.blob, saved_at: record.saved_at });
+      }
+      for (const book of await tx.objectStore('books').index('by_cover').getAll(oldRef)) {
+        await tx.objectStore('books').put({ ...book, cover_url: newRef });
+      }
+      await tx.objectStore('covers').delete(record.isbn);
+      await tx.done;
+      revokeCoverUrl(oldRef);
+      moved++;
+    }
+    const remaining = await d.count('covers');
+    if (remaining === 0) await d.put('meta', { key: COVERS_REKEYED_KEY, value: true });
+    if (moved > 0) changed('books', 'covers');
+    return { moved, remaining };
+  };
+
+  const coverStep = rekeyLegacyCovers(options.coverStepLimit).catch((error: unknown) => {
+    // Not fatal: legacy covers still resolve, and the next open tries again.
+    console.warn('[data/local] cover re-key step failed', error);
+    return { moved: 0, remaining: -1 };
+  });
+
   const store: LocalDataStore = {
     adapterName: 'local',
+    coverStep,
 
     async close() {
       listeners.clear();
       channel?.close();
       revokeAllCoverUrls();
+      await coverStep;
       (await conn).close();
     },
 
@@ -358,47 +605,26 @@ export async function createLocalStore(dbName = DB_NAME): Promise<LocalDataStore
       };
     },
 
-    // Households ------------------------------------------------------------
+    // Household --------------------------------------------------------------
     async getCurrentHousehold() {
       // One readwrite transaction, so concurrent callers (StrictMode, other
-      // tabs) can't each create a household.
+      // tabs) can't each create it.
       const tx = (await getDb()).transaction(['meta', 'households'], 'readwrite');
-      const meta = tx.objectStore('meta');
-      const households = tx.objectStore('households');
-      const currentId = (await meta.get(CURRENT_HOUSEHOLD_KEY))?.value;
-      let household = currentId ? await households.get(currentId) : undefined;
+      let household = await tx.objectStore('households').get(HOUSEHOLD_ID);
       let created = false;
       if (!household) {
-        household = (await households.getAll())[0];
-        if (!household) {
-          household = { id: newId(), name: strings.data.defaultHouseholdName, parent_pin_hash: null };
-          await households.add(household);
-          created = true;
-        }
-        await meta.put({ key: CURRENT_HOUSEHOLD_KEY, value: household.id });
+        household = { id: HOUSEHOLD_ID, name: strings.data.defaultHouseholdName, parent_pin_hash: null };
+        await tx.objectStore('households').add(household);
+        await tx.objectStore('meta').put({ key: CURRENT_HOUSEHOLD_KEY, value: HOUSEHOLD_ID });
+        created = true;
       }
       await tx.done;
       if (created) changed('households');
       return household;
     },
 
-    async createHousehold(input) {
-      const household: Household = {
-        id: newId(),
-        name: input.name,
-        parent_pin_hash: input.parent_pin_hash ?? null,
-      };
-      await (await getDb()).add('households', household);
-      changed('households');
-      return household;
-    },
-
     async getHousehold(id) {
       return (await (await getDb()).get('households', id)) ?? null;
-    },
-
-    async listHouseholds() {
-      return (await getDb()).getAll('households');
     },
 
     async updateHousehold(id, patch) {
@@ -412,26 +638,11 @@ export async function createLocalStore(dbName = DB_NAME): Promise<LocalDataStore
       return next;
     },
 
-    async deleteHousehold(id) {
-      const tx = (await getDb()).transaction(
-        ['meta', 'households', 'readers', 'home_items', 'libraries', 'loans', 'reads', 'reader_journeys'],
-        'readwrite',
-      );
-      const readerIds = await tx.objectStore('readers').index('by_household').getAllKeys(id);
-      for (const readerId of readerIds) {
-        await deleteReaderData(tx, readerId);
-        await tx.objectStore('readers').delete(readerId);
-      }
-      await deleteKeys(tx, 'home_items', await tx.objectStore('home_items').index('by_household_added').getAllKeys(prefixRange(id)));
-      await deleteKeys(tx, 'loans', await tx.objectStore('loans').index('by_household_borrowed').getAllKeys(prefixRange(id)));
-      await deleteKeys(tx, 'libraries', await tx.objectStore('libraries').index('by_household').getAllKeys(id));
-      await deleteKeys(tx, 'reads', await tx.objectStore('reads').index('by_household').getAllKeys(id));
-      if ((await tx.objectStore('meta').get(CURRENT_HOUSEHOLD_KEY))?.value === id) {
-        await tx.objectStore('meta').delete(CURRENT_HOUSEHOLD_KEY);
-      }
-      await tx.objectStore('households').delete(id);
-      await tx.done;
-      changed('households', 'readers', 'home_items', 'libraries', 'loans', 'reads', 'reader_journeys');
+    async testOnlyAddHousehold(id, name) {
+      const household: Household = { id, name, parent_pin_hash: null };
+      await (await getDb()).put('households', household);
+      changed('households');
+      return household;
     },
 
     // Readers ---------------------------------------------------------------
@@ -446,6 +657,7 @@ export async function createLocalStore(dbName = DB_NAME): Promise<LocalDataStore
         display_name: input.display_name,
         avatar: input.avatar,
         card_token: input.card_token ?? newCardToken(),
+        active_journey_id: null,
       };
       try {
         await d.add('readers', reader);
@@ -506,36 +718,47 @@ export async function createLocalStore(dbName = DB_NAME): Promise<LocalDataStore
     },
 
     async deleteReader(id) {
-      const tx = (await getDb()).transaction(['readers', 'loans', 'reads', 'reader_journeys'], 'readwrite');
-      await deleteReaderData(tx, id);
+      const tx = (await getDb()).transaction(
+        ['readers', 'loans', 'read_events', 'read_summaries', 'reader_journeys'],
+        'readwrite',
+      );
+      // One delete per child row, so every delete can later be replayed as a
+      // single-record change.
+      for (const key of await tx.objectStore('read_events').index('by_reader_read_at').getAllKeys(prefixRange(id))) {
+        await tx.objectStore('read_events').delete(key);
+      }
+      for (const key of await tx.objectStore('read_summaries').getAllKeys(prefixRange(id))) {
+        await tx.objectStore('read_summaries').delete(key);
+      }
+      for (const key of await tx.objectStore('loans').index('by_reader').getAllKeys(id)) {
+        await tx.objectStore('loans').delete(key);
+      }
+      for (const key of await tx.objectStore('reader_journeys').index('by_reader_started').getAllKeys(prefixRange(id))) {
+        await tx.objectStore('reader_journeys').delete(key);
+      }
       await tx.objectStore('readers').delete(id);
       await tx.done;
-      changed('readers', 'loans', 'reads', 'reader_journeys');
+      changed('readers', 'loans', 'read_events', 'reader_journeys');
     },
 
     // Books -----------------------------------------------------------------
     async getBook(isbn) {
-      const tx = (await getDb()).transaction(['books', 'covers']);
+      const tx = (await getDb()).transaction(['books', 'cover_images', 'covers']);
       const book = await tx.objectStore('books').get(isbn);
-      const coverIsbn = book && coverIsbnOf(book);
-      const cover = coverIsbn ? await tx.objectStore('covers').get(coverIsbn) : undefined;
+      const resolved = book ? await resolveCover(tx, book) : null;
       await tx.done;
-      return book ? resolveCover(book, cover) : null;
+      return resolved;
     },
 
     async getBooks(isbns) {
-      const tx = (await getDb()).transaction(['books', 'covers']);
+      const tx = (await getDb()).transaction(['books', 'cover_images', 'covers']);
       const books = (await Promise.all(isbns.map((isbn) => tx.objectStore('books').get(isbn)))).filter(
         (book): book is Book => book !== undefined,
       );
-      const covers = await Promise.all(
-        books.map((book) => {
-          const coverIsbn = coverIsbnOf(book);
-          return coverIsbn && !coverUrls.has(coverIsbn) ? tx.objectStore('covers').get(coverIsbn) : undefined;
-        }),
-      );
+      const resolved: Book[] = [];
+      for (const book of books) resolved.push(await resolveCover(tx, book));
       await tx.done;
-      return books.map((book, i) => resolveCover(book, covers[i]));
+      return resolved;
     },
 
     async putBook(book) {
@@ -546,35 +769,43 @@ export async function createLocalStore(dbName = DB_NAME): Promise<LocalDataStore
         cover_url: storableCover(book.cover_url ?? null),
         source: book.source,
       };
-      const tx = (await getDb()).transaction(['books', 'covers'], 'readwrite');
+      const tx = (await getDb()).transaction(['books', 'cover_images', 'covers'], 'readwrite');
+      const previous = (await tx.objectStore('books').get(book.isbn))?.cover_url ?? null;
       await tx.objectStore('books').put(stored);
-      // Drop this ISBN's photo if the book no longer uses it.
-      const ownPhoto = `${LOCAL_COVER_PREFIX}${book.isbn}`;
-      let removedPhoto = false;
-      if (stored.cover_url !== ownPhoto && (await tx.objectStore('covers').getKey(book.isbn))) {
-        await tx.objectStore('covers').delete(book.isbn);
-        removedPhoto = true;
+      // Drop the old photo if no book uses it any more.
+      let droppedRef: string | null = null;
+      if (isLocalCoverRef(previous) && previous !== stored.cover_url && (await dropUnusedCover(tx, previous))) {
+        droppedRef = previous;
       }
-      const coverIsbn = coverIsbnOf(stored);
-      const cover = coverIsbn ? await tx.objectStore('covers').get(coverIsbn) : undefined;
+      const resolved = await resolveCover(tx, stored);
       await tx.done;
-      if (removedPhoto) {
-        revokeCoverUrl(book.isbn);
+      if (droppedRef) {
+        revokeCoverUrl(droppedRef);
         changed('books', 'covers');
       } else {
         changed('books');
       }
-      return resolveCover(stored, cover);
+      return resolved;
     },
 
-    async saveCoverImage(isbn, image) {
+    async saveCoverImage(image) {
       if (!(image instanceof Blob) || image.size === 0) {
         throw new DataStoreError('invalid', 'Cover image is empty.');
       }
-      await (await getDb()).put('covers', { isbn, blob: image, saved_at: nowIso() });
-      revokeCoverUrl(isbn);
-      const url = URL.createObjectURL(image);
-      coverUrls.set(isbn, url);
+      if (image.size > MAX_COVER_BYTES) {
+        throw new DataStoreError('invalid', `Cover image is larger than ${MAX_COVER_BYTES} bytes.`);
+      }
+      const hash = await sha256Hex(image);
+      const ref = `${COVER_PREFIX}${hash}`;
+      const d = await getDb();
+      if (!(await d.getKey('cover_images', hash))) {
+        await d.put('cover_images', { hash, blob: image, saved_at: nowIso() });
+      }
+      let url = coverUrls.get(ref);
+      if (!url) {
+        url = URL.createObjectURL(image);
+        coverUrls.set(ref, url);
+      }
       changed('covers');
       return url;
     },
@@ -587,7 +818,7 @@ export async function createLocalStore(dbName = DB_NAME): Promise<LocalDataStore
         await tx.done;
         return existing;
       }
-      const item: HomeItem = { id: newId(), household_id: householdId, isbn, added_at: nowIso() };
+      const item: HomeItem = { id: isbn, household_id: householdId, isbn, added_at: nowIso() };
       await tx.store.add(item);
       await tx.done;
       changed('home_items');
@@ -735,56 +966,106 @@ export async function createLocalStore(dbName = DB_NAME): Promise<LocalDataStore
 
     // Reads -----------------------------------------------------------------
     async markRead(readerId, isbn, readAt) {
-      const tx = (await getDb()).transaction(['readers', 'reads'], 'readwrite');
-      const reads = tx.objectStore('reads');
-      const existing = await reads.get([readerId, isbn]);
-      if (existing) {
-        await tx.done;
-        return existing;
-      }
+      const tx = (await getDb()).transaction(['readers', 'read_events', 'read_summaries'], 'readwrite');
       const reader = await tx.objectStore('readers').get(readerId);
       if (!reader) throw notFound('Reader', readerId);
-      const read: Read = {
-        reader_id: readerId,
+
+      const events = tx.objectStore('read_events');
+      const summaries = tx.objectStore('read_summaries');
+      if (readAt === undefined) {
+        // Double-tap guard: ignore a repeat within READ_TAP_GUARD_MS of the latest read.
+        const latest = latestEvent(await events.index('by_reader_isbn_read_at').getAll(bookRange(readerId, isbn)));
+        if (latest && Math.abs(now() - Date.parse(latest.read_at)) < READ_TAP_GUARD_MS) {
+          await tx.done;
+          return null;
+        }
+      }
+      const event: ReadEvent = {
+        id: newId(),
         household_id: reader.household_id,
+        reader_id: readerId,
         isbn,
         read_at: readAt ? toIso(readAt) : nowIso(),
       };
-      await reads.add(read);
+      await events.add(event);
+      await summaries.put(addToSummary((await summaries.get([readerId, isbn])) ?? null, event));
       await tx.done;
-      changed('reads');
-      return read;
+      changed('read_events');
+      return event;
     },
 
-    async unmarkRead(readerId, isbn) {
-      await (await getDb()).delete('reads', [readerId, isbn]);
-      changed('reads');
+    async undoLatestRead(readerId, isbn) {
+      const tx = (await getDb()).transaction(['read_events', 'read_summaries'], 'readwrite');
+      const latest = latestEvent(
+        await tx.objectStore('read_events').index('by_reader_isbn_read_at').getAll(bookRange(readerId, isbn)),
+      );
+      if (!latest) {
+        await tx.done;
+        return null;
+      }
+      await tx.objectStore('read_events').delete(latest.id);
+      await recomputeSummary(tx, readerId, isbn);
+      await tx.done;
+      changed('read_events');
+      return latest;
     },
 
-    async getRead(readerId, isbn) {
-      return (await (await getDb()).get('reads', [readerId, isbn])) ?? null;
+    async restoreReadEvent(event) {
+      if (!event?.id || !event.reader_id || !event.isbn || !event.read_at) {
+        throw new DataStoreError('invalid', 'Not a read event.');
+      }
+      const tx = (await getDb()).transaction(['readers', 'read_events', 'read_summaries'], 'readwrite');
+      const reader = await tx.objectStore('readers').get(event.reader_id);
+      if (!reader) throw notFound('Reader', event.reader_id);
+      const restored: ReadEvent = {
+        id: event.id,
+        household_id: reader.household_id,
+        reader_id: event.reader_id,
+        isbn: event.isbn,
+        read_at: toIso(event.read_at),
+      };
+      await tx.objectStore('read_events').put(restored);
+      await recomputeSummary(tx, restored.reader_id, restored.isbn);
+      await tx.done;
+      changed('read_events');
+      return restored;
     },
 
-    async listReads(readerId) {
-      const reads = await (await getDb()).getAllFromIndex('reads', 'by_reader_read_at', prefixRange(readerId));
-      return reads.reverse();
+    async getReadSummary(readerId, isbn) {
+      return (await (await getDb()).get('read_summaries', [readerId, isbn])) ?? null;
+    },
+
+    async listReadSummaries(readerId) {
+      const summaries = await (await getDb()).getAllFromIndex('read_summaries', 'by_reader_last', prefixRange(readerId));
+      return summaries.reverse();
+    },
+
+    async listReadEvents(readerId, isbn) {
+      const d = await getDb();
+      const events =
+        isbn === undefined
+          ? await d.getAllFromIndex('read_events', 'by_reader_read_at', prefixRange(readerId))
+          : await d.getAllFromIndex('read_events', 'by_reader_isbn_read_at', bookRange(readerId, isbn));
+      return events.reverse();
     },
 
     async countReadsSince(readerId, since) {
-      return (await getDb()).countFromIndex('reads', 'by_reader_read_at', prefixRange(readerId, toIso(since)));
+      return (await getDb()).countFromIndex('read_summaries', 'by_reader_first', prefixRange(readerId, toIso(since)));
     },
 
     async countHouseholdReads(householdId) {
-      return (await getDb()).countFromIndex('reads', 'by_household', householdId);
+      return (await getDb()).countFromIndex('read_summaries', 'by_household', householdId);
     },
 
     // Reading journeys ------------------------------------------------------
     async startJourney(readerId, journeyId, startedAt) {
-      // The check and insert share one readwrite transaction, which IndexedDB
-      // serialises, so two concurrent starts cannot both succeed.
-      const tx = (await getDb()).transaction('reader_journeys', 'readwrite');
-      const mine = await tx.store.index('by_reader_started').getAll(prefixRange(readerId));
-      if (mine.some((j) => j.completed_at === null)) {
+      // The check and both writes share one readwrite transaction, which
+      // IndexedDB serialises, so two concurrent starts cannot both succeed.
+      const tx = (await getDb()).transaction(['readers', 'reader_journeys'], 'readwrite');
+      const reader = await tx.objectStore('readers').get(readerId);
+      if (!reader) throw notFound('Reader', readerId);
+      const current = reader.active_journey_id ? await tx.objectStore('reader_journeys').get(reader.active_journey_id) : undefined;
+      if (current && current.completed_at === null) {
         tx.abort();
         await tx.done.catch(() => undefined);
         throw new DataStoreError('conflict', 'Reader already has an active journey.');
@@ -796,15 +1077,19 @@ export async function createLocalStore(dbName = DB_NAME): Promise<LocalDataStore
         started_at: startedAt ? toIso(startedAt) : nowIso(),
         completed_at: null,
       };
-      await tx.store.add(journey);
+      await tx.objectStore('reader_journeys').add(journey);
+      await tx.objectStore('readers').put({ ...reader, active_journey_id: journey.id });
       await tx.done;
-      changed('reader_journeys');
+      changed('reader_journeys', 'readers');
       return journey;
     },
 
     async getActiveJourney(readerId) {
-      const mine = await (await getDb()).getAllFromIndex('reader_journeys', 'by_reader_started', prefixRange(readerId));
-      return mine.find((j) => j.completed_at === null) ?? null;
+      const d = await getDb();
+      const reader = await d.get('readers', readerId);
+      if (!reader?.active_journey_id) return null;
+      const journey = await d.get('reader_journeys', reader.active_journey_id);
+      return journey && journey.completed_at === null ? journey : null;
     },
 
     async listReaderJourneys(readerId) {
@@ -813,44 +1098,31 @@ export async function createLocalStore(dbName = DB_NAME): Promise<LocalDataStore
     },
 
     async completeJourney(id, completedAt) {
-      const tx = (await getDb()).transaction('reader_journeys', 'readwrite');
-      const existing = await tx.store.get(id);
+      const tx = (await getDb()).transaction(['readers', 'reader_journeys'], 'readwrite');
+      const existing = await tx.objectStore('reader_journeys').get(id);
       if (!existing) throw notFound('Reader journey', id);
       const next: ReaderJourney = {
         ...existing,
         completed_at: existing.completed_at ?? (completedAt ? toIso(completedAt) : nowIso()),
       };
-      await tx.store.put(next);
+      await tx.objectStore('reader_journeys').put(next);
+      const reader = await tx.objectStore('readers').get(existing.reader_id);
+      if (reader?.active_journey_id === id) await tx.objectStore('readers').put({ ...reader, active_journey_id: null });
       await tx.done;
-      changed('reader_journeys');
+      changed('reader_journeys', 'readers');
       return next;
     },
 
     async deleteReaderJourney(id) {
-      await (await getDb()).delete('reader_journeys', id);
-      changed('reader_journeys');
+      const tx = (await getDb()).transaction(['readers', 'reader_journeys'], 'readwrite');
+      const existing = await tx.objectStore('reader_journeys').get(id);
+      await tx.objectStore('reader_journeys').delete(id);
+      const reader = existing ? await tx.objectStore('readers').get(existing.reader_id) : undefined;
+      if (reader?.active_journey_id === id) await tx.objectStore('readers').put({ ...reader, active_journey_id: null });
+      await tx.done;
+      changed('reader_journeys', 'readers');
     },
   };
 
   return store;
-}
-
-async function deleteKeys<Name extends StoreNames<LibraryCardDB>>(
-  tx: AnyTx<'readwrite'>,
-  storeName: Name,
-  keys: LibraryCardDB[Name]['key'][],
-): Promise<void> {
-  const objectStore = tx.objectStore(storeName);
-  for (const key of keys) await objectStore.delete(key);
-}
-
-/** Deletes reads, loans and journeys for one reader inside an open transaction. */
-async function deleteReaderData(tx: AnyTx<'readwrite'>, readerId: Id): Promise<void> {
-  await deleteKeys(tx, 'reads', await tx.objectStore('reads').index('by_reader_read_at').getAllKeys(prefixRange(readerId)));
-  await deleteKeys(tx, 'loans', await tx.objectStore('loans').index('by_reader').getAllKeys(readerId));
-  await deleteKeys(
-    tx,
-    'reader_journeys',
-    await tx.objectStore('reader_journeys').index('by_reader_started').getAllKeys(prefixRange(readerId)),
-  );
 }

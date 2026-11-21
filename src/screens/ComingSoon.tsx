@@ -24,7 +24,7 @@ export function ComingSoon({ title, emoji, children }: { title: string; emoji: s
 export function StaircaseSoon({ reader }: { reader: Reader }) {
   const t = strings.comingSoon;
   const query = useCallback((s: DataStore) => s.countHouseholdReads(reader.household_id), [reader.household_id]);
-  const { data: count } = useDataQuery(query, ['reads']);
+  const { data: count } = useDataQuery(query, ['read_events']);
   return (
     <ComingSoon title={strings.hub.staircase} emoji="🪜">
       {count !== undefined && (

@@ -1,5 +1,5 @@
 import { useEffect, useId, useState, type ChangeEvent, type FormEvent } from 'react';
-import type { Book, DataStore } from '../data';
+import { MAX_COVER_BYTES, type Book, type DataStore } from '../data';
 import { resizeImage } from '../lib/image';
 import { fmt, strings } from '../strings';
 import { BookCover } from '../ui/BookCover';
@@ -56,7 +56,7 @@ export function BookSheet({ mode, store, saveLabel, onSaved, onClose }: BookShee
     setError(null);
     setBusy(true);
     try {
-      const blob = await resizeImage(file, COVER_MAX_EDGE, COVER_QUALITY);
+      const blob = await resizeImage(file, COVER_MAX_EDGE, COVER_QUALITY, MAX_COVER_BYTES);
       setPhoto({ blob, url: URL.createObjectURL(blob) });
     } catch {
       setError(t.photoError);
@@ -75,7 +75,7 @@ export function BookSheet({ mode, store, saveLabel, onSaved, onClose }: BookShee
     setBusy(true);
     setError(null);
     try {
-      const coverUrl = photo ? await store.saveCoverImage(isbn, photo.blob) : (original?.cover_url ?? null);
+      const coverUrl = photo ? await store.saveCoverImage(photo.blob) : (original?.cover_url ?? null);
       const saved = await store.putBook({
         isbn,
         title: cleanTitle,

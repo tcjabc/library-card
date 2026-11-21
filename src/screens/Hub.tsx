@@ -8,7 +8,7 @@ import { fmt, strings } from '../strings';
 export function Hub({ reader }: { reader: Reader }) {
   const t = strings.hub;
   const countQuery = useCallback((s: DataStore) => s.countHouseholdReads(reader.household_id), [reader.household_id]);
-  const { data: familyReads } = useDataQuery(countQuery, ['reads']);
+  const { data: familyReads } = useDataQuery(countQuery, ['read_events']);
 
   const notMe = () => {
     clearActiveReader();
