@@ -207,3 +207,15 @@ The scanner uses the native `BarcodeDetector` where it exists (Chrome on
 Android) and the [`barcode-detector`](https://github.com/Sec-ant/barcode-detector)
 polyfill (ZXing compiled to WebAssembly) elsewhere, including iOS Safari. The
 WASM file is bundled and precached, so scanning works offline.
+
+## Licence
+
+MIT, see [LICENSE](LICENSE). Copyright (c) 2026 tcjabc.
+
+Some files come from other projects under their own licences, with the full
+texts in [LICENSES/](LICENSES):
+
+- The sync core, recovery words and sync crypto in `src/sync/vendor/` come from
+  Peek Budget (MIT), some verbatim and one changed. [VENDORED.md](VENDORED.md)
+  lists each file, where it came from and its SHA-256.
+- The BIP-39 English wordlist (MIT; the npm copy it was taken from is ISC).

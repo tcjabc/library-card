@@ -5,7 +5,8 @@ import reactRefresh from 'eslint-plugin-react-refresh';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist', 'dev-dist', 'node_modules'] },
+  // Vendored sync files and the tests ported with them stay as upstream wrote them (VENDORED.md).
+  { ignores: ['dist', 'dev-dist', 'node_modules', 'src/sync/vendor/**', 'src/sync/__tests__/ported/**'] },
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

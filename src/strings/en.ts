@@ -297,6 +297,19 @@ export const en = {
     selfTestSummary: '{passed} of {total} checks passed',
   },
 
+  // Messages from the vendored sync code (src/sync/vendor/i18n.js maps Peek Budget's keys here).
+  // Kept word for word as Peek Budget has them (straight apostrophes included), so the ported
+  // tests check them unchanged.
+  sync: {
+    keyFormat: 'A household key is 22 characters of letters, digits, - and _.',
+    keyInvalid: 'That household key is not valid.',
+    wordsEmpty: 'Enter the 12 recovery words.',
+    wordsUnknown: 'Word {n} ("{word}") isn\'t in the list.',
+    wordsUnknownNear: 'Word {n} ("{word}") isn\'t in the list. Did you mean "{near}"?',
+    wordsCount: 'There are 12 recovery words. You entered {count}.',
+    wordsChecksum: 'A word is wrong or out of order. Check them against your copy.',
+  },
+
   grownups: {
     title: 'Grown-ups',
     backToKids: 'Back to kids',

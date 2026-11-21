@@ -1,0 +1,4 @@
+# Vendored sync files and the tests ported with them are checked byte for byte against VENDORED.md:
+# never convert their line endings.
+src/sync/vendor/*.js -text
+src/sync/__tests__/ported/*.js -text

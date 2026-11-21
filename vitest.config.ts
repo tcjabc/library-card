@@ -7,7 +7,8 @@ process.env.TZ = 'America/New_York';
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    // .test.js: tests ported from Peek Budget for the vendored sync files (see VENDORED.md).
+    include: ['src/**/*.test.ts', 'src/**/*.test.js'],
     setupFiles: ['src/test/setup.ts'],
     // Each file gets its own fake IndexedDB, so files can run in parallel.
     isolate: true,
