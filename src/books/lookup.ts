@@ -1,14 +1,22 @@
 import { getDataStore, type Book, type DataStore } from '../data';
+import { fixLowercaseTitle } from '../lib/text';
 import { isbn13To10, normaliseIsbn } from './isbn';
 
 export { normaliseIsbn } from './isbn';
 
 /**
- * ISBN -> Book. Order: DataStore cache, Open Library, Google Books.
+ * ISBN -> Book. Order: DataStore cache, then two providers.
+ * - Taiwanese ISBNs (978957, 978986, 978626) try Google Books first, which
+ *   covers them far better; everything else tries Open Library first.
+ * - If the first provider finds the book without a cover, the other provider
+ *   is still asked for one.
+ * - Titles that arrive entirely lowercase are title-cased.
+ *
  * Resolves to null if every provider answered and none knows the ISBN.
  * Rejects with a BookLookupError if the input is invalid ("invalid_isbn"), or
  * if the book wasn't found and at least one provider was unreachable
  * ("network"), so the UI can offer a retry instead of "not found".
+ * A found book may still have cover_url null: the UI then offers a photo.
  */
 
 export type BookLookupErrorCode = 'invalid_isbn' | 'network';
@@ -24,6 +32,7 @@ export class BookLookupError extends Error {
 }
 
 const TIMEOUT_MS = 8000;
+const GOOGLE_FIRST_PREFIXES = ['978957', '978986', '978626'];
 
 interface LookupOptions {
   /** Skip the DataStore cache and refetch. */
@@ -34,6 +43,11 @@ interface LookupOptions {
 }
 
 type ProviderResult = Omit<Book, 'isbn'> | null;
+type Provider = (isbn: string, signal?: AbortSignal) => Promise<ProviderResult>;
+
+export function providerOrder(isbn: string): ['google', 'openlibrary'] | ['openlibrary', 'google'] {
+  return GOOGLE_FIRST_PREFIXES.some((p) => isbn.startsWith(p)) ? ['google', 'openlibrary'] : ['openlibrary', 'google'];
+}
 
 export async function lookupIsbn(raw: string, options: LookupOptions = {}): Promise<Book | null> {
   const isbn = normaliseIsbn(raw);
@@ -46,9 +60,9 @@ export async function lookupIsbn(raw: string, options: LookupOptions = {}): Prom
   }
 
   let networkFailures = 0;
-  const attempt = async (provider: () => Promise<ProviderResult>): Promise<ProviderResult> => {
+  const attempt = async (provider: Provider): Promise<ProviderResult> => {
     try {
-      return await provider();
+      return await provider(isbn, options.signal);
     } catch (error) {
       if (options.signal?.aborted) throw error;
       networkFailures++;
@@ -57,11 +71,13 @@ export async function lookupIsbn(raw: string, options: LookupOptions = {}): Prom
     }
   };
 
-  let found = await attempt(() => fromOpenLibrary(isbn, options.signal));
+  const providers: Record<'google' | 'openlibrary', Provider> = { google: fromGoogleBooks, openlibrary: fromOpenLibrary };
+  const [firstName, secondName] = providerOrder(isbn);
+  let found = await attempt(providers[firstName]);
   if (!found || !found.cover_url) {
-    const google = await attempt(() => fromGoogleBooks(isbn, options.signal));
-    if (!found) found = google;
-    else if (google?.cover_url) found = { ...found, cover_url: google.cover_url };
+    const second = await attempt(providers[secondName]);
+    if (!found) found = second;
+    else if (second?.cover_url) found = { ...found, cover_url: second.cover_url };
   }
 
   if (!found) {
@@ -70,10 +86,11 @@ export async function lookupIsbn(raw: string, options: LookupOptions = {}): Prom
     }
     return null;
   }
-  const book: Book = { isbn, ...found };
+  const book: Book = { isbn, ...found, title: fixLowercaseTitle(found.title) };
   // Only cache complete answers. If a provider failed (e.g. Google's 429 rate
-  // limit), a later lookup may still find the missing cover.
-  if (networkFailures > 0 && !book.cover_url) return book;
+  // limit), a later lookup may still find the missing cover. Books without a
+  // cover are saved by the caller once the user adds or skips a photo.
+  if (!book.cover_url) return book;
   return store.putBook(book);
 }
 

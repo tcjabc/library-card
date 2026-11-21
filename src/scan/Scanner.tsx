@@ -22,6 +22,8 @@ export interface ScannerProps {
   debounceMs?: number;
   /** Keep the camera running but stop reporting results. */
   paused?: boolean;
+  /** Replaces the default hint, e.g. "Try the other barcode". */
+  notice?: string | null;
   className?: string;
 }
 
@@ -36,7 +38,15 @@ interface ExtendedCapabilities extends MediaTrackCapabilities {
 
 type Status = 'starting' | 'running' | 'error';
 
-export function Scanner({ formats, onResult, onError, debounceMs = 2500, paused = false, className }: ScannerProps) {
+export function Scanner({
+  formats,
+  onResult,
+  onError,
+  debounceMs = 2500,
+  paused = false,
+  notice,
+  className,
+}: ScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const trackRef = useRef<MediaStreamTrack | null>(null);
   const [status, setStatus] = useState<Status>('starting');
@@ -207,7 +217,11 @@ export function Scanner({ formats, onResult, onError, debounceMs = 2500, paused 
       <video ref={videoRef} className="scanner__video" playsInline muted autoPlay aria-label={t.videoLabel} />
       {status === 'running' && <div className="scanner__frame" aria-hidden="true" />}
       {status === 'starting' && <p className="scanner__status">{t.starting}</p>}
-      {status === 'running' && <p className="scanner__hint">{t.hint}</p>}
+      {status === 'running' && (
+        <p className={notice ? 'scanner__hint scanner__hint--notice' : 'scanner__hint'} role={notice ? 'status' : undefined}>
+          {notice ?? t.hint}
+        </p>
+      )}
       {status === 'error' && errorKind && (
         <div className="scanner__error" role="alert">
           <p>{errorMessage(errorKind)}</p>

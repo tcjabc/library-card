@@ -1,84 +1,99 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { BookSheet, type BookSheetMode } from '../books/BookSheet';
 import { BookLookupError, lookupIsbn, normaliseIsbn } from '../books/lookup';
-import { configuredAdapter, getDataStore, type Book, type DataStore, type HomeItem, type Household } from '../data';
+import {
+  configuredAdapter,
+  useDataQuery,
+  type Book,
+  type DataStore,
+  type HomeItem,
+  type Household,
+} from '../data';
 import { href } from '../router';
-import { Scanner, type ScanResult } from '../scan/Scanner';
+import { BookScanner } from '../scan/BookScanner';
 import { fmt, strings } from '../strings';
 import { BookCover } from '../ui/BookCover';
+import { useToast } from '../ui/Toast';
+import { ReadersPanel } from './ReadersPanel';
+import { SelfTestPanel } from './SelfTestPanel';
 import './DevPage.css';
 
 /**
- * Temporary developer page (#/dev): scan an ISBN, look it up, add it to the
- * Home library. Exercises the Scanner, lookup and DataStore end to end.
+ * Temporary grown-up tools (#/dev) until the PIN-protected parent area
+ * (Phase 5): readers and cards, adding books to Home, fixing books.
  */
 
 type Lookup =
   | { state: 'idle' }
   | { state: 'searching'; isbn: string }
   | { state: 'found'; book: Book; inHome: boolean }
-  | { state: 'message'; text: string; retryIsbn?: string };
+  | { state: 'message'; text: string; retryIsbn?: string; manualIsbn?: string };
 
 interface HomeEntry {
   item: HomeItem;
   book: Book | null;
 }
 
+type SheetState = { mode: BookSheetMode; addToHome: boolean } | null;
+
 const t = strings.dev;
 
-// Module-level so React StrictMode's double effect can't create two households.
-let devHousehold: Promise<Household> | null = null;
-function ensureDevHousehold(store: DataStore): Promise<Household> {
-  devHousehold ??= store
-    .listHouseholds()
-    .then((list) => list[0] ?? store.createHousehold({ name: t.defaultHouseholdName }))
-    .catch((error: unknown) => {
-      devHousehold = null;
-      throw error;
-    });
-  return devHousehold;
-}
+const householdQuery = (s: DataStore) => s.getCurrentHousehold();
 
 export default function DevPage() {
-  const [store, setStore] = useState<DataStore | null>(null);
-  const [household, setHousehold] = useState<Household | null>(null);
-  const [storageError, setStorageError] = useState<string | null>(null);
-  const [home, setHome] = useState<HomeEntry[]>([]);
+  const { data: household, store, error } = useDataQuery(householdQuery, ['households']);
+
+  return (
+    <main className="page page--wide dev">
+      <header className="stack">
+        <a href={href('/')} className="small">
+          ← {t.back}
+        </a>
+        <h1>{t.title}</h1>
+        <p className="muted">{t.intro}</p>
+        <p className="muted small">{fmt(t.adapter, { name: store?.adapterName ?? configuredAdapter })}</p>
+      </header>
+
+      {error && (
+        <p className="alert alert--danger" role="alert">
+          {fmt(t.storageError, { message: error.message })}
+        </p>
+      )}
+
+      {store && household && (
+        <>
+          <ReadersPanel store={store} household={household} />
+          <BooksPanel store={store} household={household} />
+          <SelfTestPanel />
+        </>
+      )}
+    </main>
+  );
+}
+
+function BooksPanel({ store, household }: { store: DataStore; household: Household }) {
+  const toast = useToast();
   const [scanning, setScanning] = useState(false);
   const [lookup, setLookup] = useState<Lookup>({ state: 'idle' });
   const [manual, setManual] = useState('');
+  const [sheet, setSheet] = useState<SheetState>(null);
   const lookupAbort = useRef<AbortController | null>(null);
 
-  const refreshHome = useCallback(async (s: DataStore, h: Household) => {
-    const items = await s.listHomeItems(h.id);
-    const books = await s.getBooks(items.map((i) => i.isbn));
-    const byIsbn = new Map(books.map((b) => [b.isbn, b]));
-    setHome(items.map((item) => ({ item, book: byIsbn.get(item.isbn) ?? null })));
-  }, []);
+  useEffect(() => () => lookupAbort.current?.abort(), []);
 
-  // Open the store and make sure there is a household to save into.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const s = await getDataStore();
-        const h = await ensureDevHousehold(s);
-        if (cancelled) return;
-        setStore(s);
-        setHousehold(h);
-        await refreshHome(s, h);
-      } catch (error) {
-        if (!cancelled) setStorageError(error instanceof Error ? error.message : String(error));
-      }
-    })();
-    return () => {
-      cancelled = true;
-      lookupAbort.current?.abort();
-    };
-  }, [refreshHome]);
+  const homeQuery = useCallback(
+    async (s: DataStore): Promise<HomeEntry[]> => {
+      const items = await s.listHomeItems(household.id);
+      const books = await s.getBooks(items.map((i) => i.isbn));
+      const byIsbn = new Map(books.map((b) => [b.isbn, b]));
+      return items.map((item) => ({ item, book: byIsbn.get(item.isbn) ?? null }));
+    },
+    [household.id],
+  );
+  const { data: home = [] } = useDataQuery(homeQuery, ['home_items', 'books', 'covers']);
 
   const runLookup = useCallback(
     async (isbn: string) => {
-      if (!store || !household) return;
       lookupAbort.current?.abort();
       const controller = new AbortController();
       lookupAbort.current = controller;
@@ -87,31 +102,28 @@ export default function DevPage() {
         const book = await lookupIsbn(isbn, { store, signal: controller.signal });
         if (controller.signal.aborted) return;
         if (!book) {
-          setLookup({ state: 'message', text: fmt(strings.lookup.notFound, { isbn }) });
+          // Nothing found: fall through to manual add.
+          setLookup({ state: 'message', text: fmt(strings.lookup.notFound, { isbn }), manualIsbn: isbn });
+          setSheet({ mode: { kind: 'new', isbn }, addToHome: true });
           return;
         }
         const inHome = (await store.getHomeItem(household.id, book.isbn)) !== null;
         setLookup({ state: 'found', book, inHome });
+        // Found without a cover: offer a photo straight away.
+        if (!book.cover_url && !inHome) setSheet({ mode: { kind: 'add-cover', book }, addToHome: true });
       } catch (error) {
         if (controller.signal.aborted) return;
         const text =
-          error instanceof BookLookupError && error.code === 'invalid_isbn'
-            ? strings.lookup.invalidIsbn
-            : strings.lookup.network;
-        setLookup({ state: 'message', text, retryIsbn: isbn });
+          error instanceof BookLookupError && error.code === 'invalid_isbn' ? strings.lookup.invalidIsbn : strings.lookup.network;
+        const invalid = error instanceof BookLookupError && error.code === 'invalid_isbn';
+        setLookup({ state: 'message', text, retryIsbn: invalid ? undefined : isbn, manualIsbn: invalid ? undefined : isbn });
       }
     },
-    [store, household],
+    [store, household.id],
   );
 
-  const onScan = useCallback(
-    (result: ScanResult) => {
-      const isbn = normaliseIsbn(result.value);
-      if (!isbn) {
-        // Not a book (e.g. a grocery barcode). Keep scanning.
-        setLookup({ state: 'message', text: strings.lookup.invalidIsbn });
-        return;
-      }
+  const onIsbn = useCallback(
+    (isbn: string) => {
       setScanning(false);
       void runLookup(isbn);
     },
@@ -130,20 +142,25 @@ export default function DevPage() {
   };
 
   const addToHome = async (book: Book) => {
-    if (!store || !household) return;
     await store.putBook(book);
     await store.addHomeItem(household.id, book.isbn);
     setLookup({ state: 'found', book, inHome: true });
-    await refreshHome(store, household);
+    toast({ message: fmt(t.addedToast, { title: book.title }) });
+  };
+
+  const onSheetSaved = async (book: Book) => {
+    const addHome = sheet?.addToHome ?? false;
+    setSheet(null);
+    if (addHome) await addToHome(book);
+    else {
+      if (lookup.state === 'found' && lookup.book.isbn === book.isbn) setLookup({ ...lookup, book });
+      toast({ message: fmt(t.fixedToast, { title: book.title }) });
+    }
   };
 
   const removeFromHome = async (item: HomeItem) => {
-    if (!store || !household) return;
     await store.removeHomeItem(item.id);
-    if (lookup.state === 'found' && lookup.book.isbn === item.isbn) {
-      setLookup({ ...lookup, inHome: false });
-    }
-    await refreshHome(store, household);
+    if (lookup.state === 'found' && lookup.book.isbn === item.isbn) setLookup({ ...lookup, inHome: false });
   };
 
   const startScanning = () => {
@@ -153,26 +170,12 @@ export default function DevPage() {
   };
 
   return (
-    <main className="page">
-      <header className="stack">
-        <a href={href('/')} className="small">
-          ← {t.back}
-        </a>
-        <h1>{t.title}</h1>
-        <p className="muted">{t.intro}</p>
-        <p className="muted small">{fmt(t.adapter, { name: store?.adapterName ?? configuredAdapter })}</p>
-      </header>
-
-      {storageError && (
-        <p className="alert alert--danger" role="alert">
-          {fmt(t.storageError, { message: storageError })}
-        </p>
-      )}
-
-      <section className="stack" aria-live="polite">
+    <>
+      <section className="stack card" aria-live="polite">
+        <h2>{t.addHeading}</h2>
         {scanning ? (
           <>
-            <Scanner formats="ean_13" onResult={onScan} />
+            <BookScanner onIsbn={onIsbn} />
             <div className="row">
               <button type="button" className="btn" onClick={() => setScanning(false)}>
                 {t.stopScan}
@@ -181,7 +184,7 @@ export default function DevPage() {
           </>
         ) : (
           <div className="row">
-            <button type="button" className="btn btn--primary" onClick={startScanning} disabled={!store}>
+            <button type="button" className="btn btn--primary" onClick={startScanning}>
               {lookup.state === 'idle' ? t.startScan : t.scanAnother}
             </button>
           </div>
@@ -201,7 +204,7 @@ export default function DevPage() {
               value={manual}
               onChange={(e) => setManual(e.target.value)}
             />
-            <button type="submit" className="btn" disabled={!store || !manual.trim()}>
+            <button type="submit" className="btn" disabled={!manual.trim()}>
               {t.manualSubmit}
             </button>
           </div>
@@ -210,11 +213,13 @@ export default function DevPage() {
         <LookupPanel
           lookup={lookup}
           onAdd={(book) => void addToHome(book)}
+          onAddPhoto={(book) => setSheet({ mode: { kind: 'add-cover', book }, addToHome: lookup.state === 'found' && !lookup.inHome })}
           onRetry={(isbn) => void runLookup(isbn)}
+          onManual={(isbn) => setSheet({ mode: { kind: 'new', isbn }, addToHome: true })}
         />
       </section>
 
-      <section className="stack">
+      <section className="stack card">
         <h2>{fmt(t.homeHeading, { count: home.length })}</h2>
         {home.length === 0 ? (
           <p className="muted">{t.homeEmpty}</p>
@@ -224,7 +229,19 @@ export default function DevPage() {
               <li key={item.id} className="dev__tile">
                 <BookCover title={book?.title ?? item.isbn} coverUrl={book?.cover_url ?? null} />
                 <p className="small dev__tile-title">{book?.title ?? item.isbn}</p>
-                <button type="button" className="btn dev__remove" onClick={() => void removeFromHome(item)}>
+                <button
+                  type="button"
+                  className="btn btn--small"
+                  onClick={() =>
+                    setSheet({
+                      mode: book ? { kind: 'fix', book } : { kind: 'new', isbn: item.isbn },
+                      addToHome: false,
+                    })
+                  }
+                >
+                  {t.fixBook}
+                </button>
+                <button type="button" className="btn btn--small btn--quiet" onClick={() => void removeFromHome(item)}>
                   {t.remove}
                 </button>
               </li>
@@ -232,18 +249,33 @@ export default function DevPage() {
           </ul>
         )}
       </section>
-    </main>
+
+      {sheet && (
+        <BookSheet
+          key={`${sheet.mode.kind}:${'isbn' in sheet.mode ? sheet.mode.isbn : sheet.mode.book.isbn}`}
+          mode={sheet.mode}
+          store={store}
+          saveLabel={sheet.addToHome ? t.addToHome : undefined}
+          onSaved={(book) => void onSheetSaved(book)}
+          onClose={() => setSheet(null)}
+        />
+      )}
+    </>
   );
 }
 
 function LookupPanel({
   lookup,
   onAdd,
+  onAddPhoto,
   onRetry,
+  onManual,
 }: {
   lookup: Lookup;
   onAdd: (book: Book) => void;
+  onAddPhoto: (book: Book) => void;
   onRetry: (isbn: string) => void;
+  onManual: (isbn: string) => void;
 }) {
   switch (lookup.state) {
     case 'idle':
@@ -254,11 +286,18 @@ function LookupPanel({
       return (
         <div className="alert stack">
           <p>{lookup.text}</p>
-          {lookup.retryIsbn && (
+          {(lookup.retryIsbn || lookup.manualIsbn) && (
             <div className="row">
-              <button type="button" className="btn" onClick={() => onRetry(lookup.retryIsbn!)}>
-                {strings.common.retry}
-              </button>
+              {lookup.retryIsbn && (
+                <button type="button" className="btn" onClick={() => onRetry(lookup.retryIsbn!)}>
+                  {strings.common.retry}
+                </button>
+              )}
+              {lookup.manualIsbn && (
+                <button type="button" className="btn" onClick={() => onManual(lookup.manualIsbn!)}>
+                  {t.addManually}
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -267,12 +306,12 @@ function LookupPanel({
       const { book, inHome } = lookup;
       const authors = book.authors.length ? book.authors.join(', ') : strings.common.unknownAuthor;
       return (
-        <article className="card dev__result">
+        <article className="dev__result">
           <div className="dev__result-cover">
             <BookCover title={book.title} coverUrl={book.cover_url} />
           </div>
           <div className="stack">
-            <h2>{book.title}</h2>
+            <h3>{book.title}</h3>
             <p className="muted">{fmt(strings.common.byAuthors, { authors })}</p>
             <p className="muted small">
               {book.isbn} · {book.source}
@@ -281,6 +320,11 @@ function LookupPanel({
               <button type="button" className="btn btn--accent" disabled={inHome} onClick={() => onAdd(book)}>
                 {inHome ? t.alreadyInHome : t.addToHome}
               </button>
+              {!book.cover_url && (
+                <button type="button" className="btn" onClick={() => onAddPhoto(book)}>
+                  📷 {strings.bookSheet.addPhoto}
+                </button>
+              )}
             </div>
           </div>
         </article>

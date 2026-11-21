@@ -12,8 +12,9 @@ A reading tracker for kids, built as an installable web app (PWA).
 The repo has no personal data, accounts or seed content. By default
 everything is stored on the device in IndexedDB.
 
-> **Status: Phase 1.** Scaffolding, the storage layer, the barcode scanner, ISBN
-> lookup and a developer page at `#/dev`. The reader-facing app comes later.
+> **Status: Phase 2.** Library-card sign-in, the kid hub and My Bookshelf with
+> "I read this!". Grown-up tools (readers, cards, adding and fixing books) live
+> on a temporary page at `#/dev` until the PIN-protected area arrives.
 
 ## Quick start (zero config)
 
@@ -24,8 +25,13 @@ npm install
 npm run dev
 ```
 
-Open <http://localhost:5173/#/dev>, scan a book's barcode (or type an ISBN) and
-add it to Home. No `.env` file is needed.
+Open <http://localhost:5173/#/dev> ("Grown-ups" on the start screen):
+
+1. Create a reader. Each reader gets a QR library card.
+2. Scan a book's barcode (or type an ISBN) and add it to Home.
+3. Scan the card (or tap "Open card") to reach the reader's hub and bookshelf.
+
+No `.env` file is needed.
 
 ### Testing on a phone
 
@@ -83,15 +89,21 @@ Routing uses hash URLs (`#/dev`), so no 404 redirects are needed.
 src/
   data/          Storage. Feature code imports from here only.
     DataStore.ts   The storage interface and entity types
-    index.ts       getDataStore(): picks the adapter from VITE_DATA_ADAPTER
+    index.ts       getDataStore(), useDataQuery(), hashPin()/verifyPin()
+    pin.ts         Parent PIN hashing shared by every adapter
+    selftest.ts    Storage self-test (run from #/dev)
     adapters/      One file per backend
-  books/         ISBN validation and lookup (Open Library, then Google Books)
-  scan/          Camera barcode/QR scanner
+  books/         ISBN validation, lookup and the add / fix book sheet
+  cards/         Library card QR URLs
+  scan/          Camera scanner (QR mode and book mode)
+  session/       The active reader on this device
+  screens/       Kid screens: splash, card sign-in, hub, bookshelf
   journeys/      Reading Journey definitions (data only)
+  lib/           Small helpers: dates, text, image resizing
   strings/       All UI text (en.ts)
   ui/            Shared styles and components
   theme.css      Design tokens (CSS variables)
-  dev/           Temporary developer page (#/dev)
+  dev/           Temporary grown-up tools (#/dev)
 ```
 
 ## Storage adapters
@@ -113,11 +125,24 @@ rule stops feature code from importing an adapter directly.
    a `DataStore`.
 2. Register it in the `ADAPTERS` map in `src/data/index.ts`.
 3. Follow the conventions at the top of `DataStore.ts`: ISO 8601 UTC
-   timestamps, ISBN-13 keys, `null` for missing values, `DataStoreError`
-   codes for failures, one read per reader+ISBN, at most one active journey per
-   reader.
+   timestamps, `YYYY-MM-DD` due dates, ISBN-13 keys, `null` for missing
+   values, `DataStoreError` codes for failures, one read per reader+ISBN, one
+   home item per household+ISBN, at most one active journey per reader.
+4. Store `reads.household_id` so `countHouseholdReads` is one indexed count.
+5. Call `subscribe()` listeners after every write, including writes from other
+   tabs or devices (`remote: true`).
+6. `getCurrentHousehold()` returns the household this device works with
+   (local: created on first run; synced: the signed-in user's).
+7. `saveCoverImage()` stores a photo and returns a `cover_url`. A synced
+   backend would upload to object storage and return its URL. The local adapter
+   keeps the Blob in IndexedDB and hands out session-only `blob:` URLs, which
+   are never persisted.
+8. Store `parent_pin_hash` exactly as `hashPin()` returns it.
 
-_More detail (schemas, migrations, auth) will be added with each adapter._
+Run the self-test on `#/dev` after changing the local adapter. It runs on
+throwaway databases, including a real v1 to v2 migration.
+
+_Schemas, migrations and auth for hosted adapters will be added with each one._
 
 ## Privacy
 

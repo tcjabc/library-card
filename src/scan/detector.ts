@@ -16,7 +16,7 @@ import zxingWasmUrl from 'zxing-wasm/reader/zxing_reader.wasm?url';
  * still see whether a native implementation exists.
  */
 
-export type ScanFormat = 'qr_code' | 'ean_13';
+export type ScanFormat = 'qr_code' | 'ean_13' | 'code_128' | 'code_39' | 'codabar' | 'itf';
 
 export interface Detection {
   rawValue: string;

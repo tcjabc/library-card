@@ -25,3 +25,33 @@ export function useHashPath(): string {
 export function href(path: string): string {
   return `#${path.startsWith('/') ? path : `/${path}`}`;
 }
+
+/** Go to an in-app path. `replace` swaps the history entry (for redirects). */
+export function navigate(path: string, options: { replace?: boolean } = {}): void {
+  const target = href(path);
+  if (options.replace) window.location.replace(target);
+  else window.location.hash = target;
+}
+
+/**
+ * Matches "/card/:token" style patterns. Returns params, or null.
+ * Params are URI-decoded.
+ */
+export function matchPath(pattern: string, path: string): Record<string, string> | null {
+  const p = pattern.split('/').filter(Boolean);
+  const a = path.split('/').filter(Boolean);
+  if (p.length !== a.length) return null;
+  const params: Record<string, string> = {};
+  for (let i = 0; i < p.length; i++) {
+    if (p[i].startsWith(':')) {
+      try {
+        params[p[i].slice(1)] = decodeURIComponent(a[i]);
+      } catch {
+        return null;
+      }
+    } else if (p[i] !== a[i]) {
+      return null;
+    }
+  }
+  return params;
+}

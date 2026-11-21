@@ -28,6 +28,43 @@
   --color-on-scanner: #ffffff;
   --color-scanner-frame: rgba(255, 255, 255, 0.9);
   --color-scanner-mask: rgba(0, 0, 0, 0.35);
+  --color-scanner-notice: #f59f00;
+  --color-on-scanner-notice: #2b1d00;
+
+  /* Kid screens */
+  --color-tile-shelf: #dbe4ff;
+  --color-tile-library: #d3f9d8;
+  --color-tile-journey: #fff3bf;
+  --color-tile-staircase: #ffe3e3;
+  --color-on-tile: #1f2430;
+  --color-read: #2b8a3e;
+  --color-on-read: #ffffff;
+  --color-chip: #ffffff;
+  --color-chip-active: #3b5bdb;
+  --color-on-chip-active: #ffffff;
+
+  /* Book cover placeholders (no cover yet) */
+  --cover-placeholder-1: #e5dbff;
+  --cover-placeholder-2: #c5f6fa;
+  --cover-placeholder-3: #ffec99;
+  --cover-placeholder-4: #ffd8a8;
+  --color-on-cover-placeholder: #343a40;
+
+  /* Confetti */
+  --confetti-1: #f59f00;
+  --confetti-2: #3b5bdb;
+  --confetti-3: #e64980;
+  --confetti-4: #2b8a3e;
+  --confetti-5: #15aabf;
+
+  /* Overlays */
+  --color-backdrop: rgba(20, 24, 33, 0.55);
+  --color-toast: #1f2430;
+  --color-on-toast: #ffffff;
+
+  /* QR codes must stay dark-on-light in every theme to scan reliably. */
+  --color-qr-dark: #000000;
+  --color-qr-light: #ffffff;
 
   /* Typography */
   --font-body: ui-rounded, 'SF Pro Rounded', 'Nunito', 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
@@ -36,6 +73,8 @@
   --text-lg: 1.25rem;
   --text-xl: 1.75rem;
   --text-2xl: 2.25rem;
+  --text-3xl: 3rem;
+  --text-emoji: 4.5rem;
   --weight-regular: 400;
   --weight-bold: 700;
   --line-height: 1.45;
@@ -53,20 +92,33 @@
   --radius-sm: 0.5rem;
   --radius-md: 0.875rem;
   --radius-lg: 1.25rem;
+  --radius-xl: 1.75rem;
   --radius-full: 999px;
   --border-thin: 1px;
   --border-thick: 3px;
   --shadow-card: 0 2px 8px rgba(31, 36, 48, 0.08);
   --shadow-raised: 0 6px 20px rgba(31, 36, 48, 0.14);
 
-  /* Sizing */
-  --tap-target: 3rem;
+  /* Sizing. Kid-facing tap targets are at least 56px. */
+  --tap-target: 3.5rem;
+  --tap-target-lg: 4.5rem;
+  --tap-target-sm: 2.5rem;
   --content-max: 40rem;
+  --content-max-wide: 64rem;
+  --avatar-size: 2.75rem;
+  --avatar-size-lg: 5.5rem;
+  --qr-size: 10rem;
   --cover-min: 6.5rem;
   --cover-aspect: 2 / 3;
 
   /* Motion */
   --duration-fast: 120ms;
+  --duration-confetti: 900ms;
+
+  /* Layering */
+  --z-sheet: 50;
+  --z-toast: 60;
+  --z-confetti: 70;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -82,5 +134,23 @@
     --color-border: #343b4f;
     --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.4);
     --shadow-raised: 0 6px 20px rgba(0, 0, 0, 0.5);
+
+    --color-tile-shelf: #2b3a75;
+    --color-tile-library: #1f4d2b;
+    --color-tile-journey: #5c4a0e;
+    --color-tile-staircase: #5c2626;
+    --color-on-tile: #f8f9fa;
+    --color-read: #51cf66;
+    --color-on-read: #0b2410;
+    --color-chip: #1d2230;
+    --color-chip-active: #748ffc;
+    --color-on-chip-active: #10162f;
+    --cover-placeholder-1: #3b2f63;
+    --cover-placeholder-2: #134a52;
+    --cover-placeholder-3: #5c4a0e;
+    --cover-placeholder-4: #5c3a14;
+    --color-on-cover-placeholder: #f1f3f5;
+    --color-toast: #eef0f5;
+    --color-on-toast: #141821;
   }
 }
