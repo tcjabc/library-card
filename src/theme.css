@@ -1,0 +1,86 @@
+/*
+ * Design tokens. Every colour, size and spacing value in the app comes from
+ * here. To re-theme the app, change these values only.
+ * If you change --color-brand or --color-bg, also update MANIFEST_THEME_COLOR /
+ * MANIFEST_BACKGROUND_COLOR in vite.config.ts and theme-color in index.html.
+ */
+:root {
+  color-scheme: light dark;
+
+  /* Palette */
+  --color-brand: #3b5bdb;
+  --color-brand-strong: #2f4ac0;
+  --color-on-brand: #ffffff;
+  --color-accent: #f59f00;
+  --color-on-accent: #2b1d00;
+  --color-success: #2b8a3e;
+  --color-danger: #c92a2a;
+
+  --color-bg: #fffaf0;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f1f3f5;
+  --color-text: #1f2430;
+  --color-text-muted: #5c6370;
+  --color-border: #dee2e6;
+  --color-focus: #f59f00;
+
+  --color-scanner-bg: #000000;
+  --color-on-scanner: #ffffff;
+  --color-scanner-frame: rgba(255, 255, 255, 0.9);
+  --color-scanner-mask: rgba(0, 0, 0, 0.35);
+
+  /* Typography */
+  --font-body: ui-rounded, 'SF Pro Rounded', 'Nunito', 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
+  --text-sm: 0.875rem;
+  --text-md: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.75rem;
+  --text-2xl: 2.25rem;
+  --weight-regular: 400;
+  --weight-bold: 700;
+  --line-height: 1.45;
+
+  /* Spacing (4px scale) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+
+  /* Shape */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.875rem;
+  --radius-lg: 1.25rem;
+  --radius-full: 999px;
+  --border-thin: 1px;
+  --border-thick: 3px;
+  --shadow-card: 0 2px 8px rgba(31, 36, 48, 0.08);
+  --shadow-raised: 0 6px 20px rgba(31, 36, 48, 0.14);
+
+  /* Sizing */
+  --tap-target: 3rem;
+  --content-max: 40rem;
+  --cover-min: 6.5rem;
+  --cover-aspect: 2 / 3;
+
+  /* Motion */
+  --duration-fast: 120ms;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-brand: #748ffc;
+    --color-brand-strong: #91a7ff;
+    --color-on-brand: #10162f;
+    --color-bg: #141821;
+    --color-surface: #1d2230;
+    --color-surface-muted: #262c3d;
+    --color-text: #eef0f5;
+    --color-text-muted: #a3aab8;
+    --color-border: #343b4f;
+    --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.4);
+    --shadow-raised: 0 6px 20px rgba(0, 0, 0, 0.5);
+  }
+}
