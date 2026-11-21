@@ -32,9 +32,10 @@ add it to Home. No `.env` file is needed.
 Phone browsers only allow the camera on secure (HTTPS) pages. Pick one:
 
 - **LAN with a self-signed certificate:** `npm run dev:phone`, then open the
-  `https://<your-computer-ip>:5173/#/dev` URL it prints and accept the
+  `https://<your-computer-ip>:5173/` URL it prints and accept the
   certificate warning. Good for the scanner. The service worker won't install
   with a self-signed certificate, so test installing from GitHub Pages instead.
+  Each address (LAN, Pages) has its own separate on-device data.
 - **GitHub Pages:** push to `main` and use the deployed site (see below).
 
 ## Scripts

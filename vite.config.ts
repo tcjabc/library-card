@@ -42,6 +42,12 @@ export default defineConfig(({ mode }) => {
         ],
       },
       workbox: {
+        // registerType 'autoUpdate' only implies these when injectRegister is
+        // 'auto'. We register manually (main.tsx), so set them explicitly or a
+        // new version waits until every app window is closed.
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
         // The ZXing WASM (~1 MB) is precached so scanning works offline.
         globPatterns: ['**/*.{js,css,html,svg,png,ico,wasm,webmanifest}'],
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
