@@ -1,5 +1,7 @@
 import { useCallback } from 'react';
 import { useDataQuery, type DataStore, type Reader } from '../data';
+import { useToday } from '../lib/clock';
+import { dueStatus, needsAttention } from '../library/due';
 import { href, navigate } from '../router';
 import { clearActiveReader } from '../session/activeReader';
 import { fmt, strings } from '../strings';
@@ -9,6 +11,10 @@ export function Hub({ reader }: { reader: Reader }) {
   const t = strings.hub;
   const countQuery = useCallback((s: DataStore) => s.countHouseholdReads(reader.household_id), [reader.household_id]);
   const { data: familyReads } = useDataQuery(countQuery, ['read_events']);
+  const loansQuery = useCallback((s: DataStore) => s.listActiveLoans(reader.id), [reader.id]);
+  const { data: loans } = useDataQuery(loansQuery, ['loans']);
+  const today = useToday();
+  const dueCount = (loans ?? []).filter((loan) => needsAttention(dueStatus(loan.due_date, today))).length;
 
   const notMe = () => {
     clearActiveReader();
@@ -29,9 +35,18 @@ export function Hub({ reader }: { reader: Reader }) {
           <span className="tile__emoji" aria-hidden="true">📚</span>
           <span className="tile__label">{t.shelf}</span>
         </a>
-        <a className="tile tile--library" href={href('/library')}>
+        <a
+          className="tile tile--library"
+          href={href('/library')}
+          aria-label={dueCount > 0 ? fmt(dueCount === 1 ? t.libraryDueOne : t.libraryDue, { count: dueCount }) : undefined}
+        >
           <span className="tile__emoji" aria-hidden="true">🏛️</span>
           <span className="tile__label">{t.library}</span>
+          {dueCount > 0 && (
+            <span className="tile__badge" aria-hidden="true">
+              {dueCount}
+            </span>
+          )}
         </a>
         <a className="tile tile--journey" href={href('/journey')}>
           <span className="tile__emoji" aria-hidden="true">🗺️</span>

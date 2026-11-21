@@ -46,6 +46,16 @@
   --color-chip-active: #3b5bdb;
   --color-on-chip-active: #ffffff;
 
+  /* Library due dates */
+  --color-due-overdue: #c92a2a;
+  --color-on-due-overdue: #ffffff;
+  --color-due-soon: #f59f00;
+  --color-on-due-soon: #2b1d00;
+  --color-due-later: #e7f5ff;
+  --color-on-due-later: #1c3d5a;
+  --color-badge: #e03131;
+  --color-on-badge: #ffffff;
+
   /* Book cover placeholders (no cover yet) */
   --cover-placeholder-1: #e5dbff;
   --cover-placeholder-2: #c5f6fa;
@@ -113,6 +123,8 @@
   --avatar-size-lg: 5.5rem;
   --qr-size: 10rem;
   --numpad-max: 22rem;
+  --badge-size: 2rem;
+  --summary-cover: 7rem;
   --cover-min: 6.5rem;
   --cover-aspect: 2 / 3;
   /* ID-1 card (credit-card size), 85.6 x 54 mm. */
@@ -152,6 +164,12 @@
     --color-chip: #1d2230;
     --color-chip-active: #748ffc;
     --color-on-chip-active: #10162f;
+    --color-due-overdue: #ff6b6b;
+    --color-on-due-overdue: #2b0a0a;
+    --color-due-later: #1c3d5a;
+    --color-on-due-later: #e7f5ff;
+    --color-badge: #ff6b6b;
+    --color-on-badge: #2b0a0a;
     --cover-placeholder-1: #3b2f63;
     --cover-placeholder-2: #134a52;
     --cover-placeholder-3: #5c4a0e;

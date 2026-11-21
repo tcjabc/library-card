@@ -12,9 +12,10 @@ A reading tracker for kids, built as an installable web app (PWA).
 The repo has no personal data, accounts or seed content. By default
 everything is stored on the device in IndexedDB.
 
-> **Status: Phase 2.** Library-card sign-in, the kid hub and My Bookshelf with
-> "I read this!". Grown-up tools (readers, cards, adding and fixing books) live
-> on a temporary page at `#/dev` until the PIN-protected area arrives.
+> **Status: Phase 3.** Library-card sign-in, the kid hub, My Bookshelf and
+> Library Books (borrow by scanning the book and the library sticker, renew,
+> return, re-read). Grown-up tools (readers and cards, books, libraries, loans)
+> live on a gated page at `#/dev` until the full grown-up area arrives.
 
 ## Quick start (zero config)
 
@@ -86,6 +87,22 @@ The workflow sets `VITE_BASE` to `/<repo-name>/`. For a user site
 
 Routing uses hash URLs (`#/dev`), so no 404 redirects are needed.
 
+## Offline and caching
+
+The service worker (vite-plugin-pwa, `vite.config.ts`) keeps the app working
+offline:
+
+- The app shell, icons and the barcode decoder (ZXing WASM) are precached.
+- Catalogue cover images are cached at runtime in the `book-covers` cache,
+  cache-first: `covers.openlibrary.org` (and `archive.org`, where Open Library
+  redirects), `books.google.com` and Google's `*.googleusercontent.com` image
+  hosts. A cover seen once shows offline. The cache holds at most 300 images,
+  each for up to 60 days, and is cleared first if the browser runs short of
+  space. Cross-origin `<img>` responses are opaque, so those are cached too.
+- Cover photos taken in the app are stored in IndexedDB, not in this cache.
+- At start-up the app asks for persistent storage (`navigator.storage.persist()`),
+  so the browser is less likely to clear books and photos. A refusal is ignored.
+
 ## Project layout
 
 ```
@@ -135,6 +152,13 @@ rule stops feature code from importing an adapter directly.
    `getCurrentHousehold()` creates it on first use. There is no create, list or
    delete for households.
 5. Home items: one per household and book, and the item id is the book key.
+   Libraries default to `DEFAULT_LOAN_DAYS` (30). Deleting a library keeps its
+   loans: `library_id` becomes `null` and the library's name is copied onto each
+   loan. `renewLoan()` adds the library's loan length to the due date;
+   `unrenewLoan()` and `unreturnLoan()` undo renew and return.
+   `findActiveLoansBySticker()` searches the whole household; when it finds more
+   than one, `pickStickerWinner()` decides (earliest `borrowed_at`, then
+   smallest id) and nothing is deleted automatically.
 6. Reads are events: every `markRead()` adds one (re-reads count), except that a
    tap within `READ_TAP_GUARD_MS` (10 s) of the reader's latest read of that
    book returns `null`. `undoLatestRead()` removes the latest event (latest

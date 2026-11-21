@@ -6,6 +6,7 @@ import { matchPath, navigate, useHashPath } from './router';
 import { CardLink } from './screens/CardLink';
 import { ComingSoon, StaircaseSoon } from './screens/ComingSoon';
 import { Hub } from './screens/Hub';
+import { LibraryBooks } from './screens/library/LibraryBooks';
 import { Shelf } from './screens/Shelf';
 import { Splash } from './screens/Splash';
 import { RequireReader } from './session/RequireReader';
@@ -52,7 +53,7 @@ function Routes() {
     case '/shelf':
       return <RequireReader>{(reader) => <Shelf reader={reader} />}</RequireReader>;
     case '/library':
-      return <RequireReader>{() => <ComingSoon title={strings.hub.library} emoji="🏛️" />}</RequireReader>;
+      return <RequireReader>{(reader) => <LibraryBooks reader={reader} />}</RequireReader>;
     case '/journey':
       return <RequireReader>{() => <ComingSoon title={strings.hub.journey} emoji="🗺️" />}</RequireReader>;
     case '/staircase':

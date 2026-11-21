@@ -57,7 +57,8 @@ describe('coverage', () => {
       'addHomeItem', 'getHomeItem', 'listHomeItems', 'removeHomeItem',
       // libraries and loans
       'createLibrary', 'getLibrary', 'listLibraries', 'updateLibrary', 'deleteLibrary',
-      'createLoan', 'getLoan', 'listLoans', 'updateLoan', 'returnLoan', 'deleteLoan',
+      'createLoan', 'getLoan', 'listLoans', 'listActiveLoans', 'listReturnedLoans', 'findActiveLoansBySticker',
+      'updateLoan', 'renewLoan', 'unrenewLoan', 'returnLoan', 'unreturnLoan', 'deleteLoan',
       // reads
       'markRead', 'undoLatestRead', 'restoreReadEvent', 'getReadSummary', 'listReadSummaries', 'listReadEvents',
       'countReadsSince', 'countHouseholdReads',

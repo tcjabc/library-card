@@ -1,4 +1,5 @@
-// Helpers shared by adapters. Feature code should not need these.
+// Id helpers. Adapters use all of these; feature code uses newNoIsbnBookKey
+// through src/data.
 
 export function newId(): string {
   if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -16,6 +17,16 @@ export function newCardToken(): string {
   let bin = '';
   for (const byte of bytes) bin += String.fromCharCode(byte);
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/** The key for a book without a barcode: "noisbn-<uuid>". */
+export function newNoIsbnBookKey(): string {
+  return `noisbn-${newId()}`;
+}
+
+/** True for a key made by newNoIsbnBookKey (no ISBN to look up or search). */
+export function isNoIsbnBookKey(key: string): boolean {
+  return key.startsWith('noisbn-');
 }
 
 export function nowIso(): string {

@@ -67,3 +67,18 @@ export function startOfLocalWeek(date: Date = new Date(), weekStartsOn: 0 | 1 = 
 export function startOfLocalMonth(date: Date = new Date()): string {
   return new Date(date.getFullYear(), date.getMonth(), 1).toISOString();
 }
+
+/**
+ * A calendar date for people, in the browser's language: "Fri 13 Mar" style
+ * (weekday, day, short month; the year only when it isn't this year).
+ */
+export function formatCalendarDate(value: string, locale?: string, now: Date = new Date()): string {
+  const date = parseCalendarDate(value);
+  const sameYear = date.getFullYear() === now.getFullYear();
+  return new Intl.DateTimeFormat(locale, {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    ...(sameYear ? {} : { year: 'numeric' }),
+  }).format(date);
+}

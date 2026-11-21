@@ -1,5 +1,6 @@
 import { useEffect, useId, useState, type ChangeEvent, type FormEvent } from 'react';
-import { MAX_COVER_BYTES, type Book, type DataStore } from '../data';
+import { MAX_COVER_BYTES, isNoIsbnBookKey, type Book, type DataStore } from '../data';
+import { LibraryLookups } from '../library/LibraryLookups';
 import { resizeImage } from '../lib/image';
 import { fmt, strings } from '../strings';
 import { BookCover } from '../ui/BookCover';
@@ -11,6 +12,10 @@ import { Sheet } from '../ui/Sheet';
  * - "add-cover": a book was found without a cover; details are pre-filled.
  * - "fix":       a grown-up wants to correct any book.
  * Saves the book once with putBook (after storing a new photo, if any).
+ * A "new" book may use a "noisbn-…" key: a book without a barcode, added by
+ * title and photo.
+ * When nothing was found (or there is no cover), the household's libraries
+ * are offered as "Look it up at …" links.
  */
 
 export type BookSheetMode =
@@ -94,15 +99,17 @@ export function BookSheet({ mode, store, saveLabel, onSaved, onClose }: BookShee
     }
   };
 
+  const noIsbn = isNoIsbnBookKey(isbn);
   const heading = mode.kind === 'new' ? t.titleNew : mode.kind === 'add-cover' ? t.titleAddCover : t.titleFix;
   const previewUrl = photo?.url ?? original?.cover_url ?? null;
 
   return (
     <Sheet title={heading} onClose={onClose}>
       <form className="stack book-sheet" onSubmit={onSubmit} noValidate>
-        {mode.kind === 'new' && <p className="muted">{t.introNew}</p>}
+        {mode.kind === 'new' && <p className="muted">{noIsbn ? t.introNoBarcode : t.introNew}</p>}
         {mode.kind === 'add-cover' && <p className="muted">{t.introAddCover}</p>}
-        <p className="muted small">{fmt(t.isbn, { isbn })}</p>
+        {!noIsbn && <p className="muted small">{fmt(t.isbn, { isbn })}</p>}
+        {mode.kind !== 'fix' && !noIsbn && <LibraryLookups store={store} isbn={isbn} />}
 
         <div className="book-sheet__photo">
           <div className="book-sheet__preview">

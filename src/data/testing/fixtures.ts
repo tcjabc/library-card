@@ -218,3 +218,71 @@ export async function createV2Database(name: string): Promise<V2Fixture> {
   });
   return { oldHouseholdId, reads, coverA, coverB };
 }
+
+/** Index names of one store, read without the adapter. */
+export async function rawIndexNames(dbName: string, storeName: string): Promise<string[]> {
+  const raw = await openDB(dbName);
+  try {
+    return [...raw.transaction(storeName).objectStore(storeName).indexNames];
+  } finally {
+    raw.close();
+  }
+}
+
+export interface V3Fixture {
+  loans: Record<string, unknown>[];
+}
+
+/** A database exactly as the Phase 2c (v3) adapter left it, with loans that have stickers. */
+export async function createV3Database(name: string): Promise<V3Fixture> {
+  const loans = [
+    { id: 'loanA', household_id: 'main', reader_id: 'r1', isbn: ISBN_A, library_id: 'lib1', library_name: null, sticker_barcode: 'S1', borrowed_at: '2026-01-01T00:00:00.000Z', due_date: '2026-01-15', returned_at: null, renew_count: 0 },
+    { id: 'loanB', household_id: 'main', reader_id: 'r1', isbn: ISBN_B, library_id: null, library_name: 'Free text', sticker_barcode: 'S2', borrowed_at: '2026-01-02T00:00:00.000Z', due_date: null, returned_at: null, renew_count: 1 },
+    { id: 'loanC', household_id: 'main', reader_id: 'r1', isbn: ISBN_C, library_id: 'lib1', library_name: null, sticker_barcode: 'S1', borrowed_at: '2025-12-01T00:00:00.000Z', due_date: '2025-12-20', returned_at: '2025-12-19T00:00:00.000Z', renew_count: 0 },
+  ];
+  await openRaw(name, 3, (db) => {
+    db.createObjectStore('households', { keyPath: 'id' }).add({ id: 'main', name: 'Test', parent_pin_hash: null });
+    const meta = db.createObjectStore('meta', { keyPath: 'key' });
+    meta.add({ key: 'current_household_id', value: 'main' });
+    meta.add({ key: 'covers_rekeyed', value: true });
+
+    const readers = db.createObjectStore('readers', { keyPath: 'id' });
+    readers.createIndex('by_household', 'household_id');
+    readers.createIndex('by_card_token', 'card_token', { unique: true });
+    readers.add({ id: 'r1', household_id: 'main', display_name: 'A', avatar: '🦊', card_token: 'tok-r1-aaaaaaaaaaaaaa', active_journey_id: null });
+
+    db.createObjectStore('books', { keyPath: 'isbn' }).createIndex('by_cover', 'cover_url');
+    db.createObjectStore('cover_images', { keyPath: 'hash' });
+    db.createObjectStore('covers', { keyPath: 'isbn' });
+
+    const home = db.createObjectStore('home_items', { keyPath: 'id' });
+    home.createIndex('by_household_isbn', ['household_id', 'isbn'], { unique: true });
+    home.createIndex('by_household_added', ['household_id', 'added_at']);
+
+    const libraries = db.createObjectStore('libraries', { keyPath: 'id' });
+    libraries.createIndex('by_household', 'household_id');
+    libraries.add({ id: 'lib1', household_id: 'main', name: 'Branch', search_url_template: null, homepage_url: null, default_loan_days: 14, sticker_prefix: 'S' });
+
+    const loanStore = db.createObjectStore('loans', { keyPath: 'id' });
+    loanStore.createIndex('by_household_borrowed', ['household_id', 'borrowed_at']);
+    loanStore.createIndex('by_reader', 'reader_id');
+    loanStore.createIndex('by_library', 'library_id');
+    loanStore.createIndex('by_household_sticker', ['household_id', 'sticker_barcode']);
+    for (const loan of loans) loanStore.add(loan);
+
+    const events = db.createObjectStore('read_events', { keyPath: 'id' });
+    events.createIndex('by_reader_isbn_read_at', ['reader_id', 'isbn', 'read_at']);
+    events.createIndex('by_reader_read_at', ['reader_id', 'read_at']);
+    events.createIndex('by_household', 'household_id');
+    events.add({ id: 'e1', household_id: 'main', reader_id: 'r1', isbn: ISBN_A, read_at: '2026-01-05T00:00:00.000Z' });
+
+    const summaries = db.createObjectStore('read_summaries', { keyPath: ['reader_id', 'isbn'] });
+    summaries.createIndex('by_reader_first', ['reader_id', 'first_read_at']);
+    summaries.createIndex('by_reader_last', ['reader_id', 'last_read_at']);
+    summaries.createIndex('by_household', 'household_id');
+    summaries.add({ reader_id: 'r1', isbn: ISBN_A, household_id: 'main', first_read_at: '2026-01-05T00:00:00.000Z', last_read_at: '2026-01-05T00:00:00.000Z', count: 1 });
+
+    db.createObjectStore('reader_journeys', { keyPath: 'id' }).createIndex('by_reader_started', ['reader_id', 'started_at']);
+  });
+  return { loans };
+}

@@ -4,56 +4,90 @@ import { strings } from '../strings';
 import { Scanner, type ScanFormat, type ScanResult, type ScannerErrorKind } from './Scanner';
 
 /**
- * Scanner in "book mode". Looks for book barcodes (EAN-13) and the barcodes
- * libraries stick on books (Code 128, Code 39, Codabar, ITF). Only an EAN-13
- * starting 978/979 counts as a book; anything else shows a hint and scanning
- * continues. Non-book values go to onOtherBarcode (library stickers, Phase 3).
+ * Scanner for books and library stickers.
+ *
+ * "book" mode: looks for book barcodes (EAN-13) and the barcodes libraries
+ * stick on books (Code 128, Code 39, Codabar, ITF). Only an EAN-13 starting
+ * 978/979 counts as a book; anything else shows a hint, goes to
+ * onOtherBarcode, and scanning continues.
+ *
+ * "sticker" mode: the opposite. Any non-ISBN barcode is a library sticker and
+ * goes to onSticker as its raw value; the book's own ISBN barcode gets a hint.
  */
 
-const BOOK_MODE_FORMATS: readonly ScanFormat[] = ['ean_13', 'code_128', 'code_39', 'codabar', 'itf'];
+const SCAN_FORMATS: readonly ScanFormat[] = ['ean_13', 'code_128', 'code_39', 'codabar', 'itf'];
 
 const NOTICE_MS = 3500;
 
 export interface BookScannerProps {
-  /** Called with a normalised ISBN-13. */
-  onIsbn: (isbn: string) => void;
-  /** Any other barcode, raw. */
+  mode?: 'book' | 'sticker';
+  /** Book mode: a normalised ISBN-13. */
+  onIsbn?: (isbn: string) => void;
+  /** Book mode: any other barcode, raw. */
   onOtherBarcode?: (value: string, format: ScanFormat) => void;
+  /** Sticker mode: the sticker's raw value. */
+  onSticker?: (value: string, format: ScanFormat) => void;
+  /** A message from the caller (e.g. "I don't know this book"), shown like a hint. */
+  message?: string | null;
   onError?: (kind: ScannerErrorKind, error: unknown) => void;
   paused?: boolean;
   className?: string;
 }
 
-export function BookScanner({ onIsbn, onOtherBarcode, onError, paused, className }: BookScannerProps) {
+export function BookScanner({
+  mode = 'book',
+  onIsbn,
+  onOtherBarcode,
+  onSticker,
+  message,
+  onError,
+  paused,
+  className,
+}: BookScannerProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => () => clearTimeout(timer.current), []);
 
+  const flash = useCallback((text: string) => {
+    setNotice(text);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setNotice(null), NOTICE_MS);
+  }, []);
+
   const onResult = useCallback(
     ({ value, format }: ScanResult) => {
       const isbn = format === 'ean_13' && /^97[89]/.test(value) ? normaliseIsbn(value) : null;
+      if (mode === 'sticker') {
+        if (isbn) {
+          flash(strings.scanner.notTheSticker);
+          return;
+        }
+        clearTimeout(timer.current);
+        setNotice(null);
+        onSticker?.(value.trim(), format);
+        return;
+      }
       if (isbn) {
         clearTimeout(timer.current);
         setNotice(null);
-        onIsbn(isbn);
+        onIsbn?.(isbn);
         return;
       }
       onOtherBarcode?.(value, format);
-      setNotice(strings.scanner.otherBarcode);
-      clearTimeout(timer.current);
-      timer.current = setTimeout(() => setNotice(null), NOTICE_MS);
+      flash(strings.scanner.otherBarcode);
     },
-    [onIsbn, onOtherBarcode],
+    [mode, onIsbn, onOtherBarcode, onSticker, flash],
   );
 
   return (
     <Scanner
-      formats={BOOK_MODE_FORMATS}
+      formats={SCAN_FORMATS}
       onResult={onResult}
       onError={onError}
       paused={paused}
-      notice={notice}
+      hint={mode === 'sticker' ? strings.scanner.stickerHint : undefined}
+      notice={message ?? notice}
       className={className}
     />
   );

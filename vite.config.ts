@@ -53,17 +53,22 @@ export default defineConfig(({ mode }) => {
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
         runtimeCaching: [
           {
-            // Book covers: cache-first, they never change for a given ISBN.
+            // Catalogue cover images (Open Library, which redirects to
+            // archive.org, and Google Books): cache-first, so a cover seen once
+            // still shows offline. Capped, and cross-origin <img> responses
+            // are opaque (status 0), so those are allowed. Photos taken in the
+            // app live in IndexedDB, not here.
             urlPattern: ({ url }) =>
               url.hostname === 'covers.openlibrary.org' ||
-              url.hostname === 'books.google.com' ||
-              url.hostname.endsWith('.googleusercontent.com') ||
               url.hostname === 'archive.org' ||
-              url.hostname.endsWith('.archive.org'),
+              url.hostname.endsWith('.archive.org') ||
+              url.hostname === 'books.google.com' ||
+              url.hostname === 'books.googleusercontent.com' ||
+              url.hostname.endsWith('.googleusercontent.com'),
             handler: 'CacheFirst',
             options: {
               cacheName: 'book-covers',
-              expiration: { maxEntries: 500, maxAgeSeconds: 60 * 60 * 24 * 365 },
+              expiration: { maxEntries: 300, maxAgeSeconds: 60 * 60 * 24 * 60, purgeOnQuotaError: true },
               cacheableResponse: { statuses: [0, 200] },
             },
           },

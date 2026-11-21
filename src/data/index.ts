@@ -11,3 +11,5 @@ export * from './DataStore';
 export { configuredAdapter, getDataStore, type AdapterName } from './store';
 export { useDataQuery, useDataStore, type DataQueryResult } from './react';
 export { hashPin, verifyPin } from './pin';
+export { isNoIsbnBookKey, newNoIsbnBookKey } from './ids';
+export { findStickerDuplicates, pickStickerWinner, type StickerResolution } from './loanRules';

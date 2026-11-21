@@ -643,6 +643,168 @@ img {
   }
 }
 
+/* Library books ------------------------------------------------------------ */
+
+.action-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: var(--space-3);
+}
+
+.due-chip {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  background: var(--color-due-later);
+  color: var(--color-on-due-later);
+}
+
+.due-chip--overdue {
+  background: var(--color-due-overdue);
+  color: var(--color-on-due-overdue);
+}
+
+.due-chip--soon {
+  background: var(--color-due-soon);
+  color: var(--color-on-due-soon);
+}
+
+.due-chip--none {
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+}
+
+/* Stacked: two side by side don't fit a phone-width card column. */
+.loan-card__actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-2);
+}
+
+/* Secondary kid buttons: still a full 56px tap target, smaller text. */
+.btn--small-kid {
+  padding: 0 var(--space-2);
+  font-size: var(--text-sm);
+  gap: var(--space-1);
+}
+
+.loan-card--returned .cover {
+  opacity: 0.85;
+}
+
+.returned-books {
+  border-radius: var(--radius-xl);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-2) var(--space-4) var(--space-4);
+}
+
+.returned-books__summary {
+  min-height: var(--tap-target);
+  display: flex;
+  align-items: center;
+  font-weight: var(--weight-bold);
+  cursor: pointer;
+}
+
+.returned-books[open] .returned-books__summary {
+  margin-bottom: var(--space-3);
+}
+
+.book-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.book-summary__cover {
+  width: var(--summary-cover);
+  flex-shrink: 0;
+}
+
+.book-summary__title {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+}
+
+.book-finder__alternatives {
+  justify-content: center;
+}
+
+.center-text {
+  text-align: center;
+}
+
+.tile {
+  position: relative;
+}
+
+.tile__badge {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  min-width: var(--badge-size);
+  height: var(--badge-size);
+  padding: 0 var(--space-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  background: var(--color-badge);
+  color: var(--color-on-badge);
+  font-size: var(--text-md);
+  font-weight: var(--weight-bold);
+  box-shadow: var(--shadow-card);
+}
+
+.lookups .btn {
+  white-space: normal;
+}
+
+/* Grown-up lists and forms ------------------------------------------------- */
+
+.dev-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.dev-list__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: var(--border-thin) solid var(--color-border);
+}
+
+.input--short {
+  max-width: 12rem;
+}
+
+.template {
+  display: block;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.pretend-today {
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
+}
+
 /* Parent gate ------------------------------------------------------------- */
 
 .gate-page {

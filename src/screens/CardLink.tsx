@@ -1,5 +1,6 @@
 import { useCallback, useEffect } from 'react';
 import { useDataQuery, type DataStore } from '../data';
+import { isIosBrowserTab } from '../lib/platform';
 import { href, navigate } from '../router';
 import { setActiveReaderId } from '../session/activeReader';
 import { strings } from '../strings';
@@ -35,6 +36,14 @@ export function CardLink({ token }: { token: string }) {
       </p>
       <h1 className="kid-title">{t.unknownTitle}</h1>
       <p className="kid-lead">{error ? t.unknownError : t.unknownBody}</p>
+      {/* The installed iOS app keeps its own storage, so a card opened from the
+          Camera app in Safari can't find readers made in the app. */}
+      {!error && isIosBrowserTab() && (
+        <p className="alert kid-lead">
+          <span aria-hidden="true">📱 </span>
+          {t.iosOpenApp}
+        </p>
+      )}
       <a className="btn btn--primary btn--big" href={href('/')}>
         {t.scanAgain}
       </a>

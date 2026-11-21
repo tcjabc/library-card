@@ -170,7 +170,8 @@ export interface ListLoansOptions {
   reader_id?: Id;
 }
 
-export const DEFAULT_LOAN_DAYS = 21;
+/** Loan length when a library sets none, or a loan has no library. */
+export const DEFAULT_LOAN_DAYS = 30;
 
 /** A second "I read this!" on the same book by the same reader within this window is ignored. */
 export const READ_TAP_GUARD_MS = 10_000;
@@ -286,17 +287,41 @@ export interface DataStore {
   /** Sorted by name. */
   listLibraries(householdId: Id): Promise<Library[]>;
   updateLibrary(id: Id, patch: LibraryPatch): Promise<Library>;
-  /** Loans that pointed at the library keep their data with library_id set to null. */
+  /**
+   * Loans that pointed at the library are kept: library_id becomes null and
+   * the library's name is copied to library_name (one write per loan).
+   */
   deleteLibrary(id: Id): Promise<void>;
 
   // Borrowed library --------------------------------------------------------
+  /** Rejects with "not_found" for an unknown reader or library. */
   createLoan(input: NewLoan): Promise<Loan>;
   getLoan(id: Id): Promise<Loan | null>;
   /** Newest borrowed first. */
   listLoans(householdId: Id, options?: ListLoansOptions): Promise<Loan[]>;
+  /** The reader's loans not yet returned, soonest due first (no due date last). */
+  listActiveLoans(readerId: Id): Promise<Loan[]>;
+  /** The reader's returned loans, most recently returned first. */
+  listReturnedLoans(readerId: Id): Promise<Loan[]>;
+  /**
+   * Active loans anywhere in the household with this library sticker, any
+   * library. More than one means a duplicate: see pickStickerWinner().
+   */
+  findActiveLoansBySticker(householdId: Id, sticker: string): Promise<Loan[]>;
+  /** Changing reader_id or library_id checks that they exist ("not_found"). */
   updateLoan(id: Id, patch: LoanPatch): Promise<Loan>;
+  /**
+   * Adds the library's default_loan_days (DEFAULT_LOAN_DAYS without a library)
+   * to the due date (today when there is none) and counts the renewal.
+   * Rejects with "invalid" for a returned loan.
+   */
+  renewLoan(id: Id): Promise<Loan>;
+  /** Undoes renewLoan: puts the previous due date back and takes one off renew_count. */
+  unrenewLoan(id: Id, previousDueDate: CalendarDate | null): Promise<Loan>;
   /** Shorthand for updateLoan(id, { returned_at }). Defaults to now. */
   returnLoan(id: Id, returnedAt?: Timestamp): Promise<Loan>;
+  /** Undoes returnLoan: the loan is active again. */
+  unreturnLoan(id: Id): Promise<Loan>;
   deleteLoan(id: Id): Promise<void>;
 
   // Reads ("I read this!") --------------------------------------------------

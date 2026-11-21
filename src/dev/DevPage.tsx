@@ -5,6 +5,7 @@ import {
   configuredAdapter,
   useDataQuery,
   type Book,
+  newNoIsbnBookKey,
   type DataStore,
   type HomeItem,
   type Household,
@@ -15,6 +16,8 @@ import { BookScanner } from '../scan/BookScanner';
 import { fmt, strings } from '../strings';
 import { BookCover } from '../ui/BookCover';
 import { useToast } from '../ui/Toast';
+import { LibrariesPanel } from './LibrariesPanel';
+import { LoansPanel } from './LoansPanel';
 import { ReadersPanel } from './ReadersPanel';
 import { SelfTestPanel } from './SelfTestPanel';
 import './DevPage.css';
@@ -65,6 +68,8 @@ export default function DevPage() {
         <>
           <ReadersPanel store={store} household={household} />
           <BooksPanel store={store} household={household} />
+          <LibrariesPanel store={store} household={household} />
+          <LoansPanel store={store} household={household} />
           <SelfTestPanel />
         </>
       )}
@@ -211,6 +216,11 @@ function BooksPanel({ store, household }: { store: DataStore; household: Househo
             </button>
           </div>
         </form>
+        <div className="row">
+          <button type="button" className="btn" onClick={() => setSheet({ mode: { kind: 'new', isbn: newNoIsbnBookKey() }, addToHome: true })}>
+            {strings.bookFinder.noBarcode}
+          </button>
+        </div>
 
         <LookupPanel
           lookup={lookup}

@@ -5,7 +5,7 @@ import {
   type IDBPTransaction,
   type StoreNames,
 } from 'idb';
-import { isCalendarDate } from '../../lib/dates';
+import { addDays, isCalendarDate, toCalendarDate } from '../../lib/dates';
 import { fixLowercaseTitle } from '../../lib/text';
 import { strings } from '../../strings';
 import {
@@ -42,10 +42,13 @@ import { addToSummary, isRepeatTap, latestEvent, summarize } from '../readRules'
  *       reads -> read_events (one per tap) + derived read_summaries.
  *       readers.active_journey_id. Cover photos keyed by SHA-256 in
  *       cover_images (moved from `covers` by a step after the upgrade).
+ *   v4  Loan sticker lookups: [library_id, sticker_barcode] plus a
+ *       household-wide sticker index replace [household_id, sticker_barcode].
+ *       Indexes only; no data changes.
  */
 
 const DB_NAME = 'library-card';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 // Highest possible string suffix for compound-key range upper bounds.
 const MAX_STRING = '￿';
@@ -113,8 +116,10 @@ interface LibraryCardDB extends DBSchema {
       by_household_borrowed: [Id, string];
       by_reader: Id;
       by_library: Id;
-      /** For Phase 3: find a loan from a scanned library sticker. Null stickers aren't indexed. */
-      by_household_sticker: [Id, string];
+      /** A sticker within one library. Loans without a library or sticker aren't indexed. */
+      by_library_sticker: [Id, string];
+      /** Any loan with this sticker; callers filter by household and activity. */
+      by_sticker: string;
     };
   };
   /** Legacy, deleted by the v3 upgrade. Typed so the v1/v2 steps can still run. */
@@ -190,7 +195,8 @@ function openLibraryDb(name: string): Promise<DB> {
 
         const loans = tx.objectStore('loans');
         loans.createIndex('by_library', 'library_id');
-        loans.createIndex('by_household_sticker', ['household_id', 'sticker_barcode']);
+        // Replaced in v4; typed by string because the v4 schema no longer names it.
+        loans.createIndex('by_household_sticker' as never, ['household_id', 'sticker_barcode']);
         tx.objectStore('reads').createIndex('by_household', 'household_id');
 
         if (oldVersion >= 1) await migrateV1Data(tx);
@@ -212,6 +218,14 @@ function openLibraryDb(name: string): Promise<DB> {
 
         if (oldVersion >= 1) await migrateV2Data(tx);
         db.deleteObjectStore('reads');
+      }
+
+      if (oldVersion < 4) {
+        const loans = tx.objectStore('loans');
+        // Typed v4 schema no longer names the old index, so ask by string.
+        if (loans.indexNames.contains('by_household_sticker' as never)) loans.deleteIndex('by_household_sticker' as never);
+        loans.createIndex('by_library_sticker', ['library_id', 'sticker_barcode']);
+        loans.createIndex('by_sticker', 'sticker_barcode');
       }
     },
     blocking(_currentVersion, blockedVersion, event) {
@@ -855,7 +869,7 @@ export async function createLocalStore(dbName = DB_NAME, options: LocalStoreOpti
         await tx.objectStore('loans').put({
           ...loan,
           library_id: null,
-          library_name: loan.library_name ?? library?.name ?? null,
+          library_name: library?.name ?? loan.library_name ?? null,
         });
       }
       await tx.objectStore('libraries').delete(id);
@@ -880,6 +894,7 @@ export async function createLocalStore(dbName = DB_NAME, options: LocalStoreOpti
         renew_count: 0,
       };
       const d = await getDb();
+      if (!(await d.getKey('readers', loan.reader_id))) throw notFound('Reader', loan.reader_id);
       if (loan.library_id && !(await d.getKey('libraries', loan.library_id))) {
         throw notFound('Library', loan.library_id);
       }
@@ -904,14 +919,46 @@ export async function createLocalStore(dbName = DB_NAME, options: LocalStoreOpti
         .reverse();
     },
 
+    async listActiveLoans(readerId) {
+      const loans = await (await getDb()).getAllFromIndex('loans', 'by_reader', readerId);
+      return loans
+        .filter((loan) => loan.returned_at === null)
+        .sort(
+          (a, b) =>
+            (a.due_date ?? MAX_STRING).localeCompare(b.due_date ?? MAX_STRING) ||
+            a.borrowed_at.localeCompare(b.borrowed_at) ||
+            a.id.localeCompare(b.id),
+        );
+    },
+
+    async listReturnedLoans(readerId) {
+      const loans = await (await getDb()).getAllFromIndex('loans', 'by_reader', readerId);
+      return loans
+        .filter((loan) => loan.returned_at !== null)
+        .sort((a, b) => b.returned_at!.localeCompare(a.returned_at!) || b.id.localeCompare(a.id));
+    },
+
+    async findActiveLoansBySticker(householdId, sticker) {
+      const value = sticker.trim();
+      if (!value) return [];
+      const loans = await (await getDb()).getAllFromIndex('loans', 'by_sticker', value);
+      return loans.filter((loan) => loan.household_id === householdId && loan.returned_at === null);
+    },
+
     async updateLoan(id, patch) {
       checkCalendarDate(patch.due_date, 'due_date');
       if (patch.renew_count !== undefined && (!Number.isInteger(patch.renew_count) || patch.renew_count < 0)) {
         throw new DataStoreError('invalid', 'renew_count must be a whole number >= 0.');
       }
-      const tx = (await getDb()).transaction('loans', 'readwrite');
-      const existing = await tx.store.get(id);
+      const tx = (await getDb()).transaction(['loans', 'readers', 'libraries'], 'readwrite');
+      const existing = await tx.objectStore('loans').get(id);
       if (!existing) throw notFound('Loan', id);
+      if (patch.reader_id !== undefined && !(await tx.objectStore('readers').getKey(patch.reader_id))) {
+        throw notFound('Reader', patch.reader_id);
+      }
+      if (patch.library_id && !(await tx.objectStore('libraries').getKey(patch.library_id))) {
+        throw notFound('Library', patch.library_id);
+      }
       const next: Loan = {
         ...existing,
         ...patch,
@@ -919,6 +966,40 @@ export async function createLocalStore(dbName = DB_NAME, options: LocalStoreOpti
         returned_at:
           patch.returned_at === undefined ? existing.returned_at : patch.returned_at && toIso(patch.returned_at),
       };
+      await tx.objectStore('loans').put(next);
+      await tx.done;
+      changed('loans');
+      return next;
+    },
+
+    async renewLoan(id) {
+      const tx = (await getDb()).transaction(['loans', 'libraries'], 'readwrite');
+      const existing = await tx.objectStore('loans').get(id);
+      if (!existing) throw notFound('Loan', id);
+      if (existing.returned_at !== null) {
+        tx.abort();
+        await tx.done.catch(() => undefined);
+        throw new DataStoreError('invalid', 'A returned loan cannot be renewed.');
+      }
+      const library = existing.library_id ? await tx.objectStore('libraries').get(existing.library_id) : undefined;
+      const days = library?.default_loan_days ?? DEFAULT_LOAN_DAYS;
+      const next: Loan = {
+        ...existing,
+        due_date: addDays(existing.due_date ?? toCalendarDate(new Date(now())), days),
+        renew_count: existing.renew_count + 1,
+      };
+      await tx.objectStore('loans').put(next);
+      await tx.done;
+      changed('loans');
+      return next;
+    },
+
+    async unrenewLoan(id, previousDueDate) {
+      checkCalendarDate(previousDueDate, 'due_date');
+      const tx = (await getDb()).transaction('loans', 'readwrite');
+      const existing = await tx.store.get(id);
+      if (!existing) throw notFound('Loan', id);
+      const next: Loan = { ...existing, due_date: previousDueDate, renew_count: Math.max(0, existing.renew_count - 1) };
       await tx.store.put(next);
       await tx.done;
       changed('loans');
@@ -927,6 +1008,10 @@ export async function createLocalStore(dbName = DB_NAME, options: LocalStoreOpti
 
     async returnLoan(id, returnedAt) {
       return store.updateLoan(id, { returned_at: returnedAt ?? nowIso() });
+    },
+
+    async unreturnLoan(id) {
+      return store.updateLoan(id, { returned_at: null });
     },
 
     async deleteLoan(id) {
