@@ -1,3 +1,5 @@
+import { execSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { defineConfig, loadEnv, type PluginOption } from 'vite';
 import react from '@vitejs/plugin-react';
 import basicSsl from '@vitejs/plugin-basic-ssl';
@@ -8,6 +10,23 @@ import { en } from './src/strings/en.ts';
 // --color-bg in src/theme.css (the manifest cannot read CSS variables).
 const MANIFEST_THEME_COLOR = '#3b5bdb';
 const MANIFEST_BACKGROUND_COLOR = '#fffaf0';
+
+/**
+ * What Settings > About shows: package.json's version, the commit (GITHUB_SHA in Actions, else
+ * the local checkout, else "dev") and when this build was made (UTC).
+ */
+function buildInfo(): { version: string; sha: string; builtAt: string } {
+  const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string };
+  let sha = process.env.GITHUB_SHA?.slice(0, 7) ?? '';
+  if (!sha) {
+    try {
+      sha = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    } catch {
+      // Not a git checkout (or no git): fall through to "dev".
+    }
+  }
+  return { version: pkg.version, sha: sha || 'dev', builtAt: new Date().toISOString() };
+}
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
@@ -86,6 +105,7 @@ export default defineConfig(({ mode }) => {
   return {
     base,
     plugins,
+    define: { __BUILD_INFO__: JSON.stringify(buildInfo()) },
     server: { host: mode === 'phone' ? true : undefined },
   };
 });

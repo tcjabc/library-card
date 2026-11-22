@@ -755,6 +755,17 @@ export const en = {
       devHeading: 'Developer tools',
       devIntro: 'Test tools: a pretend date, staircase test data and the storage self-test.',
       devLink: 'Open developer tools',
+
+      aboutHeading: 'About',
+      version: 'Version {version} · {sha} · built {built}',
+      checkUpdates: 'Check for updates',
+      checking: 'Checking…',
+      updateResult: {
+        'up-to-date': 'Up to date',
+        updating: 'Updating…',
+        offline: 'Offline — try later',
+        unavailable: 'Updates can’t be checked in this browser.',
+      },
     },
 
     pin: {

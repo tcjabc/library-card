@@ -13,6 +13,16 @@ interface ImportMetaEnv {
   readonly VITE_SUPABASE_ANON_KEY?: string;
 }
 
+/** Injected by vite.config.ts at build time (Settings > About). */
+declare const __BUILD_INFO__: {
+  /** package.json version, e.g. "1.0.0". */
+  readonly version: string;
+  /** Short commit SHA, or "dev" when it isn't known. */
+  readonly sha: string;
+  /** When the build was made, UTC ISO. */
+  readonly builtAt: string;
+};
+
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }

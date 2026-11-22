@@ -20,6 +20,7 @@ import { ConfirmSheet } from '../../ui/ConfirmSheet';
 import { Sheet } from '../../ui/Sheet';
 import { useToast } from '../../ui/Toast';
 import { formatBytes, formatTimestampDate, isAppStorageKey } from '../helpers';
+import { checkForUpdate, currentBuildInfo, formatVersionLine, type UpdateCheck } from '../version';
 import { endGrownUpSession } from '../session';
 import { HouseholdPinSection } from '../pin/HouseholdPinSection';
 import { usePinGuard } from '../pin/pinGuardContext';
@@ -302,6 +303,8 @@ export function SettingsTab({ store, household }: TabProps) {
         </div>
       </section>
 
+      <AboutSection timeZone={household.time_zone ?? device} />
+
       {restoring && syncOn && (
         <Sheet title={ts.backup.restoreTitle} onClose={() => setRestoring(null)}>
           <div className="stack">
@@ -373,5 +376,38 @@ export function SettingsTab({ store, household }: TabProps) {
         </ConfirmSheet>
       )}
     </>
+  );
+}
+
+/** Settings > About: which version this is, and a way to look for a newer one. */
+function AboutSection({ timeZone }: { timeZone: string }) {
+  const t = strings.grownups.settings;
+  const [state, setState] = useState<UpdateCheck | 'checking' | null>(null);
+
+  const check = async () => {
+    setState('checking');
+    try {
+      setState(await checkForUpdate());
+    } catch (error) {
+      console.error('[settings] update check failed', error);
+      setState('offline');
+    }
+  };
+
+  return (
+    <section className="stack card">
+      <h2>{t.aboutHeading}</h2>
+      <p className="small muted">{formatVersionLine(currentBuildInfo(), timeZone)}</p>
+      <div className="row">
+        <button type="button" className="btn" disabled={state === 'checking' || state === 'updating'} onClick={() => void check()}>
+          🔄 {state === 'checking' ? t.checking : t.checkUpdates}
+        </button>
+        {state && state !== 'checking' && (
+          <span className="small" role="status">
+            {t.updateResult[state]}
+          </span>
+        )}
+      </div>
+    </section>
   );
 }

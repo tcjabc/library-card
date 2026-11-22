@@ -83,6 +83,11 @@ in them.
 3. Push to `main`. `.github/workflows/deploy.yml` lints, tests, builds and deploys.
    A failing test stops the deploy.
 
+**Versions.** `package.json`'s version is shown in Grown-ups → Settings → About, with the commit
+and build time. Bump the minor version for each feature release and the patch version for fixes,
+in the release commit (`npm version 1.1.0 --no-git-tag-version`). 1.0.0 is the first full release
+(sync, household PIN, card maker).
+
 After changing a manifest field (the `manifest` block in `vite.config.ts`: name, icons,
 colours, orientation…), reinstall the app on each device: installed apps can keep the old
 manifest for a long time (Android updates its installed copy on its own schedule). Download a
