@@ -6,22 +6,30 @@
  *   await sync.start();                                // a new household: shows these words
  *   await sync.join(words, 'combine');                 // or 'replace'
  *
- * One tab per browser holds a Web Lock and runs the engine (relay socket, timers, push and pull).
- * The other tabs queue for the lock, hear data changes through the store's subscribe() (applied
- * ops are broadcast like any local write) and the engine's status through a BroadcastChannel, and
- * take over when the running tab closes. Actions work from any tab: the result is in IndexedDB,
- * and the running tab is told to pick it up.
+ * One visible tab per browser holds a Web Lock and runs the engine (relay socket, timers, push and
+ * pull). The other tabs queue for the lock, hear data changes through the store's subscribe()
+ * (applied ops are broadcast like any local write) and the engine's status through a
+ * BroadcastChannel. A running tab that is hidden, frozen or closed hands the lock on (one quick
+ * last sync, then it stops and releases it) and queues again once it is visible, so a waiting
+ * visible tab takes over at once. Actions work from any tab: the result is in IndexedDB, and the
+ * running tab is told to pick it up.
  *
- * Nothing in the app imports this yet (6d-2 adds the UI); import it lazily so the sync code stays
- * out of the main bundle.
+ * Actions that change the household (start, join, stop, deleteHousehold) run in one tab at a time
+ * (a second Web Lock); another tab trying one gets SyncBusyError. Two facts persist in meta: that
+ * the household was deleted (shown at once after a reload, without asking the relay) and that
+ * this device was in a household before (so starting a new one warns first).
+ *
+ * The app loads it lazily (src/sync/app.ts), so the sync code stays out of the main bundle.
  */
-import { HOUSEHOLD_ID, withSyncLock, type SyncDataStore } from '../data';
+import { HOUSEHOLD_ID, withSyncLock, type SyncDataStore, type SyncFlags } from '../data';
 import * as crypto from './vendor/crypto.js';
+import { t } from './vendor/i18n.js';
 import { createKeyVault, type KeyVault, type VaultConfig } from './vendor/secure-key.js';
 import {
   browserEnv,
   createSyncEngine,
   fetchTransport,
+  JoinError,
   type EngineStatus,
   type EngineStore,
   type SyncEngine,
@@ -50,6 +58,29 @@ export interface SyncStatus {
   message: string;
   /** This tab runs the engine. */
   leader: boolean;
+  /** When sync was last turned off on this device (it was in a household before), or null. */
+  wasPairedAt: string | null;
+  /** Another tab is starting, joining, turning off or deleting right now. */
+  busyElsewhere: boolean;
+  /** This tab doesn't run sync and hasn't heard from the tab that does for a few seconds. */
+  leaderSilent: boolean;
+}
+
+/** What a replace would drop on this device. */
+export interface LocalCounts {
+  readers: number;
+  homeBooks: number;
+  libraries: number;
+  loans: number;
+  reads: number;
+}
+
+/** start / join / stop / deleteHousehold is already running, in this tab or another. */
+export class SyncBusyError extends Error {
+  readonly code = 'busy';
+  constructor() {
+    super('Another sync action is running (maybe in another tab).');
+  }
 }
 
 export interface SyncService {
@@ -76,7 +107,9 @@ export interface SyncService {
   deleteHousehold(): Promise<void>;
   /** Sync now; resolves when done (in the running tab). Never rejects. */
   syncNow(): Promise<void>;
-  /** Readers, home items, libraries and loans on this device: what a replace would drop. */
+  /** Readers, home books, libraries, loans and reads on this device: what a replace would drop. */
+  localCounts(): Promise<LocalCounts>;
+  /** The sum of localCounts(); 0 means joining needs no choice. */
   localItemCount(): Promise<number>;
   /** The 12 recovery words for this device's household, or null. */
   recoveryWords(): Promise<string | null>;
@@ -114,16 +147,27 @@ export interface SyncServiceOptions {
   locks?: LockManagerLike | null;
   /** Status between tabs; null for none (tests). */
   channel?: ChannelLike | null;
+  /** How long a tab waits to hear from the running tab before saying so (ms, default 4000). */
+  leaderSilentMs?: number;
+  /** The most a hiding tab spends on its last sync before handing over (ms, default 1500). */
+  handOffSyncMs?: number;
 }
+
+const ACTION_LOCK_NAME = 'library-card-sync-action';
+/** A tab that closed mid-action never says it finished; forget its "busy" after this long. */
+const BUSY_TIMEOUT_MS = 120_000;
+const LEADER_SILENT_MS = 4000;
+const HAND_OFF_SYNC_MS = 1500;
 
 const CHANNEL_NAME = 'library-card-sync';
 const NO_CONFIG: VaultConfig = { householdKey: '', relayUrl: '', enabled: false, keyLocation: 'idb', keyTag: '' };
 
 type Message =
-  | { type: 'status'; status: Omit<SyncStatus, 'leader'> }
+  | { type: 'status'; status: Pick<SyncStatus, 'state' | 'lastSynced' | 'pendingCount' | 'message'> }
   | { type: 'hello' }
   | { type: 'config' }
-  | { type: 'syncNow' };
+  | { type: 'syncNow' }
+  | { type: 'busy'; on: boolean };
 
 /** The vault's store, over the sync store's config (web: the key stays in IndexedDB). */
 function vaultStore(store: SyncDataStore) {
@@ -168,7 +212,7 @@ export function engineStoreFor(store: SyncDataStore, vault: KeyVault = createKey
   };
 }
 
-/** A status for the other tabs (without `leader`, which each tab sets for itself). */
+/** A status for the other tabs (each tab sets `leader`, `wasPairedAt` and `busyElsewhere` itself). */
 const shared = ({ state, lastSynced, pendingCount, message }: SyncStatus) => ({ state, lastSynced, pendingCount, message });
 
 const iso = (at: number | string | null): string | null =>
@@ -176,12 +220,39 @@ const iso = (at: number | string | null): string | null =>
 
 export async function createSyncService(options: SyncServiceOptions): Promise<SyncService> {
   const { store, log = console } = options;
+  const now = options.now ?? (() => Date.now());
+  const stamp = () => new Date(now()).toISOString();
   const relayUrl = options.relayUrl ?? import.meta.env.VITE_SYNC_RELAY_URL ?? '';
   const vault = createKeyVault({ store: vaultStore(store), log });
+  // The engine registers its visibility and network listeners each time it starts; route them
+  // through here so a hand-off (stop, then start again later) can drop the old ones.
+  const baseEnv = options.env ?? browserEnv();
+  const hub = { vis: new Set<(visible: boolean) => void>(), on: new Set<() => unknown>(), off: new Set<() => void>() };
+  const clearHub = () => {
+    hub.vis.clear();
+    hub.on.clear();
+    hub.off.clear();
+  };
+  baseEnv.onVisibility((visible) => {
+    for (const fn of [...hub.vis]) fn(visible);
+  });
+  baseEnv.onOnline(() => {
+    for (const fn of [...hub.on]) fn();
+  });
+  baseEnv.onOffline?.(() => {
+    for (const fn of [...hub.off]) fn();
+  });
+  const engineEnv: SyncEnv = {
+    isVisible: () => baseEnv.isVisible(),
+    isOnline: () => baseEnv.isOnline(),
+    onVisibility: (fn) => void hub.vis.add(fn),
+    onOnline: (fn) => void hub.on.add(fn),
+    onOffline: (fn) => void hub.off.add(fn),
+  };
   const engine: SyncEngine = createSyncEngine({
     store: engineStoreFor(store, vault),
     transport: options.transport ?? fetchTransport(),
-    env: options.env ?? browserEnv(),
+    env: engineEnv,
     timers: options.timers,
     now: options.now,
     random: options.random,
@@ -201,17 +272,25 @@ export async function createSyncService(options: SyncServiceOptions): Promise<Sy
     background = Promise.all([background, work.catch((error) => log.error(error))]);
   };
   const initial = await store.getConfig();
+  let flags: SyncFlags = await store.getSyncFlags();
   let status: SyncStatus = {
-    state: initial?.enabled ? 'connecting' : 'off',
+    state: flags.deletedAt ? 'deleted' : initial?.enabled ? 'connecting' : 'off',
     lastSynced: await store.getLastSynced(),
     pendingCount: await pendingWhen(initial?.enabled),
-    message: '',
+    message: flags.deletedAt ? t('sync.deleted') : '',
     leader: false,
+    wasPairedAt: flags.wasPairedAt,
+    busyElsewhere: false,
+    leaderSilent: false,
   };
   let leader = false;
   let engineStarted = false;
   let hadSync = false;
   let disposed = false;
+  let acting = false;
+  let busyTimer: ReturnType<typeof setTimeout> | undefined;
+  let silentTimer: ReturnType<typeof setTimeout> | undefined;
+  let handingOff = false;
 
   const channel: ChannelLike | null =
     options.channel !== undefined ? options.channel : typeof BroadcastChannel === 'function' ? new BroadcastChannel(CHANNEL_NAME) : null;
@@ -234,6 +313,19 @@ export async function createSyncService(options: SyncServiceOptions): Promise<Sy
     }
   };
 
+  /** Re-read the flags (another tab, or this one, changed them). */
+  async function refreshFlags(): Promise<void> {
+    flags = await store.getSyncFlags();
+    emit({ ...status, wasPairedAt: flags.wasPairedAt });
+  }
+
+  /** The household is gone: remember it, so a reload shows it without asking the relay. */
+  async function markDeleted(): Promise<void> {
+    if (flags.deletedAt) return;
+    flags = await store.setSyncFlags({ deletedAt: stamp() });
+    post({ type: 'config' });
+  }
+
   /** The service's state for an engine status. */
   function stateOf(s: EngineStatus): SyncState {
     switch (s.state) {
@@ -254,15 +346,30 @@ export async function createSyncService(options: SyncServiceOptions): Promise<Sy
   }
 
   engine.onStatus((s) => {
+    // Any tab's engine may be the one that hears it (a delete from this tab, or a 410).
+    if (s.state === 'deleted') track(markDeleted());
     if (!leader) return;
     // While sync is off the store still records changes, but nothing is waiting to be sent.
-    emit({ state: stateOf(s), lastSynced: iso(s.lastSyncedAt), pendingCount: s.state === 'off' ? 0 : s.pendingCount, message: s.lastError, leader: true });
+    emit({
+      ...status,
+      state: stateOf(s),
+      lastSynced: iso(s.lastSyncedAt),
+      pendingCount: s.state === 'off' ? 0 : s.pendingCount,
+      message: s.lastError,
+      leader: true,
+    });
     post({ type: 'status', status: shared(status) });
   });
 
   /** In the running tab: start the engine once sync is on, or have it re-read the config. */
   async function pickUp(): Promise<void> {
     if (!leader || disposed) return;
+    if (flags.deletedAt) {
+      // Known to be deleted: show it, and don't ask the relay again.
+      emit({ ...status, state: 'deleted', message: t('sync.deleted'), pendingCount: await store.pendingCount(), leader: true });
+      post({ type: 'status', status: shared(status) });
+      return;
+    }
     if (engineStarted) return engine.restart();
     const config = await store.getConfig();
     if (!config?.enabled) {
@@ -278,63 +385,165 @@ export async function createSyncService(options: SyncServiceOptions): Promise<Sy
    * `restart`), another tab tells it to.
    */
   async function changed(restart = false): Promise<void> {
+    await refreshFlags();
     if (leader) {
-      if (!engineStarted) await pickUp();
+      if (!engineStarted || flags.deletedAt) await pickUp();
       else if (restart) await engine.restart();
     } else {
       post({ type: 'config' });
       const config = await store.getConfig();
-      emit({ ...status, state: config?.enabled ? 'connecting' : 'off', pendingCount: await pendingWhen(config?.enabled) });
+      const state: SyncState = flags.deletedAt ? 'deleted' : config?.enabled ? 'connecting' : 'off';
+      emit({ ...status, state, message: flags.deletedAt ? t('sync.deleted') : '', pendingCount: await pendingWhen(config?.enabled) });
+      expectLeader();
+    }
+  }
+
+  const setLeaderSilent = (on: boolean) => {
+    if (status.leaderSilent !== on) emit({ ...status, leaderSilent: on });
+  };
+
+  /** A tab that doesn't run sync waits to hear from the one that does; if it doesn't, it says so. */
+  function expectLeader(): void {
+    clearTimeout(silentTimer);
+    if (leader || disposed) return;
+    silentTimer = setTimeout(() => {
+      if (!leader && !disposed) setLeaderSilent(true);
+    }, options.leaderSilentMs ?? LEADER_SILENT_MS);
+  }
+
+  const setBusyElsewhere = (on: boolean) => {
+    clearTimeout(busyTimer);
+    if (on) busyTimer = setTimeout(() => setBusyElsewhere(false), BUSY_TIMEOUT_MS);
+    if (status.busyElsewhere !== on) emit({ ...status, busyElsewhere: on });
+  };
+
+  /** Run a household-changing action in this tab only, and in no other tab at the same time. */
+  async function guarded<T>(work: () => Promise<T>): Promise<T> {
+    if (acting) throw new SyncBusyError();
+    acting = true;
+    const run = async () => {
+      post({ type: 'busy', on: true });
+      try {
+        return await work();
+      } finally {
+        post({ type: 'busy', on: false });
+      }
+    };
+    try {
+      if (options.locks === null) return await run();
+      const outcome = await withSyncLock(run, { name: ACTION_LOCK_NAME, ...(options.locks ? { locks: options.locks as never } : {}) });
+      if (!outcome.ran) throw new SyncBusyError();
+      return outcome.value;
+    } finally {
+      acting = false;
     }
   }
 
   channel?.addEventListener('message', (event) => {
     const message = event.data as Message | null;
     if (!message || typeof message !== 'object') return;
+    if (message.type === 'busy') return setBusyElsewhere(message.on);
     if (leader) {
       if (message.type === 'hello') post({ type: 'status', status: shared(status) });
-      else if (message.type === 'config') track(engineStarted ? engine.restart() : pickUp());
+      else if (message.type === 'config') track(refreshFlags().then(() => (engineStarted && !flags.deletedAt ? engine.restart() : pickUp())));
       else if (message.type === 'syncNow') void engine.syncNow();
     } else if (message.type === 'status') {
-      emit({ ...message.status, leader: false });
+      clearTimeout(silentTimer);
+      emit({ ...status, ...message.status, leader: false, leaderSilent: false });
+    } else if (message.type === 'config') {
+      track(refreshFlags());
     }
   });
 
-  // Run the engine in whichever tab gets the lock; the others wait their turn.
+  // Run the engine in whichever visible tab gets the lock; the others wait their turn.
   const abort = new AbortController();
-  let release: () => void = () => {};
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const lockOptions = options.locks ? { locks: options.locks as never } : {};
+  let releaseTurn: (() => void) | null = null;
+  let queued = false;
+  let lockDone: Promise<unknown> = Promise.resolve();
   let acquired: () => void = () => {};
   const firstTurn = new Promise<void>((resolve) => {
     acquired = resolve;
   });
-  const run = async () => {
-    if (disposed) return;
-    leader = true;
-    emit({ ...status, leader: true });
-    acquired();
-    track(pickUp());
-    await held;
-  };
-  const lockDone =
-    options.locks === null
-      ? run()
-      : withSyncLock(run, { wait: true, signal: abort.signal, ...(options.locks ? { locks: options.locks as never } : {}) }).catch((error) => log.error(error));
+
+  /** This tab's turn: run the engine until it hands over (or the service is disposed). */
+  const lead = () =>
+    new Promise<void>((resolve) => {
+      if (disposed) return resolve();
+      releaseTurn = resolve;
+      leader = true;
+      clearTimeout(silentTimer);
+      emit({ ...status, leader: true, leaderSilent: false });
+      acquired();
+      track(pickUp());
+    });
+
+  /** Queue for the engine lock (once; only while visible, so a hidden tab never takes a turn). */
+  function queueForTurn(): void {
+    if (disposed || queued || leader) return;
+    queued = true;
+    const turn = options.locks === null ? lead() : withSyncLock(lead, { wait: true, signal: abort.signal, ...lockOptions });
+    lockDone = turn.catch((error) => log.error(error)).finally(() => {
+      queued = false;
+    });
+  }
+
+  /**
+   * Hidden, frozen or closing: one quick last sync (so a change made just now still goes out),
+   * then stop the engine and release the lock, so a visible tab can run it. Queues again when
+   * this tab is visible.
+   */
+  async function handOff(): Promise<void> {
+    if (!leader || handingOff || disposed || options.locks === null) return;
+    handingOff = true;
+    try {
+      await Promise.race([engine.syncNow(), new Promise((resolve) => setTimeout(resolve, options.handOffSyncMs ?? HAND_OFF_SYNC_MS))]);
+    } catch {
+      /* the next tab syncs */
+    }
+    engine.stop();
+    clearHub();
+    engineStarted = false;
+    hadSync = false;
+    leader = false;
+    handingOff = false;
+    emit({ ...status, leader: false });
+    const release = releaseTurn;
+    releaseTurn = null;
+    release?.();
+    post({ type: 'hello' });
+    expectLeader();
+  }
+
+  baseEnv.onVisibility((visible) => {
+    if (visible) queueForTurn();
+    else track(handOff());
+  });
+  // Pages being frozen (Android does this to background tabs) or unloaded hand over too.
+  if (typeof document !== 'undefined') document.addEventListener('freeze', () => track(handOff()));
+  if (typeof window !== 'undefined') window.addEventListener('pagehide', () => track(handOff()));
+
+  if (options.locks === null || baseEnv.isVisible()) queueForTurn();
   // Wait briefly for the lock, so a lone tab is the leader when this resolves.
   await Promise.race([firstTurn, new Promise((resolve) => setTimeout(resolve, 50))]);
-  if (!leader) post({ type: 'hello' });
+  if (!leader) {
+    post({ type: 'hello' });
+    expectLeader();
+  }
 
-  async function localItemCount(): Promise<number> {
-    const [readers, home, libraries, loans] = await Promise.all([
+  async function localCounts(): Promise<LocalCounts> {
+    const [readers, home, libraries, loans, summaries] = await Promise.all([
       store.listReaders(HOUSEHOLD_ID),
       store.listHomeItems(HOUSEHOLD_ID),
       store.listLibraries(HOUSEHOLD_ID),
       store.listLoans(HOUSEHOLD_ID),
+      store.listHouseholdReadSummaries(HOUSEHOLD_ID),
     ]);
-    return readers.length + home.length + libraries.length + loans.length;
+    // Every read event (re-reads too), as the backup summary counts them.
+    const reads = summaries.reduce((n, s) => n + s.count, 0);
+    return { readers: readers.length, homeBooks: home.length, libraries: libraries.length, loans: loans.length, reads };
   }
+  const localItemCount = async () => Object.values(await localCounts()).reduce((a, b) => a + b, 0);
 
   return {
     getStatus: () => ({ ...status }),
@@ -344,48 +553,59 @@ export async function createSyncService(options: SyncServiceOptions): Promise<Sy
       return () => listeners.delete(listener);
     },
 
-    async start(newHousehold = true) {
-      if (!newHousehold) {
-        const config = await store.getConfig();
-        if (!config) throw new Error('This device has no household key. Start a new household or join one.');
-        await store.setConfig({ enabled: true });
-        await changed(true);
-        return { words: (await keyToWords(config.householdKey)).join(' ') };
-      }
-      const key = crypto.generateKey();
-      await engine.startHousehold(key);
-      await changed();
-      return { words: (await keyToWords(key)).join(' ') };
-    },
+    start: (newHousehold = true) =>
+      guarded(async () => {
+        if (!newHousehold) {
+          if (flags.deletedAt) throw new JoinError('deleted', t('sync.join.deleted'));
+          const config = await store.getConfig();
+          if (!config) throw new Error('This device has no household key. Start a new household or join one.');
+          await store.setConfig({ enabled: true });
+          await changed(true);
+          return { words: (await keyToWords(config.householdKey)).join(' ') };
+        }
+        const key = crypto.generateKey();
+        await engine.startHousehold(key);
+        // A new household: the deleted one is behind us.
+        if (flags.deletedAt) flags = await store.setSyncFlags({ deletedAt: null });
+        await changed();
+        return { words: (await keyToWords(key)).join(' ') };
+      }),
 
-    async join(words, mode) {
-      if (mode !== 'combine' && mode !== 'replace') throw new Error('Join mode must be combine or replace.');
-      const key = await parseRecovery(words);
-      const asReplace = mode === 'replace' || (await localItemCount()) === 0;
-      await engine.joinHousehold(key, asReplace ? 'replace' : 'merge');
-      await changed();
-      return { mode: asReplace ? 'replace' : 'combine' };
-    },
+    join: (words, mode) =>
+      guarded(async () => {
+        if (mode !== 'combine' && mode !== 'replace') throw new Error('Join mode must be combine or replace.');
+        // A removed household is left with "Keep a copy" (turn off) or "Start a new household" first.
+        if (flags.deletedAt) throw new JoinError('deleted', t('sync.join.deleted'));
+        const key = await parseRecovery(words);
+        const asReplace = mode === 'replace' || (await localItemCount()) === 0;
+        await engine.joinHousehold(key, asReplace ? 'replace' : 'merge');
+        await changed();
+        return { mode: asReplace ? 'replace' : 'combine' };
+      }),
 
-    async stop(keepData = true) {
-      await engine.disconnect();
-      if (!keepData) await store.resetDevice();
-      await changed();
-    },
+    stop: (keepData = true) =>
+      guarded(async () => {
+        const wasIn = Boolean((await store.getConfig()) || flags.deletedAt);
+        await engine.disconnect();
+        if (!keepData) await store.resetDevice(); // clears meta too; the flags are written after
+        flags = await store.setSyncFlags({ deletedAt: null, ...(wasIn ? { wasPairedAt: stamp() } : {}) });
+        await changed();
+      }),
 
-    async deleteHousehold() {
-      await engine.deleteHousehold();
-      if (!leader) {
-        post({ type: 'config' });
-        emit({ ...status, state: 'deleted', message: engine.getStatus().lastError });
-      }
-    },
+    deleteHousehold: () =>
+      guarded(async () => {
+        await engine.deleteHousehold();
+        await markDeleted();
+        if (!leader) emit({ ...status, state: 'deleted', message: engine.getStatus().lastError });
+      }),
 
     async syncNow() {
+      if (flags.deletedAt) return;
       if (leader) await engine.syncNow();
       else post({ type: 'syncNow' });
     },
 
+    localCounts,
     localItemCount,
 
     async idle() {
@@ -404,10 +624,13 @@ export async function createSyncService(options: SyncServiceOptions): Promise<Sy
 
     async dispose() {
       disposed = true;
+      clearTimeout(busyTimer);
+      clearTimeout(silentTimer);
       abort.abort();
       engine.stop();
+      clearHub();
       await engine.idle();
-      release();
+      releaseTurn?.();
       await lockDone;
       channel?.close();
       listeners.clear();

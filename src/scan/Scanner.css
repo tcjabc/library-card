@@ -34,6 +34,16 @@
   border-radius: var(--radius-md);
 }
 
+/* A QR code on another device's screen (pairing): a centred square. */
+.scanner__frame--square {
+  left: 50%;
+  top: 46%;
+  width: min(70%, 70vh);
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  border-radius: var(--radius-lg);
+}
+
 /* Library card: card-shaped, centred, generous so small hands needn't aim. */
 .scanner__frame--card {
   left: 50%;

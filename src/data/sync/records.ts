@@ -44,6 +44,10 @@ export const SYNC_META = {
   cursor: 'sync_cursor',
   lastSynced: 'sync_last_synced',
   config: 'sync_config',
+  /** When the relay said this household was deleted (ISO), so a reload shows it at once. */
+  deleted: 'sync_deleted',
+  /** When sync was last turned off on this device (ISO): it was in a household before. */
+  wasPaired: 'sync_was_paired',
 } as const;
 
 /** Ops in the outbox carry no id; sendable ops get their keyed, deterministic id when sent. */

@@ -15,6 +15,14 @@ export interface SyncConfig {
   enabledAt: string;
 }
 
+/** Per-device sync facts the UI needs, kept in meta (never synced or exported). */
+export interface SyncFlags {
+  /** When this device learned its household was deleted on the relay, or null. */
+  deletedAt: string | null;
+  /** When sync was last turned off here (so "Start a new household" warns first), or null. */
+  wasPairedAt: string | null;
+}
+
 export interface ApplyResult {
   /** Ops that changed a record. */
   changed: number;
@@ -56,6 +64,9 @@ export interface SyncEngineStore {
    * fields keep their stamps, and every field of every record is queued.
    */
   enableSync(householdKey: string, options?: { relayUrl?: string }): Promise<{ records: number; queued: number; skipped: number }>;
+  getSyncFlags(): Promise<SyncFlags>;
+  /** Set or clear (null) the flags in the patch; the others stay. */
+  setSyncFlags(patch: Partial<SyncFlags>): Promise<SyncFlags>;
 }
 
 export type SyncDataStore = LocalDataStore & SyncEngineStore;

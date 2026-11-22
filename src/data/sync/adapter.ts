@@ -272,6 +272,31 @@ function syncMethods(store: LocalDataStore, internals: StoreInternals, state: Re
       return { kept, dropped };
     },
 
+    async getSyncFlags() {
+      const [deleted, wasPaired] = await Promise.all([readMeta(SYNC_META.deleted), readMeta(SYNC_META.wasPaired)]);
+      return {
+        deletedAt: typeof deleted === 'string' ? deleted : null,
+        wasPairedAt: typeof wasPaired === 'string' ? wasPaired : null,
+      };
+    },
+
+    async setSyncFlags(patch) {
+      const keys = { deletedAt: SYNC_META.deleted, wasPairedAt: SYNC_META.wasPaired } as const;
+      const fields = (['deletedAt', 'wasPairedAt'] as const).filter((field) => field in patch);
+      for (const field of fields) {
+        const value = patch[field];
+        if (value !== null && !(typeof value === 'string' && value)) throw new DataStoreError('invalid', 'A sync flag is a date text or null.');
+      }
+      const tx = (await raw()).transaction('meta', 'readwrite');
+      for (const field of fields) {
+        const value = patch[field];
+        if (value === null) await tx.store.delete(keys[field]);
+        else await tx.store.put({ key: keys[field], value });
+      }
+      await tx.done;
+      return this.getSyncFlags();
+    },
+
     async getLastSynced() {
       const value = await readMeta(SYNC_META.lastSynced);
       return typeof value === 'string' ? value : null;

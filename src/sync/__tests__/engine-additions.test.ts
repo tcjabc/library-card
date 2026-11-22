@@ -8,74 +8,14 @@ import { generateKey } from '../vendor/crypto.js';
 import { statusText } from '../vendor/pairing.js';
 import { recoveryFromQr } from '../vendor/qr-scan.js';
 import { createKeyVault, SECURE_KEY_ID } from '../vendor/secure-key.js';
-import { createSyncEngine, fetchTransport, JoinError, RelayHttpError, type LiveHandlers, type SyncEngine, type Transport } from '../vendor/sync.js';
+import { createSyncEngine, fetchTransport, JoinError, RelayHttpError, type SyncEngine } from '../vendor/sync.js';
 import { keyToWords } from '../vendor/words.js';
+import { fakeChannels, fakeEnv, fakeLocks, fakeRelay, fakeTimers, RELAY } from './fakes';
 
 /**
  * Library Card's changes to the vendored engine (deleted rooms, polling pace, injected relay URL,
  * subprotocol, deleteRoom) and the sync service (one tab runs the engine), with a fake relay.
  */
-
-const RELAY = 'https://relay.example';
-
-function fakeTimers() {
-  let n = 0;
-  const pending = new Map<number, { fn: () => unknown; ms: number; repeat: boolean }>();
-  return {
-    pending,
-    setTimeout: (fn: () => unknown, ms: number) => { const id = ++n; pending.set(id, { fn, ms, repeat: false }); return id; },
-    clearTimeout: (id: unknown) => { pending.delete(id as number); },
-    setInterval: (fn: () => unknown, ms: number) => { const id = ++n; pending.set(id, { fn, ms, repeat: true }); return id; },
-    clearInterval: (id: unknown) => { pending.delete(id as number); },
-    delays: () => [...pending.values()].filter((t) => !t.repeat).map((t) => t.ms),
-    intervals: () => [...pending.values()].filter((t) => t.repeat).map((t) => t.ms),
-  };
-}
-
-function fakeEnv() {
-  const listeners = { on: [] as (() => unknown)[], off: [] as (() => void)[] };
-  return {
-    listeners,
-    isVisible: () => true,
-    isOnline: () => true,
-    onVisibility: () => {},
-    onOnline: (fn: () => unknown) => listeners.on.push(fn),
-    onOffline: (fn: () => void) => listeners.off.push(fn),
-  };
-}
-
-/** A relay that keeps entries in memory; `fail` makes an action answer with an HTTP status. */
-function fakeRelay() {
-  const entries: { seq: number; id: string; wall: number; c: string }[] = [];
-  const sockets: LiveHandlers[] = [];
-  const calls: string[] = [];
-  const fail: Partial<Record<'push' | 'pull' | 'deleteRoom', number>> = {};
-  const check = (action: 'push' | 'pull' | 'deleteRoom') => {
-    calls.push(action);
-    if (fail[action]) throw new RelayHttpError(fail[action]!, 'x', 'forced');
-  };
-  const transport: Transport = {
-    async push(_b, _r, _t, envelopes) {
-      check('push');
-      for (const e of envelopes) if (!entries.some((x) => x.id === e.id)) entries.push({ ...e, seq: entries.length + 1 });
-      return { head: entries.length, rejected: [] };
-    },
-    async pull(_b, _r, _t, after, limit) {
-      check('pull');
-      return { entries: entries.slice(after, after + limit), head: entries.length };
-    },
-    live(_b, _r, _t, _c, handlers) {
-      sockets.push(handlers);
-      handlers.onOpen?.();
-      return { close: () => handlers.onClose(1000) };
-    },
-    async deleteRoom() {
-      check('deleteRoom');
-      return { deleted: true };
-    },
-  };
-  return { entries, sockets, calls, fail, transport };
-}
 
 const open: { close(): Promise<void> }[] = [];
 const services: SyncService[] = [];
@@ -259,50 +199,6 @@ describe('vendored helpers', () => {
     expect(await recoveryFromQr(words.split(' ').slice(0, 11).join(' '))).toBeNull();
   });
 });
-
-/** Web Locks as browsers do them, for several services in one test. */
-function fakeLocks() {
-  let holder: Promise<unknown> | null = null;
-  const queue: (() => void)[] = [];
-  return {
-    async request(_name: string, options: { ifAvailable?: boolean; signal?: AbortSignal }, callback: (lock: unknown) => Promise<unknown>) {
-      if (holder && options.ifAvailable) return callback(null);
-      if (holder) {
-        await new Promise<void>((resolve, reject) => {
-          queue.push(resolve);
-          options.signal?.addEventListener('abort', () => {
-            queue.splice(queue.indexOf(resolve), 1);
-            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
-          });
-        });
-      }
-      const run = callback({});
-      holder = run;
-      try {
-        return await run;
-      } finally {
-        holder = null;
-        queue.shift()?.();
-      }
-    },
-  };
-}
-
-/** BroadcastChannel between services in one test. */
-function fakeChannels() {
-  const all = new Set<{ listeners: ((e: { data: unknown }) => void)[] }>();
-  return () => {
-    const self = { listeners: [] as ((e: { data: unknown }) => void)[] };
-    all.add(self);
-    return {
-      postMessage(data: unknown) {
-        for (const other of all) if (other !== self) for (const fn of other.listeners) queueMicrotask(() => fn({ data: structuredClone(data) }));
-      },
-      addEventListener(_type: 'message', fn: (e: { data: unknown }) => void) { self.listeners.push(fn); },
-      close() { all.delete(self); },
-    };
-  };
-}
 
 describe('sync service', () => {
   async function service(store: SyncDataStore, relay: ReturnType<typeof fakeRelay>, extra: Partial<Parameters<typeof createSyncService>[0]> = {}) {

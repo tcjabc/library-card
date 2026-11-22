@@ -4,7 +4,9 @@ import { href, navigate } from '../router';
 import { getActiveReaderId } from '../session/activeReader';
 import { fmt, strings } from '../strings';
 import { GROWN_UP_TABS, parseGrownUpsPath, tabPath, type GrownUpTab } from './helpers';
+import { SYNC_ENABLED } from '../sync/app';
 import { endGrownUpSession } from './session';
+import { SyncIndicator } from './sync/SyncIndicator';
 import { BooksTab } from './tabs/BooksTab';
 import { CardsTab } from './tabs/CardsTab';
 import { LibrariesTab } from './tabs/LibrariesTab';
@@ -52,6 +54,7 @@ export default function GrownUpsArea({ path }: { path: string }) {
           <h1>{t.title}</h1>
           {household && <p className="muted small">{household.name}</p>}
         </div>
+        {SYNC_ENABLED && <SyncIndicator />}
         <button type="button" className="btn btn--accent" onClick={backToKids}>
           <span aria-hidden="true">←</span> {t.backToKids}
         </button>

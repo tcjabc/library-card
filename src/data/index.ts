@@ -9,7 +9,7 @@
  */
 export * from './DataStore';
 export { configuredAdapter, getDataStore, type AdapterName } from './store';
-export { isSyncStore, type ApplyResult, type SyncConfig, type SyncDataStore, type SyncEngineStore } from './sync/types';
+export { isSyncStore, type ApplyResult, type SyncConfig, type SyncDataStore, type SyncEngineStore, type SyncFlags } from './sync/types';
 export { withSyncLock } from './sync/lock';
 export { useDataQuery, useDataStore, type DataQueryResult } from './react';
 export { hashPin, verifyPin } from './pin';

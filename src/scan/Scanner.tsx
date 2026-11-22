@@ -35,6 +35,7 @@ export interface ScannerProps {
   /**
    * "card": front camera by default, card-shaped aiming frame.
    * "book" (default): back camera by default, barcode frame.
+   * "pairing": back camera by default, square frame (another device's QR code).
    * The last camera chosen is remembered per mode on this device.
    */
   camera?: CameraMode;
@@ -293,7 +294,7 @@ export function Scanner({
   };
 
   const t = strings.scanner;
-  const guide = camera === 'card' ? 'card' : 'barcode';
+  const guide = camera === 'card' ? 'card' : camera === 'pairing' ? 'square' : 'barcode';
   const mirrored = active.facing === 'user' && status === 'running';
   return (
     <div className={['scanner', mirrored && 'scanner--mirrored', className].filter(Boolean).join(' ')}>

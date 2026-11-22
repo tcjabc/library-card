@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { parseCardToken } from '../cards/cardUrl';
 import { href, navigate } from '../router';
 import { Scanner, type ScanResult } from '../scan/Scanner';
+import { looksLikePairingCode } from '../sync/pairingCode';
 import { strings } from '../strings';
 
 const NOTICE_MS = 3500;
@@ -19,10 +20,11 @@ export function Splash() {
       navigate(`/card/${encodeURIComponent(token)}`);
       return;
     }
-    setNotice(t.notACard);
+    // A sync pairing code (12 words) is for grown-ups; keep scanning for a card.
+    setNotice(looksLikePairingCode(value) ? t.grownUpCode : t.notACard);
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setNotice(null), NOTICE_MS);
-  }, [t.notACard]);
+  }, [t.notACard, t.grownUpCode]);
 
   return (
     <main className="page page--kid splash">

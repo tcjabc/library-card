@@ -157,6 +157,10 @@
   --avatar-size: 2.75rem;
   --avatar-size-lg: 5.5rem;
   --qr-size: 10rem;
+  /* The "Add a device" pairing code, scanned from another device's camera. */
+  --qr-size-pairing: 15rem;
+  /* Status dots (sync). */
+  --dot-size: 0.75rem;
   --numpad-max: 22rem;
   --badge-size: 2rem;
   --summary-cover: 7rem;

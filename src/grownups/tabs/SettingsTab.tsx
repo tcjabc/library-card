@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { lazy, Suspense, useId, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import {
   backupFileName,
   parseBackupText,
@@ -10,7 +10,11 @@ import { toCalendarDate } from '../../lib/dates';
 import { href, navigate } from '../../router';
 import { clearActiveReader, getActiveReaderId } from '../../session/activeReader';
 import { fmt, strings } from '../../strings';
+import { SYNC_ENABLED } from '../../sync/app';
+import { useSync } from '../../sync/useSync';
+import { ChoiceButton } from '../../ui/ChoiceButton';
 import { ConfirmSheet } from '../../ui/ConfirmSheet';
+import { Sheet } from '../../ui/Sheet';
 import { useToast } from '../../ui/Toast';
 import { formatBytes, formatTimestampDate, isAppStorageKey } from '../helpers';
 import { endGrownUpSession } from '../session';
@@ -18,6 +22,10 @@ import { useGrownUpSession } from '../useGrownUpSession';
 import type { TabProps } from './types';
 
 const t = strings.grownups.settings;
+const ts = strings.grownups.sync;
+
+// Only builds with sync load the sync screens (and the engine behind them).
+const SyncSection = lazy(() => import('../sync/SyncSection'));
 
 /** Removes this app's keys from localStorage and sessionStorage (reader, flags, pretend dates…). */
 function clearAppStorage(): void {
@@ -41,6 +49,11 @@ export function SettingsTab({ store, household }: TabProps) {
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [restoring, setRestoring] = useState<{ backup: Backup; incoming: BackupSummary; current: BackupSummary } | null>(null);
   const [resetting, setResetting] = useState(false);
+  const { service: sync, status: syncStatus } = useSync();
+  // On, or removed but not yet turned off: restoring or resetting must leave the household first.
+  const syncOn = Boolean(sync && syncStatus && syncStatus.state !== 'off');
+  const [syncRestoreBusy, setSyncRestoreBusy] = useState(false);
+  const [syncRestoreError, setSyncRestoreError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const ids = { name: useId(), file: useId() };
 
@@ -98,9 +111,16 @@ export function SettingsTab({ store, household }: TabProps) {
     setRestoring({ backup: check.backup, incoming: summariseBackup(check.backup), current });
   };
 
-  const restore = (backup: Backup) =>
+  const restore = (backup: Backup, then: 'restore' | 'leave' | 'newHousehold' = 'restore') =>
     runAsGrownUp(async () => {
+      // With sync on, this device leaves the household first (restoring would otherwise
+      // replace the household's data on every device).
+      if (then !== 'restore' && sync) await sync.stop(true);
       await store.importBackup(backup);
+      if (then === 'newHousehold' && sync) {
+        await sync.start();
+        toast({ message: ts.started });
+      }
       // The reader signed in here may not be in the backup.
       const active = getActiveReaderId();
       if (active && !(await store.getReader(active))) clearActiveReader();
@@ -112,7 +132,9 @@ export function SettingsTab({ store, household }: TabProps) {
 
   const reset = () =>
     runAsGrownUp(async () => {
-      await store.resetDevice();
+      // With sync on: leave the household on this device only (the others keep it), then clear.
+      if (syncOn && sync) await sync.stop(false);
+      else await store.resetDevice();
       clearAppStorage();
       clearActiveReader();
       endGrownUpSession();
@@ -121,8 +143,28 @@ export function SettingsTab({ store, household }: TabProps) {
 
   const counts = (summary: BackupSummary) => fmt(t.counts, { ...summary });
 
+  const restoreLeaving = async (then: 'leave' | 'newHousehold') => {
+    if (!restoring) return;
+    setSyncRestoreBusy(true);
+    setSyncRestoreError(null);
+    try {
+      await restore(restoring.backup, then);
+    } catch (error) {
+      console.error('[settings] restore under sync failed', error);
+      setSyncRestoreError(t.restoreFailed);
+    } finally {
+      setSyncRestoreBusy(false);
+    }
+  };
+
   return (
     <>
+      {SYNC_ENABLED && (
+        <Suspense fallback={null}>
+          <SyncSection />
+        </Suspense>
+      )}
+
       <section className="stack card">
         <form className="stack" onSubmit={(e) => void saveName(e)} noValidate>
           <label htmlFor={ids.name} className="field-label">
@@ -198,7 +240,44 @@ export function SettingsTab({ store, household }: TabProps) {
         </div>
       </section>
 
-      {restoring && (
+      {restoring && syncOn && (
+        <Sheet title={ts.backup.restoreTitle} onClose={() => setRestoring(null)}>
+          <div className="stack">
+            <p className="field-label">{fmt(t.restoreFrom, { date: formatTimestampDate(restoring.backup.exported_at) })}</p>
+            <dl className="grownups__compare">
+              <dt>{t.inBackup}</dt>
+              <dd>{counts(restoring.incoming)}</dd>
+              <dt>{t.thisDevice}</dt>
+              <dd>{counts(restoring.current)}</dd>
+            </dl>
+            <p>{ts.backup.restoreBody}</p>
+            <ChoiceButton
+              title={syncRestoreBusy ? strings.common.saving : ts.backup.restoreOff}
+              detail={ts.backup.restoreOffDetail}
+              disabled={syncRestoreBusy}
+              onClick={() => void restoreLeaving('leave')}
+            />
+            <ChoiceButton
+              title={ts.backup.restoreNew}
+              detail={ts.backup.restoreNewDetail}
+              disabled={syncRestoreBusy}
+              onClick={() => void restoreLeaving('newHousehold')}
+            />
+            {syncRestoreError && (
+              <p className="alert alert--danger" role="alert">
+                {syncRestoreError}
+              </p>
+            )}
+            <div className="row">
+              <button type="button" className="btn" disabled={syncRestoreBusy} onClick={() => setRestoring(null)}>
+                {strings.common.cancel}
+              </button>
+            </div>
+          </div>
+        </Sheet>
+      )}
+
+      {restoring && !syncOn && (
         <ConfirmSheet
           title={t.restoreTitle}
           confirmLabel={t.restoreConfirm}
@@ -228,6 +307,7 @@ export function SettingsTab({ store, household }: TabProps) {
           onConfirm={reset}
         >
           <p>{t.resetBody}</p>
+          {syncOn && <p className="alert">{ts.backup.resetSync}</p>}
         </ConfirmSheet>
       )}
     </>

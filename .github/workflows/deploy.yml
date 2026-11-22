@@ -50,6 +50,8 @@ jobs:
           VITE_BASE: ${{ vars.VITE_BASE || format('/{0}/', github.event.repository.name) }}
           VITE_DATA_ADAPTER: ${{ vars.VITE_DATA_ADAPTER || 'local' }}
           VITE_GOOGLE_BOOKS_API_KEY: ${{ vars.VITE_GOOGLE_BOOKS_API_KEY }}
+          # The sync relay's URL. The sync UI appears only with VITE_DATA_ADAPTER=sync as well.
+          VITE_SYNC_RELAY_URL: ${{ vars.VITE_SYNC_RELAY_URL }}
 
       - uses: actions/configure-pages@v6
 

@@ -4,9 +4,10 @@ How Library Card keeps one household's data the same on several devices. The eng
 relay are adapted from Peek Budget (MIT); [VENDORED.md](../VENDORED.md) lists every copied file,
 its upstream hash and what changed.
 
-Status: the record layer (6c), the engine and its service (6d-1) and the relay (6b, not deployed)
-exist. Nothing in the app uses sync yet: the screens come in 6d-2 and cover photos in 6e. The
-default build still uses the local adapter (`VITE_DATA_ADAPTER=local`).
+Status: the record layer (6c), the engine and its service (6d-1), the relay (6b) and the
+"Sync devices" screens (6d-2) exist; cover photos come in 6e. The sync UI appears only in a build
+with the sync adapter **and** a relay (`VITE_DATA_ADAPTER=sync` and `VITE_SYNC_RELAY_URL`); the
+Pages build keeps `VITE_DATA_ADAPTER=local` until 6e, so it shows no sync UI.
 
 ## Goals
 
@@ -28,7 +29,9 @@ default build still uses the local adapter (`VITE_DATA_ADAPTER=local`).
 | Engine | `src/sync/vendor/sync.js` | Pushes the outbox, pulls new entries, keeps a live socket, retries with backoff. |
 | Key vault | `src/sync/vendor/secure-key.js` | Where the key lives. Web only: in the IndexedDB sync config. |
 | Pairing | `src/sync/vendor/pairing.js`, `qr-scan.js`, `words.js` | Join decisions and wording, recovery words, checking a scanned QR text. |
-| Service | `src/sync/service.ts` | Runs the engine in one tab, maps its status for the UI, and offers `start`, `join`, `stop`, `deleteHousehold`, `syncNow`. |
+| Service | `src/sync/service.ts` | Runs the engine in one tab, maps its status for the UI, and offers `start`, `join`, `stop`, `deleteHousehold`, `syncNow`, `localCounts`. |
+| App wiring | `src/sync/app.ts`, `useSync.ts` | One service for the app, started in `main.tsx` (so changes sync while the kids use the app), loaded lazily and only when sync is enabled in the build. |
+| Screens | `src/grownups/sync/` | Grown-ups → Settings → Sync devices, and a small status note in the grown-up header. Kid screens never show sync. |
 | Relay | `relay/` | Stores envelopes in order per room, announces new ones over a WebSocket, stores encrypted photos. See [relay/README.md](../relay/README.md). |
 
 ## What the relay sees
@@ -143,19 +146,61 @@ Last writer wins per field: the later stamp wins, the same on every device. On t
 - A key that doesn't match a household fails with "No household found for these words" and saves
   nothing; a deleted household fails with `JoinError('deleted')`.
 
-Only one tab runs the engine (a Web Lock; the others queue for it and take over when that tab
-closes). Other tabs see data changes through the store's `subscribe()` and the engine's status
-through a BroadcastChannel; their actions write to IndexedDB and tell the running tab.
+Only one tab runs the engine (a Web Lock, `library-card-sync-engine`; the others queue for it).
+Other tabs see data changes through the store's `subscribe()` and the engine's status through a
+BroadcastChannel; their actions write to IndexedDB and tell the running tab.
+
+**Hand-off.** Only a visible tab takes the engine lock. When the running tab is hidden
+(`visibilitychange`), frozen (`freeze`; Android freezes background tabs) or unloaded (`pagehide`),
+it does one quick last sync (at most 1.5 s), stops its engine, releases the lock and queues again
+once it is visible. A visible tab that was waiting takes over at once, so a frozen tab can never
+hold sync up. A tab that doesn't run sync and hasn't heard from the one that does for 4 s says
+"Syncing in another tab" instead of "Connecting…".
+
+**One household action at a time.** `start`, `join`, `stop` and `deleteHousehold` take a second
+Web Lock (`library-card-sync-action`, if available) and an in-tab flag. A second call, in this tab
+or another, fails at once with `SyncBusyError`; while one runs, the other tabs' status has
+`busyElsewhere` and the screen says "Busy in another tab". (A tab that closes mid-action is
+forgotten after two minutes.)
+
+**What a replace drops.** `localCounts()` counts this device's readers, home books, libraries,
+loans and reads (every read event, re-reads included). The join screen shows them before
+"Use the household's data only", and a device where they are all 0 joins as a replace without
+asking.
+
+### The screens (Grown-ups → Settings → Sync devices)
+
+- **Off:** "Start syncing this household" (on a device that was in a household before, it warns
+  first: the old household's devices won't see this one) and "Join a household".
+- **Join:** scan the other device's code (the pairing scanner accepts only 12 valid words) or type
+  the words in 12 numbered boxes (word-list suggestions, a "did you mean" for typos, a pasted list
+  fills the boxes; the checksum is checked on Continue). Then, if this device has data,
+  "Combine with this device's data" (the default) or "Use the household's data only" (a confirm
+  with the counts).
+- **On:** the status (Live / Checking every few minutes / Offline / Error, last synced, changes
+  waiting), Sync now, Add a device, Turn off sync on this device, Delete household from all devices
+  (type DELETE).
+- **Add a device:** the QR code (the 12 words only) and the words in a numbered grid, with the
+  risk ("Anyone who sees or photographs this can open your household"). It closes when the page is
+  hidden or left; the words can't be selected, and nothing is printed, shared or copied.
+- **Removed:** "This household was removed", with "Keep a copy on this device" (turn sync off) or
+  "Start a new household".
+- The kids' card scanner says "That's a grown-up code" for a pairing code and keeps scanning.
 
 ## Backup, reset and delete under sync
 
 - **Backups** can be made at any time; they contain the data, never the key or sync bookkeeping.
-- **Restoring a backup** is refused while sync is on (`sync_enabled`): it would replace the
-  household's data on every device. Turn sync off first, or join with "replace".
+- **Restoring a backup** is refused by the store while sync is on (`sync_enabled`): it would
+  replace the household's data on every device. With sync on (or the household removed), Settings
+  explains this and offers "Turn off sync, then restore" (this device leaves the household and gets
+  the backup) or "Start a new household from this backup" (leave, restore, then start a new
+  household with it).
 - **Turn off** (`stop(true)`): the device forgets the key and stops syncing; its data stays and
-  the other devices keep syncing. To sync again, join with the words.
-- **Turn off and clear** (`stop(false)`): as above, then `resetDevice` clears everything on this
-  device (data, records, outbox, key).
+  the other devices keep syncing. It remembers that it was in a household (`was_paired`, with the
+  time), so "Start a new household" warns first. To sync again, join with the words.
+- **Reset this device** with sync on (`stop(false)`): this device leaves the household (the others
+  keep it and their data), then `resetDevice` clears everything here (data, records, outbox, key).
+  `was_paired` is written again after the reset.
 - **Deleting data** (a reader, a loan…) is a tombstone that syncs like any other change.
 - **Delete household** (`deleteHousehold()`): deletes the room on the relay (its log and photos).
   Local data stays on every device.
@@ -168,9 +213,12 @@ recreate it. The engine treats 410 from any request, a `{"type":"deleted"}` mess
 and later triggers (online, visible, Sync now) do nothing. A device that was offline finds out on
 its next request.
 
-From there the device either keeps a local copy (`stop(true)`: sync off, data kept) or starts a
-new household (`stop(true)` then `start()`: a new key and room, and this device's data is sent
-again). Other devices then join the new household with its words.
+The service remembers it in meta (`sync_deleted`, with the time), so after a reload the screen
+shows "removed" at once and the engine isn't started (no request to the relay). Only two things
+clear it: "Keep a copy on this device" (`stop(true)`: sync off, data kept) and "Start a new
+household" (`start()`: a new key and room, and this device's data is sent again). Joining another
+household is refused until one of those has happened. Other devices then join the new household
+with its words.
 
 ## Photos (6e)
 
@@ -206,7 +254,9 @@ Changes from Peek Budget's relay, all covered by `relay/test/`:
 - photo reads have their own bucket, so restoring photos can't starve pushes;
 - rooms can be deleted, with a permanent marker (410) and the live sockets closed (4410);
 - photo endpoints with size and count limits;
-- `ALLOWED_ORIGINS` is localhost only in the committed config; the real origin is set at deploy
-  time (`keep_vars = true` keeps it).
+- `ALLOWED_ORIGINS` is not in the committed config: on Cloudflare it is a Worker secret (set once
+  with `wrangler secret put`, so no deploy can reset it), locally it comes from `relay/.dev.vars`
+  (localhost only), and the tests pass it to the Worker themselves. Without it the relay refuses
+  every browser request (fail closed).
 
-The relay is not deployed yet; [relay/README.md](../relay/README.md) has the deploy notes.
+The relay is deployed as a Cloudflare Worker (6d-2); [relay/README.md](../relay/README.md) has the deploy steps. Deploys are plain `npx wrangler deploy`.

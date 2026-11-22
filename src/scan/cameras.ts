@@ -12,7 +12,7 @@
  * book scanning.
  */
 
-export type CameraMode = 'card' | 'book';
+export type CameraMode = 'card' | 'book' | 'pairing';
 export type Facing = 'user' | 'environment';
 
 export interface CameraChoice {
@@ -29,7 +29,8 @@ export interface CameraInfo {
 const STORAGE_PREFIX = 'library-card:camera:';
 
 export function defaultFacing(mode: CameraMode): Facing {
-  // Card scan: a child holds their card up to the screen. Book scan: a grown-up points the back camera.
+  // Card scan: a child holds their card up to the screen. Book scan and pairing (another device's
+  // screen): a grown-up points the back camera.
   return mode === 'card' ? 'user' : 'environment';
 }
 
