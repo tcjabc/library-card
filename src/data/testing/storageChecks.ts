@@ -417,6 +417,22 @@ export const storageChecks: StorageCheck[] = [
       'stale blob: URL',
     );
   }),
+  check('books', 'isCoverPhotoMissing: only a photo whose bytes are not on this device', async (ctx) => {
+    const { store, dbName } = await ctx.open();
+    const url = await store.saveCoverImage(jpeg(7, 7));
+    await store.putBook({ isbn: ISBN_A, title: 'A', authors: [], cover_url: url, source: 'manual' });
+    await store.putBook({ isbn: ISBN_B, title: 'B', authors: [], cover_url: 'https://example.org/b.jpg', source: 'google' });
+    await store.putBook({ isbn: ISBN_C, title: 'C', authors: [], cover_url: null, source: 'manual' });
+    equal(
+      [await store.isCoverPhotoMissing(ISBN_A), await store.isCoverPhotoMissing(ISBN_B), await store.isCoverPhotoMissing(ISBN_C), await store.isCoverPhotoMissing('9780000000999')],
+      [false, false, false, false],
+      'a photo here, a catalogue cover, no cover, no book',
+    );
+    // A synced book whose photo hasn't arrived: the reference is there, the bytes aren't.
+    await rawPut(dbName, 'books', { isbn: ISBN_C, title: 'C', authors: [], cover_url: `cover:${'ab'.repeat(32)}`, source: 'manual' });
+    equal(await store.isCoverPhotoMissing(ISBN_C), true, 'photo on its way');
+    equal((await store.getBook(ISBN_C))?.cover_url, null, 'and it shows no cover meanwhile');
+  }),
   check('books', 'a photo is kept while any book uses it and removed when none does', async (ctx) => {
     const { store, dbName } = await ctx.open();
     const url = await store.saveCoverImage(jpeg(9));

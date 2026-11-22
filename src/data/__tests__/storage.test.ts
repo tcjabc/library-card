@@ -58,7 +58,7 @@ describe('coverage', () => {
       'createReader', 'getReader', 'getReaderByCardToken', 'listReaders', 'updateReader', 'rotateCardToken', 'deleteReader',
       'previewDeleteReader',
       // books and covers
-      'getBook', 'getBooks', 'putBook', 'saveCoverImage',
+      'getBook', 'getBooks', 'putBook', 'saveCoverImage', 'isCoverPhotoMissing',
       // home
       'addHomeItem', 'getHomeItem', 'listHomeItems', 'removeHomeItem',
       // libraries and loans

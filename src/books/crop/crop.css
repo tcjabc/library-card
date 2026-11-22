@@ -1,0 +1,180 @@
+/* Fitting a cover photo (CropScreen): full screen, dark like the camera view. */
+
+.crop {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: var(--color-scanner-bg);
+  color: var(--color-on-scanner);
+  z-index: var(--z-sheet);
+}
+
+.crop::backdrop {
+  background: var(--color-scanner-bg);
+}
+
+.crop__body {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(var(--crop-stage-min), 1fr) auto auto auto;
+  gap: var(--space-3);
+  padding: max(var(--space-3), env(safe-area-inset-top)) max(var(--space-3), env(safe-area-inset-right))
+    max(var(--space-3), env(safe-area-inset-bottom)) max(var(--space-3), env(safe-area-inset-left));
+}
+
+.crop__header h2 {
+  font-size: var(--text-lg);
+}
+
+.crop__hint {
+  font-size: var(--text-sm);
+  opacity: 0.85;
+}
+
+/* The photo and the rectangle: every touch here is ours (no page scroll or browser zoom). */
+.crop__stage {
+  position: relative;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  border-radius: var(--radius-md);
+}
+
+.crop__status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--space-4);
+}
+
+.crop__photo {
+  position: absolute;
+}
+
+.crop__photo[hidden] {
+  display: none;
+}
+
+.crop__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* The part kept: everything round it is darkened. */
+.crop__rect {
+  position: absolute;
+  border: var(--border-thick) solid var(--color-scanner-frame);
+  box-shadow: 0 0 0 100vmax var(--color-crop-mask);
+  cursor: move;
+}
+
+.crop__rect:focus-visible {
+  outline: var(--border-thick) solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* A corner's touch area (44px+), centred on the corner, with a visible mark in it. */
+.crop__handle {
+  position: absolute;
+  width: var(--crop-handle);
+  height: var(--crop-handle);
+  margin: calc(var(--crop-handle) / -2);
+}
+
+.crop__handle::after {
+  content: '';
+  position: absolute;
+  inset: calc((var(--crop-handle) - var(--crop-handle-mark)) / 2);
+  border-radius: var(--radius-full);
+  background: var(--color-scanner-frame);
+  box-shadow: var(--shadow-on-video);
+}
+
+.crop__handle--nw {
+  left: 0;
+  top: 0;
+  cursor: nwse-resize;
+}
+
+.crop__handle--ne {
+  left: 100%;
+  top: 0;
+  cursor: nesw-resize;
+}
+
+.crop__handle--sw {
+  left: 0;
+  top: 100%;
+  cursor: nesw-resize;
+}
+
+.crop__handle--se {
+  left: 100%;
+  top: 100%;
+  cursor: nwse-resize;
+}
+
+.crop__tools,
+.crop__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+.crop__actions .btn {
+  flex: 1 1 8rem;
+}
+
+.crop__error {
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+}
+
+/* A phone on its side: the photo on the left; the title and buttons on the right, in pairs, so
+   they fit the short screen without scrolling. */
+@media (orientation: landscape) and (max-height: 30rem) {
+  .crop__body {
+    grid-template-columns: minmax(0, 1fr) minmax(16rem, 20rem);
+    grid-template-rows: auto auto auto 1fr;
+    align-content: start;
+    gap: var(--space-2) var(--space-3);
+  }
+
+  .crop__stage {
+    grid-column: 1;
+    grid-row: 1 / -1;
+    min-height: 0;
+  }
+
+  .crop__header,
+  .crop__error,
+  .crop__tools,
+  .crop__actions {
+    grid-column: 2;
+  }
+
+  .crop__hint {
+    display: none;
+  }
+
+  .crop__tools,
+  .crop__actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  /* Use whole photo: the whole width, under Rotate and Retake. */
+  .crop__tools > .btn:last-child {
+    grid-column: 1 / -1;
+  }
+}

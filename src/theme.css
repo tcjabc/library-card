@@ -34,6 +34,8 @@
   --color-scanner-button: rgba(255, 255, 255, 0.92);
   --color-on-scanner-button: #1f2430;
   --shadow-on-video: 0 1px 3px rgba(0, 0, 0, 0.85);
+  /* Fitting a cover photo: the part of the photo that won't be kept. */
+  --color-crop-mask: rgba(0, 0, 0, 0.6);
 
   /* Kid screens */
   --color-tile-shelf: #dbe4ff;
@@ -158,6 +160,7 @@
   --content-max-wide: 64rem;
   --avatar-size: 2.75rem;
   --avatar-size-lg: 5.5rem;
+  --avatar-size-sm: 2rem;
   /* Reader tiles on the splash: at least this wide, wrapping to fit. */
   --reader-tile-min: 7rem;
   --reader-tile-avatar: 4rem;
@@ -173,6 +176,16 @@
   --summary-cover: 7rem;
   --cover-min: 6.5rem;
   --cover-aspect: 2 / 3;
+  /* The kids' "Find a book" field. */
+  --search-height: 3.5rem;
+  /* List rows (My Bookshelf, Library Books): at least this tall, with a cover this high. */
+  --list-row-min: 4.5rem;
+  --list-cover-height: 4rem;
+  --list-read-min: 9.5rem;
+  /* Fitting a cover photo: the corner handles' touch area and the mark drawn in it. */
+  --crop-handle: 2.75rem;
+  --crop-handle-mark: 1.25rem;
+  --crop-stage-min: 16rem;
   /* ID-1 card (credit-card size), 85.6 x 54 mm. */
   --card-aspect: 1.586;
   /* Camera viewfinders are at most this tall (less on short landscape screens, below). */
@@ -195,6 +208,7 @@
   --z-confetti: 70;
   --z-celebration: 55;
   --z-tabbar: 40;
+  --z-sticky: 30;
 }
 
 /*

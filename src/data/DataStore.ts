@@ -402,6 +402,12 @@ export interface DataStore {
    * same image is stored once. Does not change any book.
    */
   saveCoverImage(image: Blob): Promise<string>;
+  /**
+   * True when the book's cover is a photo whose bytes aren't on this device yet (synced from
+   * another device, still on its way). Such a book shows no cover here, and its photo can't be
+   * edited until it arrives. False for no cover, a catalogue cover or a photo that is here.
+   */
+  isCoverPhotoMissing(isbn: Isbn): Promise<boolean>;
 
   // Home library (one row per household + ISBN) ------------------------------
   /** Idempotent: adding an ISBN already in the household returns the existing item. */

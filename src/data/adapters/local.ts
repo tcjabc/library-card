@@ -1082,6 +1082,14 @@ export async function createStoreWith<Extra extends object>(
       return resolved;
     },
 
+    async isCoverPhotoMissing(isbn) {
+      const tx = (await getDb()).transaction(['books', 'cover_images', 'covers']);
+      const ref = (await tx.objectStore('books').get(isbn))?.cover_url;
+      const missing = isLocalCoverRef(ref) && !(await coverBlob(tx, ref));
+      await tx.done;
+      return missing;
+    },
+
     async saveCoverImage(image) {
       if (!(image instanceof Blob) || image.size === 0) {
         throw new DataStoreError('invalid', 'Cover image is empty.');

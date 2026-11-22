@@ -1,18 +1,24 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useState, type MouseEvent } from 'react';
+import { BookList, BookRow } from '../books/BookList';
+import { useBookView } from '../books/bookView';
+import { BookViewToggle } from '../books/BookViewToggle';
 import { ReadBadge, ReadButton } from '../books/ReadButton';
 import { useReadAction } from '../books/useReadAction';
 import { useDataQuery, type Book, type DataStore, type HomeItem, type ReadSummary, type Reader } from '../data';
+import { filterShelf, type ShelfFilter } from '../books/shelfFilter';
+import { isSearching } from '../lib/search';
 import { fmt, strings } from '../strings';
 import { BookCover } from '../ui/BookCover';
+import { NoSearchMatch, SearchBar } from '../ui/SearchBar';
+import { useReaderSearch } from '../ui/useReaderSearch';
 import { BackToHub } from './BackToHub';
 
 /**
- * #/shelf — the household's Home books. Each tap of "I read this!" / "Read
- * again!" adds one read event for the active reader, with an Undo toast.
- * There is deliberately no way to clear all reads here.
+ * #/shelf — the household's Home books, as a Grid of whole covers (the default) or a List, with
+ * "Find a book" and the All / Read / Not read filters. Each tap of "I read this!" / "Read
+ * again!" adds one read event for the active reader, with an Undo toast. There is deliberately
+ * no way to clear all reads here.
  */
-
-type Filter = 'all' | 'read' | 'unread';
 
 interface ShelfEntry {
   item: HomeItem;
@@ -39,21 +45,33 @@ const SHELF_TABLES = ['home_items', 'books', 'covers', 'read_events'] as const;
 
 export function Shelf({ reader }: { reader: Reader }) {
   const t = strings.shelf;
-  const [filter, setFilter] = useState<Filter>('all');
+  const [filter, setFilter] = useState<ShelfFilter>('all');
+  const [search, setSearch] = useReaderSearch(reader.id);
+  const [view, setView] = useBookView('shelf', reader.id);
 
   const query = useCallback((s: DataStore) => loadShelf(s, reader), [reader]);
   const { data: entries, store, loading } = useDataQuery(query, SHELF_TABLES);
   const { read, pending, sheet, waiting } = useReadAction(store, reader);
 
   const all = entries ?? [];
-  const readCount = all.filter((e) => e.summary).length;
-  const visible = all.filter((e) => (filter === 'all' ? true : filter === 'read' ? e.summary : !e.summary));
+  const titleOf = (entry: ShelfEntry) => entry.book?.title ?? t.thisBook;
+  const { found, readCount, visible } = filterShelf(
+    all,
+    search,
+    filter,
+    (e) => ({ title: titleOf(e), authors: e.book?.authors ?? [] }),
+    (e) => e.summary !== null,
+  );
+  const searching = isSearching(search);
 
-  const chips: { id: Filter; label: string }[] = [
-    { id: 'all', label: fmt(t.filterAll, { count: all.length }) },
+  const chips: { id: ShelfFilter; label: string }[] = [
+    { id: 'all', label: fmt(t.filterAll, { count: found.length }) },
     { id: 'read', label: fmt(t.filterRead, { count: readCount }) },
-    { id: 'unread', label: fmt(t.filterUnread, { count: all.length - readCount }) },
+    { id: 'unread', label: fmt(t.filterUnread, { count: found.length - readCount }) },
   ];
+
+  const countOf = (entry: ShelfEntry) => entry.summary?.count ?? 0;
+  const onRead = (entry: ShelfEntry, click: MouseEvent<HTMLElement>) => read(entry.item.isbn, titleOf(entry), countOf(entry) > 0, click);
 
   return (
     <main className="page page--kid page--wide">
@@ -75,6 +93,9 @@ export function Shelf({ reader }: { reader: Reader }) {
         </div>
       ) : (
         <>
+          <SearchBar value={search} onChange={setSearch} />
+          <BookViewToggle view={view} onChange={setView} />
+
           <div className="chip-row" role="group" aria-label={t.filterLabel}>
             {chips.map((chip) => (
               <button
@@ -90,27 +111,50 @@ export function Shelf({ reader }: { reader: Reader }) {
           </div>
 
           {visible.length === 0 ? (
-            <div className="empty-state">
-              <p className="kid-lead">{filter === 'read' ? t.emptyRead : t.emptyUnread}</p>
-            </div>
+            searching ? (
+              <NoSearchMatch query={search} onClear={() => setSearch('')} />
+            ) : (
+              <div className="empty-state">
+                <p className="kid-lead">{filter === 'read' ? t.emptyRead : t.emptyUnread}</p>
+              </div>
+            )
+          ) : view === 'list' ? (
+            <BookList
+              items={visible}
+              keyOf={(entry) => entry.item.id}
+              renderRow={(entry) => (
+                <BookRow
+                  isbn={entry.item.isbn}
+                  title={titleOf(entry)}
+                  authors={entry.book?.authors ?? []}
+                  coverUrl={entry.book?.cover_url ?? null}
+                  count={countOf(entry)}
+                  waiting={waiting.has(entry.item.isbn)}
+                  busy={pending.has(entry.item.isbn)}
+                  onRead={(e) => onRead(entry, e)}
+                />
+              )}
+            />
           ) : (
             <ul className="shelf-grid">
               {visible.map((entry) => {
-                const title = entry.book?.title ?? t.thisBook;
-                const count = entry.summary?.count ?? 0;
+                const title = titleOf(entry);
+                const count = countOf(entry);
                 return (
                   <li key={entry.item.id} className={`shelf-book${count ? ' shelf-book--read' : ''}`}>
                     <div className="shelf-book__cover">
-                      <BookCover title={title} coverUrl={entry.book?.cover_url ?? null} />
+                      <BookCover title={title} coverUrl={entry.book?.cover_url ?? null} seed={entry.item.isbn} fit="whole" />
                       <ReadBadge count={count} />
                     </div>
-                    <p className="shelf-book__title">{title}</p>
+                    <p className="shelf-book__title" title={title}>
+                      {title}
+                    </p>
                     <ReadButton
                       title={title}
                       count={count}
                       disabled={pending.has(entry.item.isbn)}
                       waiting={waiting.has(entry.item.isbn)}
-                      onRead={(e) => read(entry.item.isbn, title, count > 0, e)}
+                      onRead={(e) => onRead(entry, e)}
                     />
                   </li>
                 );

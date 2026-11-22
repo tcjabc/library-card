@@ -1,5 +1,6 @@
 import type { CalendarDate, Loan, ReadSummary, Timestamp } from '../data';
 import { formatCalendarDate, toCalendarDate } from '../lib/dates';
+import { foldForSearch as fold, matchesBookSearch } from '../lib/search';
 import { dueStatus, type DueStatus } from '../library/due';
 
 /** Small pure helpers for the grown-up area (unit-tested). */
@@ -21,23 +22,8 @@ export function tabPath(tab: GrownUpTab, query?: Record<string, string>): string
   return `${GROWN_UPS_ROOT}/${tab}${search ? `?${search}` : ''}`;
 }
 
-/** Lower case, accents and punctuation removed, so "Pépé" matches "pepe". */
-function fold(text: string): string {
-  return text
-    .normalize('NFKD')
-    .replace(/\p{M}/gu, '')
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .trim();
-}
-
-/** Every word of the query appears in the title or an author's name. An empty query matches everything. */
-export function matchesBookSearch(book: { title: string; authors: readonly string[] }, query: string): boolean {
-  const words = fold(query).split(' ').filter(Boolean);
-  if (words.length === 0) return true;
-  const haystack = fold([book.title, ...book.authors].join(' '));
-  return words.every((word) => haystack.includes(word));
-}
+/** The book search (shared with the kids' screens: src/lib/search.ts). */
+export { matchesBookSearch };
 
 /** A title for comparing: case, accents, spaces and punctuation don't count ("The Gruffalo!" = "the gruffalo"). */
 export function titleKey(title: string): string {

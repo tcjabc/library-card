@@ -188,6 +188,39 @@ export const en = {
     emptyAll: 'No books on the shelf yet. Ask a grown-up to add some!',
     emptyRead: 'No books read yet. Pick one and start reading!',
     emptyUnread: 'You’ve read every book on the shelf. Amazing!',
+    readTick: '✓',
+    readTimes: '×{count}',
+    readStateLabel: 'Read',
+  },
+
+  /** My Bookshelf and Library Books: big covers in a grid, or a list of rows. */
+  bookView: {
+    label: 'Show books as',
+    grid: 'Grid',
+    list: 'List',
+  },
+
+  /** The kids' "Find a book" bar on My Bookshelf and Library Books. */
+  bookSearch: {
+    label: 'Find a book',
+    placeholder: 'Find a book',
+    clear: 'Clear search',
+    noMatch: 'No books match “{query}”',
+  },
+
+  /** Fitting a cover photo: after taking one, or Grown-ups → Books → Fix this book → Edit photo. */
+  crop: {
+    title: 'Fit the cover',
+    hint: 'Drag the corners round the front of the book. Pinch or scroll to zoom.',
+    loading: 'Opening the photo…',
+    error: 'That photo couldn’t be opened. Try another one.',
+    saveError: 'That photo couldn’t be saved. Try again, or use the whole photo.',
+    areaLabel: 'The part of the photo to keep',
+    corners: { nw: 'Top left corner', ne: 'Top right corner', sw: 'Bottom left corner', se: 'Bottom right corner' },
+    rotate: 'Rotate 90°',
+    whole: 'Use whole photo',
+    retake: 'Retake',
+    done: 'Done',
   },
 
   bookSheet: {
@@ -206,6 +239,10 @@ export const en = {
     changePhoto: 'Change cover photo',
     photoHint: 'Take a photo of the front cover, or choose one.',
     photoError: 'That photo couldn’t be used. Try another one.',
+    editPhoto: 'Edit photo',
+    photoArriving: 'This photo is still on its way to this device. You can edit it once it arrives.',
+    catalogueCover: 'This cover comes from a library catalogue, so it can’t be edited.',
+    takeInstead: 'Take a photo instead',
     titleLabel: 'Title (required)',
     titleRequired: 'Please add the book’s title.',
     authorLabel: 'Author',

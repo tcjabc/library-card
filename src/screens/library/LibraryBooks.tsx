@@ -1,22 +1,29 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
+import { BookList } from '../../books/BookList';
+import { useBookView } from '../../books/bookView';
+import { BookViewToggle } from '../../books/BookViewToggle';
 import { useReadAction } from '../../books/useReadAction';
 import { useDataQuery, type Book, type DataStore, type Loan, type Reader } from '../../data';
 import { useToday } from '../../lib/clock';
 import { formatCalendarDate } from '../../lib/dates';
 import { getLibraryView, setLibraryView } from '../../library/libraryView';
 import { loansInView, type LibraryView } from '../../library/loans';
+import { isSearching, searchBooks } from '../../lib/search';
 import { fmt, strings } from '../../strings';
+import { NoSearchMatch, SearchBar } from '../../ui/SearchBar';
 import { useToast } from '../../ui/Toast';
+import { useReaderSearch } from '../../ui/useReaderSearch';
 import { BackToHub } from '../BackToHub';
 import { BorrowSheet } from './BorrowSheet';
-import { LoanCard } from './LoanCard';
+import { LoanCard, LoanRow } from './LoanCard';
 import { ReturnSheet } from './ReturnSheet';
 
 /**
  * #/library — library books (public-library loans; Home Library books are on the Shelf), for the
  * active reader ("Mine") or the whole house ("My house"): what's out (soonest due first),
  * borrowing and returning by scan, and the books given back. Any card's "I read this!" records
- * the read for the active reader; Renewed / Returned only show on their own loans.
+ * the read for the active reader; Renewed / Returned only show on their own loans. "Find a book"
+ * narrows both lists (what's out and the returned books) within Mine or My house.
  */
 
 interface LibraryData {
@@ -49,6 +56,8 @@ export function LibraryBooks({ reader }: { reader: Reader }) {
   const today = useToday();
   const [sheet, setSheet] = useState<'borrow' | 'return' | null>(null);
   const [view, setView] = useState<LibraryView>(() => getLibraryView(reader.id));
+  const [search, setSearch] = useReaderSearch(reader.id);
+  const [bookView, setBookView] = useBookView('library', reader.id);
   const choose = (next: LibraryView) => {
     setView(next);
     setLibraryView(reader.id, next);
@@ -83,14 +92,19 @@ export function LibraryBooks({ reader }: { reader: Reader }) {
     });
   };
 
-  const { active, returned } = loansInView(data?.loans ?? [], view, reader.id);
+  const inView = loansInView(data?.loans ?? [], view, reader.id);
+  const searchable = (loan: Loan) => ({ title: titleOf(loan), authors: data?.books.get(loan.isbn)?.authors ?? [] });
+  const active = searchBooks(inView.active, search, searchable);
+  const returned = searchBooks(inView.returned, search, searchable);
+  const searching = isSearching(search);
+  const anyLoans = inView.active.length + inView.returned.length > 0;
   const house = view === 'house';
-  /** One card: the borrower's avatar in My house; Renewed / Returned only on the reader's own loans. */
-  const card = (loan: Loan) => {
+  /** One card (or List row): the borrower's avatar in My house; Renewed / Returned only on the reader's own loans. */
+  const card = (loan: Loan, Show: typeof LoanCard | typeof LoanRow = LoanCard) => {
     const count = data?.readCounts.get(loan.isbn) ?? 0;
     const own = loan.reader_id === reader.id;
     return (
-      <LoanCard
+      <Show
         key={loan.id}
         loan={loan}
         book={data?.books.get(loan.isbn) ?? null}
@@ -115,6 +129,9 @@ export function LibraryBooks({ reader }: { reader: Reader }) {
         </h1>
       </header>
 
+      {anyLoans && <SearchBar value={search} onChange={setSearch} />}
+      {anyLoans && <BookViewToggle view={bookView} onChange={setBookView} />}
+
       <div className="chip-row view-toggle" role="group" aria-label={t.viewLabel}>
         <button type="button" className="chip" aria-pressed={!house} onClick={() => choose('mine')}>
           {t.viewMine}
@@ -135,6 +152,9 @@ export function LibraryBooks({ reader }: { reader: Reader }) {
 
       {loading ? (
         <p className="muted">{strings.common.loading}</p>
+      ) : searching && active.length === 0 ? (
+        // Nothing out matches; the returned books that do are below.
+        returned.length === 0 && <NoSearchMatch query={search} onClear={() => setSearch('')} />
       ) : active.length === 0 ? (
         <div className="empty-state">
           <p className="kid-emoji" aria-hidden="true">
@@ -143,15 +163,14 @@ export function LibraryBooks({ reader }: { reader: Reader }) {
           <p className="kid-lead">{house ? t.emptyHouse : t.empty}</p>
         </div>
       ) : (
-        <ul className="shelf-grid" aria-label={house ? t.activeLabelHouse : t.activeLabel}>
-          {active.map(card)}
-        </ul>
+        <Loans loans={active} list={bookView === 'list'} label={house ? t.activeLabelHouse : t.activeLabel} show={card} />
       )}
 
       {returned.length > 0 && (
-        <details className="returned-books">
+        // Opened while searching, so the matches show.
+        <details className="returned-books" open={searching || undefined}>
           <summary className="returned-books__summary">{fmt(t.returnedHeading, { count: returned.length })}</summary>
-          <ul className="shelf-grid">{returned.map(card)}</ul>
+          <Loans loans={returned} list={bookView === 'list'} show={card} />
         </details>
       )}
 
@@ -159,5 +178,25 @@ export function LibraryBooks({ reader }: { reader: Reader }) {
       {store && sheet === 'return' && <ReturnSheet store={store} reader={reader} onClose={() => setSheet(null)} />}
       {readSheet}
     </main>
+  );
+}
+
+/** Loans as the grid of cards, or as List rows. */
+function Loans({
+  loans,
+  list,
+  label,
+  show,
+}: {
+  loans: Loan[];
+  list: boolean;
+  label?: string;
+  show: (loan: Loan, as?: typeof LoanCard | typeof LoanRow) => ReactNode;
+}) {
+  if (list) return <BookList items={loans} keyOf={(loan) => loan.id} renderRow={(loan) => show(loan, LoanRow)} label={label} />;
+  return (
+    <ul className="shelf-grid" aria-label={label}>
+      {loans.map((loan) => show(loan))}
+    </ul>
   );
 }
