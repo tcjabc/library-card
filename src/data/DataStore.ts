@@ -166,7 +166,18 @@ export type LibraryPatch = Partial<Omit<Library, 'id' | 'household_id'>>;
 export type NewLoan = Pick<Loan, 'household_id' | 'reader_id' | 'isbn'> &
   Partial<Pick<Loan, 'library_id' | 'library_name' | 'sticker_barcode' | 'borrowed_at' | 'due_date'>>;
 export type LoanPatch = Partial<
-  Pick<Loan, 'library_id' | 'library_name' | 'sticker_barcode' | 'due_date' | 'returned_at' | 'reader_id' | 'renew_count'>
+  Pick<
+    Loan,
+    | 'isbn'
+    | 'library_id'
+    | 'library_name'
+    | 'sticker_barcode'
+    | 'borrowed_at'
+    | 'due_date'
+    | 'returned_at'
+    | 'reader_id'
+    | 'renew_count'
+  >
 >;
 
 export interface ListLoansOptions {
@@ -337,7 +348,12 @@ export interface DataStore {
    * library. More than one means a duplicate: see pickStickerWinner().
    */
   findActiveLoansBySticker(householdId: Id, sticker: string): Promise<Loan[]>;
-  /** Changing reader_id or library_id checks that they exist ("not_found"). */
+  /**
+   * Edit a loan (grown-ups). reader_id, library_id and isbn must exist ("not_found"; isbn is a
+   * saved book's key). borrowed_at and returned_at are timestamps (returned_at null makes the loan
+   * active again), due_date YYYY-MM-DD or null, sticker_barcode trimmed text (empty clears it),
+   * renew_count a whole number of 0 or more ("invalid" otherwise). Reads are never touched.
+   */
   updateLoan(id: Id, patch: LoanPatch): Promise<Loan>;
   /**
    * Adds the library's default_loan_days (DEFAULT_LOAN_DAYS without a library)

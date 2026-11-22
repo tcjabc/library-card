@@ -371,6 +371,67 @@ export const storageChecks: StorageCheck[] = [
     await rejectsWithCode(store.updateLoan(loan.id, { library_id: 'nope' }), 'not_found', 'unknown library');
     equal((await store.updateLoan(loan.id, { library_id: null })).library_id, null, 'library cleared');
   }),
+  check('loans', 'updateLoan changes the book (a saved book key) and never touches reads', async (ctx) => {
+    const { store, h, a } = await withReaders(ctx);
+    await store.putBook({ isbn: ISBN_A, title: 'Scanned by mistake', authors: [], cover_url: null, source: 'manual' });
+    await store.putBook({ isbn: ISBN_B, title: 'The right book', authors: [], cover_url: null, source: 'manual' });
+    const loan = await store.createLoan({ household_id: h.id, reader_id: a.id, isbn: ISBN_A });
+    await store.markRead(a.id, ISBN_A, '2026-05-01T10:00:00.000Z');
+    const fixed = await store.updateLoan(loan.id, { isbn: ISBN_B });
+    equal(fixed.isbn, ISBN_B, 'the loan points at the other book');
+    equal((await store.listReadEvents(a.id)).map((e) => e.isbn), [ISBN_A], 'the read of the first book is untouched');
+    await rejectsWithCode(store.updateLoan(loan.id, { isbn: ISBN_C }), 'not_found', 'a book that is not saved');
+    await rejectsWithCode(store.updateLoan(loan.id, { isbn: '' }), 'invalid', 'an empty book key');
+    const noIsbn = 'noisbn-0f3a';
+    await store.putBook({ isbn: noIsbn, title: 'No barcode', authors: [], cover_url: null, source: 'manual' });
+    equal((await store.updateLoan(loan.id, { isbn: noIsbn })).isbn, noIsbn, 'a book without a barcode');
+  }),
+  check('loans', 'updateLoan sets the borrowed date and the returned date (null un-returns), validated', async (ctx) => {
+    const { store, h, a } = await withReaders(ctx, { now: () => Date.parse('2026-05-10T12:00:00Z') });
+    const loan = await store.createLoan({ household_id: h.id, reader_id: a.id, isbn: ISBN_A });
+    const dated = await store.updateLoan(loan.id, { borrowed_at: '2026-05-01T09:30:00+02:00' });
+    equal(dated.borrowed_at, '2026-05-01T07:30:00.000Z', 'borrowed_at stored as UTC ISO');
+    const returned = await store.updateLoan(loan.id, { returned_at: '2026-05-08T16:00:00Z' });
+    equal(returned.returned_at, '2026-05-08T16:00:00.000Z', 'returned on a chosen date');
+    equal((await store.listActiveLoans(a.id)).length, 0, 'no longer active');
+    equal((await store.updateLoan(loan.id, { returned_at: null })).returned_at, null, 'returned_at null: active again');
+    equal((await store.listActiveLoans(a.id)).map((l) => l.id), [loan.id], 'back in the active list');
+    await rejectsWithCode(store.updateLoan(loan.id, { borrowed_at: 'last week' }), 'invalid', 'bad borrowed date');
+    await rejectsWithCode(store.updateLoan(loan.id, { returned_at: 'soon' }), 'invalid', 'bad returned date');
+    equal((await store.getLoan(loan.id))?.borrowed_at, '2026-05-01T07:30:00.000Z', 'a refused patch changes nothing');
+  }),
+  check('loans', 'updateLoan sets, trims and clears the sticker, and finds it by sticker afterwards', async (ctx) => {
+    const { store, h, a } = await withReaders(ctx);
+    const lib = await store.createLibrary({ household_id: h.id, name: 'Branch' });
+    const loan = await store.createLoan({ household_id: h.id, reader_id: a.id, isbn: ISBN_A, library_id: lib.id });
+    equal((await store.updateLoan(loan.id, { sticker_barcode: '  31000999  ' })).sticker_barcode, '31000999', 'trimmed');
+    equal((await store.findActiveLoansBySticker(h.id, '31000999')).map((l) => l.id), [loan.id], 'found by the new sticker');
+    equal((await store.updateLoan(loan.id, { sticker_barcode: '   ' })).sticker_barcode, null, 'blank clears it');
+    equal((await store.updateLoan(loan.id, { sticker_barcode: '31000123' })).sticker_barcode, '31000123', 'set again');
+    equal((await store.updateLoan(loan.id, { sticker_barcode: null })).sticker_barcode, null, 'null clears it');
+    equal((await store.findActiveLoansBySticker(h.id, '31000123')).length, 0, 'the old sticker no longer finds it');
+    await rejectsWithCode(store.updateLoan(loan.id, { sticker_barcode: 'x'.repeat(201) }), 'invalid', 'too long');
+  }),
+  check('loans', 'updateLoan sets the renew count (a whole number of 0 or more) and the library name', async (ctx) => {
+    const { store, h, a } = await withReaders(ctx);
+    const lib = await store.createLibrary({ household_id: h.id, name: 'Branch' });
+    const loan = await store.createLoan({ household_id: h.id, reader_id: a.id, isbn: ISBN_A, library_name: 'Old note' });
+    equal((await store.updateLoan(loan.id, { renew_count: 3 })).renew_count, 3, 'set');
+    equal((await store.updateLoan(loan.id, { renew_count: 0 })).renew_count, 0, 'back to 0');
+    await rejectsWithCode(store.updateLoan(loan.id, { renew_count: -1 }), 'invalid', 'negative');
+    await rejectsWithCode(store.updateLoan(loan.id, { renew_count: 1.5 }), 'invalid', 'fractional');
+    const linked = await store.updateLoan(loan.id, { library_id: lib.id, library_name: null });
+    equal([linked.library_id, linked.library_name], [lib.id, null], 'a library chosen, the leftover name cleared');
+  }),
+  check('loans', 'moving a loan to another reader keeps every read where it was', async (ctx) => {
+    const { store, h, a, b } = await withReaders(ctx);
+    const loan = await store.createLoan({ household_id: h.id, reader_id: a.id, isbn: ISBN_A });
+    await store.markRead(a.id, ISBN_A, '2026-05-01T10:00:00.000Z');
+    await store.updateLoan(loan.id, { reader_id: b.id });
+    equal([(await store.listReadEvents(a.id)).length, (await store.listReadEvents(b.id)).length], [1, 0], 'reads stay with A');
+    await store.deleteLoan(loan.id);
+    equal((await store.listReadEvents(a.id)).length, 1, 'deleting the loan keeps the read');
+  }),
   check('loans', 'renewLoan adds the library loan length (30 without one); unrenewLoan undoes it', async (ctx) => {
     const { store, h, a } = await withReaders(ctx, { now: () => Date.parse('2026-05-10T12:00:00Z') });
     const lib = await store.createLibrary({ household_id: h.id, name: 'Branch', default_loan_days: 14 });

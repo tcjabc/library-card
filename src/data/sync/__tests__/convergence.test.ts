@@ -102,6 +102,31 @@ describe('sync adapter: two devices converge', () => {
     for (const d of [a, b]) expect(await d.store.getReader(reader.id)).toMatchObject({ avatar: '🐢', display_name: 'Ada L.' });
   });
 
+  it('a loan edited on two devices: different fields both survive, the same field takes the later edit', async () => {
+    const { a, b, reader } = await household();
+    await a.store.putBook({ isbn: ISBN_A, title: 'First', authors: [], cover_url: null, source: 'manual' });
+    await a.store.putBook({ isbn: ISBN_B, title: 'Second', authors: [], cover_url: null, source: 'manual' });
+    const loan = await a.store.createLoan({ household_id: HOUSEHOLD_ID, reader_id: reader.id, isbn: ISBN_A, due_date: '2026-06-10' });
+    await send(a, b);
+    // A fixes the book and the sticker; B sets the renewals and returns it; both change the due date.
+    a.at = T0 + 10_000;
+    await a.store.updateLoan(loan.id, { isbn: ISBN_B, sticker_barcode: '31000777', due_date: '2026-06-20' });
+    b.at = T0 + 20_000; // later
+    await b.store.updateLoan(loan.id, { renew_count: 2, returned_at: '2026-06-05T09:00:00.000Z', due_date: '2026-06-30' });
+    await send(a, b);
+    await send(b, a);
+    for (const d of [a, b]) {
+      expect(await d.store.getLoan(loan.id)).toMatchObject({
+        isbn: ISBN_B,
+        sticker_barcode: '31000777',
+        renew_count: 2,
+        returned_at: '2026-06-05T09:00:00.000Z',
+        due_date: '2026-06-30',
+      });
+    }
+    expect(await views(a)).toBe(await views(b));
+  });
+
   it('the result is the same whatever order (and how often) ops arrive', async () => {
     const { a, b, reader } = await household();
     a.at = T0 + 10_000;

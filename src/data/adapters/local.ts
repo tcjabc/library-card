@@ -439,6 +439,24 @@ function isConstraintError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'ConstraintError';
 }
 
+/** A timestamp field in a patch: canonical ISO, or "invalid". */
+function checkedTimestamp(value: string, field: string): string {
+  try {
+    return toIso(value);
+  } catch {
+    throw new DataStoreError('invalid', `${field} must be a date and time, got "${value}".`);
+  }
+}
+
+/** A sticker in a patch: trimmed, empty means none, at most 200 characters. */
+function checkedSticker(value: string | null): string | null {
+  if (value === null) return null;
+  if (typeof value !== 'string') throw new DataStoreError('invalid', 'sticker_barcode must be text or null.');
+  const trimmed = value.trim();
+  if (trimmed.length > 200) throw new DataStoreError('invalid', 'sticker_barcode is too long (200 characters at most).');
+  return trimmed || null;
+}
+
 function checkCalendarDate(value: string | null | undefined, field: string): void {
   if (value != null && !isCalendarDate(value)) {
     throw new DataStoreError('invalid', `${field} must be YYYY-MM-DD, got "${value}".`);
@@ -1076,7 +1094,15 @@ export async function createStoreWith<Extra extends object>(
       if (patch.renew_count !== undefined && (!Number.isInteger(patch.renew_count) || patch.renew_count < 0)) {
         throw new DataStoreError('invalid', 'renew_count must be a whole number >= 0.');
       }
-      const tx = (await getDb()).transaction(['loans', 'readers', 'libraries'], 'readwrite');
+      if (patch.isbn !== undefined && (typeof patch.isbn !== 'string' || !patch.isbn)) {
+        throw new DataStoreError('invalid', 'isbn must be a book key.');
+      }
+      // Normalised before the transaction, so a bad value never leaves it half done.
+      const borrowedAt = patch.borrowed_at === undefined ? undefined : checkedTimestamp(patch.borrowed_at, 'borrowed_at');
+      const returnedAt =
+        patch.returned_at === undefined ? undefined : patch.returned_at === null ? null : checkedTimestamp(patch.returned_at, 'returned_at');
+      const sticker = patch.sticker_barcode === undefined ? undefined : checkedSticker(patch.sticker_barcode);
+      const tx = (await getDb()).transaction(['loans', 'readers', 'libraries', 'books'], 'readwrite');
       const existing = await tx.objectStore('loans').get(id);
       if (!existing) throw notFound('Loan', id);
       if (patch.reader_id !== undefined && !(await tx.objectStore('readers').getKey(patch.reader_id))) {
@@ -1085,12 +1111,17 @@ export async function createStoreWith<Extra extends object>(
       if (patch.library_id && !(await tx.objectStore('libraries').getKey(patch.library_id))) {
         throw notFound('Library', patch.library_id);
       }
+      // A different book: it must be saved first (scanned, picked or added), like when borrowing.
+      if (patch.isbn !== undefined && patch.isbn !== existing.isbn && !(await tx.objectStore('books').getKey(patch.isbn))) {
+        throw notFound('Book', patch.isbn);
+      }
       const next: Loan = {
         ...existing,
         ...patch,
         id,
-        returned_at:
-          patch.returned_at === undefined ? existing.returned_at : patch.returned_at && toIso(patch.returned_at),
+        borrowed_at: borrowedAt ?? existing.borrowed_at,
+        returned_at: returnedAt === undefined ? existing.returned_at : returnedAt,
+        sticker_barcode: sticker === undefined ? existing.sticker_barcode : sticker,
       };
       await tx.objectStore('loans').put(next);
       await tx.done;

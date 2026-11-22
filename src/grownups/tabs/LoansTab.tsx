@@ -1,15 +1,14 @@
-import { useCallback, useId, useState, type FormEvent } from 'react';
+import { useCallback, useState } from 'react';
 import { findStickerDuplicates, useDataQuery, type Book, type DataStore, type Library, type Loan, type Reader } from '../../data';
 import { useToday } from '../../lib/clock';
-import { isCalendarDate } from '../../lib/dates';
 import { DueChip } from '../../library/DueChip';
 import { navigate, useHashQuery } from '../../router';
 import { fmt, strings } from '../../strings';
 import { ConfirmSheet } from '../../ui/ConfirmSheet';
-import { Sheet } from '../../ui/Sheet';
 import { useToast } from '../../ui/Toast';
 import { formatTimestampDate, sortActiveLoans, sortReturnedLoans, tabPath } from '../helpers';
 import { useGrownUpSession } from '../useGrownUpSession';
+import { LoanEditor } from './LoanEditor';
 import type { TabProps } from './types';
 
 const t = strings.grownups.loans;
@@ -43,8 +42,8 @@ async function loadLoans(store: DataStore, householdId: string): Promise<LoansDa
 
 /**
  * Grown-ups > Loans: every library book out, overdue first, for everyone or
- * one reader (#/grownups/loans?reader=<id>). Edit, delete, duplicate sticker
- * flags, and the returned history underneath.
+ * one reader (#/grownups/loans?reader=<id>). Edit (every field, active or
+ * returned), delete, duplicate sticker flags, and the returned history underneath.
  */
 export function LoansTab({ store, household }: TabProps) {
   const toast = useToast();
@@ -136,9 +135,14 @@ export function LoansTab({ store, household }: TabProps) {
                     {describe(loan)} · {fmt(t.returnedOn, { date: formatTimestampDate(loan.returned_at!) })}
                   </p>
                 </div>
-                <button type="button" className="btn btn--small btn--quiet" onClick={() => setDeleting({ loan, title: titleOf(loan) })}>
-                  {t.delete}
-                </button>
+                <div className="row">
+                  <button type="button" className="btn btn--small" onClick={() => setEditing(loan)}>
+                    {t.edit}
+                  </button>
+                  <button type="button" className="btn btn--small btn--quiet" onClick={() => setDeleting({ loan, title: titleOf(loan) })}>
+                    {t.delete}
+                  </button>
+                </div>
               </li>
             ))}
           </ul>
@@ -146,7 +150,7 @@ export function LoansTab({ store, household }: TabProps) {
       </details>
 
       {editing && data && (
-        <LoanForm key={editing.id} store={store} loan={editing} readers={data.readers} libraries={data.libraries} onClose={() => setEditing(null)} />
+        <LoanEditor key={editing.id} store={store} loan={editing} readers={data.readers} libraries={data.libraries} onClose={() => setEditing(null)} />
       )}
       {deleting && (
         <ConfirmSheet
@@ -166,84 +170,5 @@ export function LoansTab({ store, household }: TabProps) {
         </ConfirmSheet>
       )}
     </>
-  );
-}
-
-function LoanForm({
-  store,
-  loan,
-  readers,
-  libraries,
-  onClose,
-}: {
-  store: DataStore;
-  loan: Loan;
-  readers: Reader[];
-  libraries: Library[];
-  onClose: () => void;
-}) {
-  const toast = useToast();
-  const [due, setDue] = useState(loan.due_date ?? '');
-  const [libraryId, setLibraryId] = useState(loan.library_id ?? '');
-  const [readerId, setReaderId] = useState(loan.reader_id);
-  const [error, setError] = useState<string | null>(null);
-  const ids = { due: useId(), library: useId(), reader: useId() };
-
-  const save = async (event: FormEvent) => {
-    event.preventDefault();
-    if (due && !isCalendarDate(due)) return setError(t.dueInvalid);
-    try {
-      await store.updateLoan(loan.id, { due_date: due || null, library_id: libraryId || null, reader_id: readerId });
-      toast({ message: t.saved });
-      onClose();
-    } catch (err) {
-      console.error('[loans] save failed', err);
-      setError(strings.bookSheet.saveError);
-    }
-  };
-
-  return (
-    <Sheet title={t.editTitle} onClose={onClose}>
-      <form className="stack" onSubmit={(e) => void save(e)} noValidate>
-        <label htmlFor={ids.due} className="field-label">
-          {t.dueDate}
-        </label>
-        <input id={ids.due} className="input input--short" type="date" value={due} onChange={(e) => setDue(e.target.value)} />
-        <label htmlFor={ids.library} className="field-label">
-          {t.library}
-        </label>
-        <select id={ids.library} className="input" value={libraryId} onChange={(e) => setLibraryId(e.target.value)}>
-          <option value="">{t.noLibrary}</option>
-          {libraries.map((lib) => (
-            <option key={lib.id} value={lib.id}>
-              {lib.name}
-            </option>
-          ))}
-        </select>
-        <label htmlFor={ids.reader} className="field-label">
-          {t.reader}
-        </label>
-        <select id={ids.reader} className="input" value={readerId} onChange={(e) => setReaderId(e.target.value)}>
-          {readers.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.avatar} {r.display_name}
-            </option>
-          ))}
-        </select>
-        {error && (
-          <p className="alert alert--danger" role="alert">
-            {error}
-          </p>
-        )}
-        <div className="row">
-          <button type="submit" className="btn btn--primary">
-            {strings.bookSheet.save}
-          </button>
-          <button type="button" className="btn" onClick={onClose}>
-            {strings.common.cancel}
-          </button>
-        </div>
-      </form>
-    </Sheet>
   );
 }

@@ -1,9 +1,12 @@
 import { useCallback, useMemo, useState } from 'react';
 import { BookFinder } from '../../books/BookFinder';
+import { ReadButton } from '../../books/ReadButton';
+import { useReadAction } from '../../books/useReadAction';
 import { DEFAULT_LOAN_DAYS, useDataQuery, type Book, type DataStore, type Library, type Loan, type Reader } from '../../data';
 import { formatCalendarDate } from '../../lib/dates';
 import { dueDateIn } from '../../library/due';
 import { getLastLibraryId, setLastLibraryId } from '../../library/lastLibrary';
+import { currentLoansOf } from '../../library/loans';
 import { chooseLibrary } from '../../library/sticker';
 import { BookScanner } from '../../scan/BookScanner';
 import { fmt, strings } from '../../strings';
@@ -15,12 +18,15 @@ import { useToast } from '../../ui/Toast';
 /**
  * Borrowing a library book: find the book, scan the library's sticker (or
  * skip), check the library, then the loan is created with a due date of
- * today + the library's loan length.
+ * today + the library's loan length. A book someone in the house has out
+ * right now says so first ("Ada already borrowed this"), with "I read this!"
+ * (for the active reader) and "Borrow it too" (a second loan). A book borrowed
+ * and returned before just starts a new loan.
  */
 
 type Step =
   | { kind: 'find' }
-  | { kind: 'already'; book: Book; loan: Loan }
+  | { kind: 'already'; book: Book; loan: Loan; borrower: string | null; readCount: number }
   | { kind: 'sticker'; book: Book }
   | { kind: 'confirm'; book: Book; sticker: string | null };
 
@@ -41,12 +47,22 @@ export function BorrowSheet({ store, reader, today, onClose }: BorrowSheetProps)
   const librariesQuery = useCallback((s: DataStore) => s.listLibraries(reader.household_id), [reader.household_id]);
   const { data: libraries = [] } = useDataQuery(librariesQuery, ['libraries']);
 
+  const { read } = useReadAction(store, reader);
+
   const onBook = useCallback(
     async (book: Book) => {
-      const existing = (await store.listActiveLoans(reader.id)).find((loan) => loan.isbn === book.isbn);
-      setStep(existing ? { kind: 'already', book, loan: existing } : { kind: 'sticker', book });
+      const [loans, readers, summary] = await Promise.all([
+        store.listLoans(reader.household_id, { active: true }),
+        store.listReaders(reader.household_id),
+        store.getReadSummary(reader.id, book.isbn),
+      ]);
+      const [first] = currentLoansOf(loans, book.isbn, reader.id);
+      if (!first) return setStep({ kind: 'sticker', book });
+      // The reader's own loan first; otherwise whoever has it (null: it's the reader's).
+      const borrower = first.reader_id === reader.id ? null : (readers.find((r) => r.id === first.reader_id)?.display_name ?? '?');
+      setStep({ kind: 'already', book, loan: first, borrower, readCount: summary?.count ?? 0 });
     },
-    [store, reader.id],
+    [store, reader.id, reader.household_id],
   );
 
   const sticker = step.kind === 'confirm' ? step.sticker : null;
@@ -93,19 +109,20 @@ export function BorrowSheet({ store, reader, today, onClose }: BorrowSheetProps)
       {step.kind === 'already' && (
         <div className="center-stack">
           <BookSummary book={step.book} />
-          <p className="kid-lead">
-            {step.loan.due_date
-              ? fmt(t.alreadyBorrowed, { title: step.book.title, date: formatCalendarDate(step.loan.due_date) })
-              : fmt(t.alreadyBorrowedNoDate, { title: step.book.title })}
-          </p>
-          <div className="row">
-            <button type="button" className="btn btn--primary btn--big" onClick={() => setStep({ kind: 'find' })}>
-              {t.scanAnother}
-            </button>
-            <button type="button" className="btn btn--big" onClick={onClose}>
-              {strings.common.close}
-            </button>
-          </div>
+          <p className="kid-lead">{step.borrower === null ? t.alreadyYou : fmt(t.alreadyOther, { name: step.borrower })}</p>
+          {step.loan.due_date && <p className="muted">{fmt(t.alreadyDue, { date: formatCalendarDate(step.loan.due_date) })}</p>}
+          <ReadButton
+            title={step.book.title}
+            count={step.readCount}
+            onRead={(e) => {
+              // The read is for the reader using the app, whoever borrowed the book.
+              read(step.book.isbn, step.book.title, step.readCount > 0, e);
+              onClose();
+            }}
+          />
+          <button type="button" className="btn btn--big" onClick={() => setStep({ kind: 'sticker', book: step.book })}>
+            <span aria-hidden="true">📚</span> {t.borrowToo}
+          </button>
         </div>
       )}
 

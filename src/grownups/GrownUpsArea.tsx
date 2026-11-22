@@ -30,7 +30,7 @@ const householdQuery = (s: DataStore) => s.getCurrentHousehold();
 /**
  * #/grownups/<tab> — the grown-up area, behind the ParentGate (see App).
  * Each tab has its own hash, so the back button moves between tabs; leaving
- * the area (back past the first tab, or "Back to kids") ends the session.
+ * the area (back past the first tab, or "Back to readers") ends the session.
  */
 export default function GrownUpsArea({ path }: { path: string }) {
   const t = strings.grownups;
@@ -42,7 +42,7 @@ export default function GrownUpsArea({ path }: { path: string }) {
     if (!tab) navigate(tabPath('books'), { replace: true });
   }, [tab]);
 
-  const backToKids = () => {
+  const backToReaders = () => {
     endGrownUpSession();
     navigate(getActiveReaderId() ? '/hub' : '/');
   };
@@ -55,8 +55,8 @@ export default function GrownUpsArea({ path }: { path: string }) {
           {household && <p className="muted small">{household.name}</p>}
         </div>
         {SYNC_ENABLED && <SyncIndicator />}
-        <button type="button" className="btn btn--accent" onClick={backToKids}>
-          <span aria-hidden="true">←</span> {t.backToKids}
+        <button type="button" className="btn btn--accent" onClick={backToReaders}>
+          <span aria-hidden="true">←</span> {t.backToReaders}
         </button>
       </header>
 

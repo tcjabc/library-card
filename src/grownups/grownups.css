@@ -186,6 +186,20 @@
   margin-bottom: var(--space-2);
 }
 
+/* A small number with − and + (Loans: times renewed). */
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.stepper__value {
+  min-width: var(--space-6);
+  text-align: center;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+}
+
 .grownups__check {
   display: inline-flex;
   align-items: center;
