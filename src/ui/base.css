@@ -894,6 +894,11 @@ img {
   align-items: stretch;
 }
 
+/* "Grown-ups only" sits over the centred question and pad. */
+.gate-page > .kid-title {
+  text-align: center;
+}
+
 .gate {
   display: flex;
   flex-direction: column;
@@ -1012,6 +1017,28 @@ img {
 
   .numpad__key {
     min-height: var(--tap-target);
+  }
+}
+
+/* A phone on its side: smaller kid headings and the splash header on one line, so the camera
+   view and what's under it fit on the screen. */
+@media (orientation: landscape) and (max-height: 30rem) {
+  .page {
+    gap: var(--space-3);
+  }
+
+  .kid-title {
+    font-size: var(--text-xl);
+  }
+
+  .splash__header {
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .splash__emoji {
+    font-size: var(--text-2xl);
   }
 }
 

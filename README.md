@@ -83,6 +83,12 @@ in them.
 3. Push to `main`. `.github/workflows/deploy.yml` lints, tests, builds and deploys.
    A failing test stops the deploy.
 
+After changing a manifest field (the `manifest` block in `vite.config.ts`: name, icons,
+colours, orientation…), reinstall the app on each device: installed apps can keep the old
+manifest for a long time (Android updates its installed copy on its own schedule). Download a
+backup first (Grown-ups → Settings), and if removing the app offers to clear the site's data
+too, leave that unticked.
+
 The workflow sets `VITE_BASE` to `/<repo-name>/`. For a user site
 (`<name>.github.io`) or a custom domain, add a repository variable
 `VITE_BASE` = `/` under **Settings → Secrets and variables → Actions → Variables**.

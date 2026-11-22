@@ -26,7 +26,8 @@ export default defineConfig(({ mode }) => {
         start_url: '.',
         scope: '.',
         display: 'standalone',
-        orientation: 'portrait',
+        // Explicit 'any' so tablets in landscape can rotate the installed app.
+        orientation: 'any',
         theme_color: MANIFEST_THEME_COLOR,
         background_color: MANIFEST_BACKGROUND_COLOR,
         icons: [

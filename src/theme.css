@@ -168,6 +168,8 @@
   --cover-aspect: 2 / 3;
   /* ID-1 card (credit-card size), 85.6 x 54 mm. */
   --card-aspect: 1.586;
+  /* Camera viewfinders are at most this tall (less on short landscape screens, below). */
+  --scanner-max-height: 70vh;
   /* Journeys and the staircase */
   --journey-step: 4.5rem;
   --journey-cover: 2.5rem;
@@ -186,6 +188,35 @@
   --z-confetti: 70;
   --z-celebration: 55;
   --z-tabbar: 40;
+}
+
+/*
+ * Short landscape screens (a tablet or phone on its side): the camera view leaves room for the
+ * heading and buttons round it. svh is the height with the browser's own bars showing.
+ */
+@media (orientation: landscape) and (max-height: 50rem) {
+  :root {
+    --scanner-max-height: 55vh;
+  }
+
+  @supports (height: 1svh) {
+    :root {
+      --scanner-max-height: 55svh;
+    }
+  }
+}
+
+/* A phone on its side: even less height to share. */
+@media (orientation: landscape) and (max-height: 30rem) {
+  :root {
+    --scanner-max-height: 50vh;
+  }
+
+  @supports (height: 1svh) {
+    :root {
+      --scanner-max-height: 50svh;
+    }
+  }
 }
 
 /*

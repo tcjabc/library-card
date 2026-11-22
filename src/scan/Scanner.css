@@ -2,8 +2,10 @@
   position: relative;
   width: 100%;
   aspect-ratio: 3 / 4;
-  max-height: 70vh;
+  max-height: var(--scanner-max-height);
   overflow: hidden;
+  /* The aiming frames size themselves to this box (cqw/cqh), whatever its shape. */
+  container-type: size;
   border-radius: var(--radius-lg);
   background: var(--color-scanner-bg);
   color: var(--color-on-scanner);
@@ -53,6 +55,20 @@
   transform: translate(-50%, -50%);
   border-width: var(--border-guide);
   border-radius: var(--radius-xl);
+}
+
+/*
+ * Where container units work (not Chrome < 105), the frames fit the box's real shape: in a short,
+ * wide viewfinder (landscape) they shrink to its height instead of spilling over.
+ */
+@supports (width: 1cqw) {
+  .scanner__frame--square {
+    width: min(70cqw, 70cqh);
+  }
+
+  .scanner__frame--card {
+    width: min(84cqw, calc(80cqh * var(--card-aspect)));
+  }
 }
 
 .scanner__frame-icon {
