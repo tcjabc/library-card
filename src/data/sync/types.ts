@@ -40,6 +40,14 @@ export interface SyncEngineStore {
   setConfig(patch: Partial<SyncConfig>): Promise<SyncConfig>;
   /** Queued ops, oldest stamp first, each with its keyed, deterministic id (vendor opId). */
   pendingOps(limit?: number): Promise<Op[]>;
+  /**
+   * Before joining a household: set this device's own PIN aside (the household row, its recorded
+   * field and any queued change), so the household's PIN wins whatever the timestamps. Returns
+   * what was set aside (null if there was no PIN), for putBackLocalPin if the join fails.
+   */
+  setAsideLocalPin(): Promise<LocalPin | null>;
+  /** Undo setAsideLocalPin (the join failed: the device is left as it was). */
+  putBackLocalPin(saved: LocalPin): Promise<void>;
   pendingCount(): Promise<number>;
   /** Remove ops the relay has stored, but only where the outbox still holds that very stamp. */
   removeSentOps(sent: readonly Pick<Op, 'rec' | 'f' | 't'>[]): Promise<number>;
@@ -68,6 +76,15 @@ export interface SyncEngineStore {
   getSyncFlags(): Promise<SyncFlags>;
   /** Set or clear (null) the flags in the patch; the others stay. */
   setSyncFlags(patch: Partial<SyncFlags>): Promise<SyncFlags>;
+}
+
+/** This device's PIN as setAsideLocalPin found it. */
+export interface LocalPin {
+  hash: string;
+  /** The recorded field (value and stamp), if the PIN had been recorded. */
+  recorded: { v: unknown; t: string } | null;
+  /** The queued change for it, if any. */
+  queued: { rec: string; f: string; v: unknown; t: string; dev: string } | null;
 }
 
 /** Photos waiting to upload, and photos that couldn't (too large, room full). */

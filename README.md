@@ -207,6 +207,16 @@ in it) and journey completions (each device celebrates a finished journey once).
 accounts: a household is 12 words, shown as a QR code to add a device. Everything is encrypted on
 the device; the relay sees only ciphertext. [docs/sync.md](docs/sync.md) has the design.
 
+**Write the 12 words down** when you start syncing (the app asks you to tick that you have) and
+keep them somewhere safe: they are the only way back in if you forget the PIN or lose your devices.
+
+**Household PIN.** Starting sync also sets a household PIN (4–6 digits), synced to every device.
+It is asked before adding a device (which shows the words), turning off sync, deleting the
+household, resetting a device, restoring a backup, and changing the PIN; the "grown-ups only"
+question still guards everything else. Wrong PINs make you wait (30 s after 5, doubling up to
+15 minutes). Forgot it? Type the 12 words in Settings → Household PIN → Forgot the PIN. Without
+sync, a PIN is optional and can be removed after a one-minute wait.
+
 ### Switching Pages to sync
 
 The relay is deployed and the repository variable `VITE_SYNC_RELAY_URL` is set; Pages still builds

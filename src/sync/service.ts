@@ -88,6 +88,18 @@ export interface LocalCounts {
   reads: number;
 }
 
+/**
+ * Whether typed recovery words (12 words, or the 22-character key) are this household key.
+ * False for bad words (unknown word, checksum) and for another household's words.
+ */
+export async function wordsMatchKey(words: string, householdKey: string): Promise<boolean> {
+  try {
+    return (await parseRecovery(words)) === householdKey;
+  } catch {
+    return false;
+  }
+}
+
 /** start / join / stop / deleteHousehold is already running, in this tab or another. */
 export class SyncBusyError extends Error {
   readonly code = 'busy';
@@ -126,6 +138,8 @@ export interface SyncService {
   localItemCount(): Promise<number>;
   /** The 12 recovery words for this device's household, or null. */
   recoveryWords(): Promise<string | null>;
+  /** These words are this device's household (forgot PIN). False for other or bad words, or no household. */
+  checkRecoveryWords(words: string): Promise<boolean>;
   /** Resolves once nothing is running: no sync, no take-over (tests). */
   idle(): Promise<void>;
   /** Stop the engine and give up the lock (tests; the app keeps one service for its lifetime). */
@@ -667,9 +681,14 @@ export async function createSyncService(options: SyncServiceOptions): Promise<Sy
         // The household's finished journeys were celebrated where they happened: hold celebrations
         // until they are all on the list, so this device doesn't replay them.
         const resume = pauseCelebrations();
+        // The joining device gets the household's PIN: its own goes (back only if the join fails).
+        const ownPin = await store.setAsideLocalPin();
         try {
           await engine.joinHousehold(key, asReplace ? 'replace' : 'merge');
           await markAllCompletionsCelebrated(store);
+        } catch (error) {
+          if (ownPin && !(await store.getConfig())) await store.putBackLocalPin(ownPin);
+          throw error;
         } finally {
           resume();
         }
@@ -715,6 +734,11 @@ export async function createSyncService(options: SyncServiceOptions): Promise<Sy
     async recoveryWords() {
       const config = await store.getConfig();
       return config ? (await keyToWords(config.householdKey)).join(' ') : null;
+    },
+
+    async checkRecoveryWords(words) {
+      const config = await store.getConfig();
+      return config ? wordsMatchKey(words, config.householdKey) : false;
     },
 
     async dispose() {

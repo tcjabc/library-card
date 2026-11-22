@@ -285,9 +285,9 @@ export function rowToRecord(table: SyncedTable, row: Row): { rec: string; fields
   const fields: Record<string, JsonValue> = {};
   for (const [name, value] of Object.entries(row)) {
     if (name === spec.key || name === 'household_id' || value === undefined) continue;
-    // A household's time zone of null means "not set": never sent, so a device joining with
-    // "Combine" can't wipe out the zone the household already has.
-    if (table === 'households' && name === 'time_zone' && value === null) continue;
+    // A household's time zone or PIN of null means "not set": never sent, so a device joining
+    // with "Combine" can't wipe out the household's (and a synced PIN is never sent empty).
+    if (table === 'households' && (name === 'time_zone' || name === 'parent_pin_hash') && value === null) continue;
     fields[name] = value as JsonValue;
   }
   return { rec: wireId(table, localId), fields };

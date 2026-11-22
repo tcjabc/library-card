@@ -5,6 +5,7 @@ import { getActiveReaderId } from '../session/activeReader';
 import { fmt, strings } from '../strings';
 import { GROWN_UP_TABS, parseGrownUpsPath, tabPath, type GrownUpTab } from './helpers';
 import { SYNC_ENABLED } from '../sync/app';
+import { PinGuardProvider } from './pin/PinGuardProvider';
 import { endGrownUpSession } from './session';
 import { SyncIndicator } from './sync/SyncIndicator';
 import { BooksTab } from './tabs/BooksTab';
@@ -77,7 +78,11 @@ export default function GrownUpsArea({ path }: { path: string }) {
             {fmt(t.storageError, { message: error.message })}
           </p>
         )}
-        {store && household && tab && <TabContent tab={tab} store={store} household={household} />}
+        {store && household && tab && (
+          <PinGuardProvider store={store} household={household}>
+            <TabContent tab={tab} store={store} household={household} />
+          </PinGuardProvider>
+        )}
       </main>
     </div>
   );

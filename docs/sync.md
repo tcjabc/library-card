@@ -89,7 +89,7 @@ a newer one sends. Known fields must have the right type and size or the op is s
 
 | Table | Local id | Fields (required in bold) |
 | --- | --- | --- |
-| `households` | `main` | **name** (text ≤ 200), parent_pin_hash (text ≤ 300 or null), time_zone (text ≤ 64; never sent while unset) |
+| `households` | `main` | **name** (text ≤ 200), parent_pin_hash (text ≤ 300; never sent while unset), time_zone (text ≤ 64; never sent while unset) |
 | `readers` | id | **display_name** (≤ 200), **avatar** (≤ 32), **card_token** (≤ 200), active_journey_id (id or null) |
 | `books` | ISBN-13 or `noisbn-<id>` | **title** (≤ 1000), **authors** (≤ 50 texts of ≤ 300), cover_url (≤ 4096 or null), **source** (≤ 32) |
 | `home_items` | book key | **isbn** (book key), **added_at** (timestamp) |
@@ -174,7 +174,10 @@ asking.
 ### The screens (Grown-ups → Settings → Sync devices)
 
 - **Off:** "Start syncing this household" (on a device that was in a household before, it warns
-  first: the old household's devices won't see this one) and "Join a household".
+  first: the old household's devices won't see this one) and "Join a household". Starting asks for
+  the household PIN first (a new one, entered twice; or the current one if this device has one),
+  then shows the 12 words with "Write these 12 words down…" and an "I've written them down" tick
+  before Continue.
 - **Join:** scan the other device's code (the pairing scanner accepts only 12 valid words) or type
   the words in 12 numbered boxes (word-list suggestions, a "did you mean" for typos, a pasted list
   fills the boxes; the checksum is checked on Continue). Then, if this device has data,
@@ -182,7 +185,7 @@ asking.
   with the counts).
 - **On:** the status (Live / Checking every few minutes / Offline / Error, last synced, changes
   waiting), Sync now, Add a device, Turn off sync on this device, Delete household from all devices
-  (type DELETE).
+  (type DELETE). Add a device, Turn off and Delete ask for the household PIN (below).
 - **Add a device:** the QR code (the 12 words only) and the words in a numbered grid, with the
   risk ("Anyone who sees or photographs this can open your household"). It closes when the page is
   hidden or left; the words can't be selected, and nothing is printed, shared or copied.
@@ -316,6 +319,44 @@ and after restoring a backup. While a join or replace runs, celebrations are pau
 
 The previous version's per-reader "celebrate" flag is migrated on first run: a celebration that
 was still waiting stays due.
+
+## Household PIN
+
+The "grown-ups only" gate (a multiplication question) keeps children out of Grown-ups. A few
+actions reach beyond this device or can't be undone, so they also ask for the household PIN:
+**Add a device** (it shows the 12 words), **Turn off sync on this device**, **Delete household
+from all devices**, **Reset this device**, **Restore from backup**, and **Change / Remove PIN**
+(`src/grownups/pinPolicy.ts`). Everything else needs the gate only. A local-only household
+without a PIN behaves as before.
+
+- **Stored** in `households.parent_pin_hash` as `pbkdf2-sha256$<iterations>$<salt>$<hash>`
+  (Web Crypto, 16-byte salt, 256-bit hash; `src/data/pin.ts`). New hashes use 300,000 iterations,
+  measured at about 77 ms on a Mi 9T (2019 mid-range phone, Chrome) and 45 ms on a desktop; the count is in the hash, so
+  it can change later and older hashes keep verifying. Counts outside 1,000–5,000,000 are refused,
+  so a synced value can't make verifying hang. The PIN itself is never stored or sent.
+- **Synced** like any household field (last writer wins). An unset PIN is never sent, and
+  `clearHouseholdPin` is refused with `blocked` while sync is on, so a synced household always
+  keeps one (it can be changed). `updateHousehold` doesn't take it: only `setHouseholdPin`,
+  `verifyHouseholdPin` and `clearHouseholdPin` touch it. It is in backups (as the hash).
+- **Joining** gives the device the household's PIN: just before the join, the device's own PIN
+  is set aside (its row value, recorded field and queued change), so the household's arrives
+  whatever the timestamps; if the join fails it is put back. Nothing extra to set.
+- **Asked** on the gate's big number pad with masked dots. A right PIN unlocks those actions for
+  2 minutes within the current grown-up session (a confirm flow doesn't ask twice); leaving
+  Grown-ups, or passing the gate again, ends it.
+- **Wrong PINs**, per device (localStorage, survives reloads, cleared by Reset this device): the
+  first 4 cost nothing, the 5th means a 30-second wait, and each further wrong PIN doubles it, up to
+  15 minutes. A right PIN starts over.
+- **A synced household with no PIN** (started before the PIN existed): entering Grown-ups asks
+  once per session to set one (with the write-down step); the guarded actions ask to set one first.
+- **Settings → Household PIN:** Set (when there is none), Change (asks the current one), Remove
+  (local-only households; asks the current one), Forgot the PIN.
+- **Forgot the PIN:** a syncing device types the 12 words (the same word boxes as Join); they
+  must be this device's household key, then a new PIN is chosen. A local-only household: after the
+  gate, a 1-minute countdown (cancellable), then the PIN is removed.
+
+The PIN is a door, not a lock: anyone with the 12 words is the household, and a 4–6 digit PIN can
+be brute-forced by someone who has its hash (only inside the encrypted records, or a backup file).
 
 ## The accepted pairing risk
 

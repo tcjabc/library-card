@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import { getDataStore } from '../../data';
 import { fmt, strings } from '../../strings';
 import type { JoinMode } from '../../sync/service';
 import { useSync } from '../../sync/useSync';
@@ -6,7 +7,7 @@ import { ChoiceButton } from '../../ui/ChoiceButton';
 import { ConfirmSheet } from '../../ui/ConfirmSheet';
 import { useToast } from '../../ui/Toast';
 import { formatTimestampDate } from '../helpers';
-import { useGrownUpSession } from '../useGrownUpSession';
+import { usePinGuard } from '../pin/pinGuardContext';
 import { AddDeviceSheet } from './AddDeviceSheet';
 import { JoinSheet } from './JoinSheet';
 import { actionErrorText, lastSyncedText, photosWaitingText, stateText, waitingText } from './syncText';
@@ -16,7 +17,7 @@ const t = strings.grownups.sync;
 type Open =
   | null
   | { sheet: 'join' }
-  | { sheet: 'add'; words: string | null }
+  | { sheet: 'add'; words: string | null; writeDown?: boolean }
   | { sheet: 'startWarn' }
   | { sheet: 'turnOff' }
   | { sheet: 'delete' };
@@ -29,7 +30,7 @@ type Open =
 export default function SyncSection() {
   const { service, status } = useSync();
   const toast = useToast();
-  const { runAsGrownUp } = useGrownUpSession();
+  const pin = usePinGuard();
   const [open, setOpen] = useState<Open>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -51,19 +52,28 @@ export default function SyncSection() {
     }
   };
 
-  const start = () =>
-    act(t.starting, async () => {
+  /**
+   * Start syncing: the household PIN first (before the first push: the household's PIN if it has
+   * one, else a new one), then the 12 words with the write-down step.
+   */
+  const start = async () => {
+    const store = await getDataStore();
+    const hasPin = Boolean((await store.getCurrentHousehold()).parent_pin_hash);
+    const ready = hasPin ? await pin.askPin(strings.grownups.pin.reasons.startSync) : await pin.chooseNewPin({ intro: strings.grownups.pin.forStart });
+    if (!ready) return;
+    await act(t.starting, async () => {
       const { words } = await service.start();
       toast({ message: t.started });
-      setOpen({ sheet: 'add', words });
+      setOpen({ sheet: 'add', words, writeDown: true });
     });
+  };
 
   const showWords = () =>
-    void runAsGrownUp(async () => {
+    void pin.runProtected('addDevice', async () => {
       setOpen({ sheet: 'add', words: null });
       const words = await service.recoveryWords();
       setOpen((o) => (o?.sheet === 'add' ? { sheet: 'add', words } : o));
-    }, strings.gate.reasonSyncWords);
+    });
 
   const onJoined = (mode: JoinMode) => {
     setOpen(null);
@@ -166,10 +176,20 @@ export default function SyncSection() {
             </button>
           </div>
           <div className="row">
-            <button type="button" className="btn" disabled={disabled} onClick={() => setOpen({ sheet: 'turnOff' })}>
+            <button
+              type="button"
+              className="btn"
+              disabled={disabled}
+              onClick={() => void pin.runProtected('turnOffSync', () => setOpen({ sheet: 'turnOff' }))}
+            >
               {t.turnOff}
             </button>
-            <button type="button" className="btn btn--danger" disabled={disabled} onClick={() => setOpen({ sheet: 'delete' })}>
+            <button
+              type="button"
+              className="btn btn--danger"
+              disabled={disabled}
+              onClick={() => void pin.runProtected('deleteHousehold', () => setOpen({ sheet: 'delete' }))}
+            >
               {t.deleteHousehold}
             </button>
           </div>
@@ -183,7 +203,7 @@ export default function SyncSection() {
       )}
 
       {open?.sheet === 'join' && <JoinSheet service={service} onJoined={onJoined} onClose={close} />}
-      {open?.sheet === 'add' && <AddDeviceSheet words={open.words} onClose={close} />}
+      {open?.sheet === 'add' && <AddDeviceSheet words={open.words} writeDown={open.writeDown} onClose={close} />}
       {open?.sheet === 'startWarn' && (
         <ConfirmSheet
           title={t.startWarnTitle}
@@ -204,11 +224,11 @@ export default function SyncSection() {
           errorText={t.failed}
           onClose={close}
           onConfirm={() =>
-            runAsGrownUp(async () => {
+            pin.runProtected('turnOffSync', async () => {
               await service.stop(true);
               setOpen(null);
               toast({ message: t.turnedOff });
-            }, strings.gate.reasonSync)
+            })
           }
         >
           <p>{t.turnOffBody}</p>
@@ -223,10 +243,10 @@ export default function SyncSection() {
           errorText={t.failed}
           onClose={close}
           onConfirm={() =>
-            runAsGrownUp(async () => {
+            pin.runProtected('deleteHousehold', async () => {
               await service.deleteHousehold();
               setOpen(null);
-            }, strings.gate.reasonSync)
+            })
           }
         >
           <p>{t.deleteBody}</p>

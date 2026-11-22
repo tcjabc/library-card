@@ -9,7 +9,7 @@ import {
   type ReadEvent,
 } from '../DataStore';
 import { BACKUP_FORMAT, summariseBackup } from '../backup';
-import { hashPin, verifyPin } from '../pin';
+import { PIN_ITERATIONS, hashPin, isPinHash, isValidPin, pinHashIterations, verifyPin } from '../pin';
 import { equal, ok, rejectsWithCode } from './assert';
 import {
   ISBN_A,
@@ -126,8 +126,13 @@ export const storageChecks: StorageCheck[] = [
     const { store } = await ctx.open();
     await store.getCurrentHousehold();
     equal(await store.getHousehold('nope'), null, 'unknown id -> null');
-    const updated = await store.updateHousehold(HOUSEHOLD_ID, { name: 'Renamed', parent_pin_hash: 'x' });
-    equal([updated.id, updated.name, updated.parent_pin_hash], [HOUSEHOLD_ID, 'Renamed', 'x'], 'patch applied, id kept');
+    const updated = await store.updateHousehold(HOUSEHOLD_ID, { name: 'Renamed' });
+    equal([updated.id, updated.name, updated.parent_pin_hash], [HOUSEHOLD_ID, 'Renamed', null], 'patch applied, id kept');
+    await rejectsWithCode(
+      store.updateHousehold(HOUSEHOLD_ID, { parent_pin_hash: 'x' } as never),
+      'invalid',
+      'the PIN is not patched',
+    );
     equal((await store.getHousehold(HOUSEHOLD_ID))?.name, 'Renamed', 'stored');
     await rejectsWithCode(store.updateHousehold('nope', { name: 'x' }), 'not_found', 'update unknown -> not_found');
   }),
@@ -700,12 +705,58 @@ export const storageChecks: StorageCheck[] = [
   // PIN -----------------------------------------------------------------------------
   check('pin', 'hashPin / verifyPin', async () => {
     const hash = await hashPin('2468');
-    ok(/^pbkdf2-sha256\$600000\$[\w-]{22}\$[\w-]{43}$/.test(hash), 'format', hash.split('$').slice(0, 2));
+    const format = new RegExp('^pbkdf2-sha256[$]' + PIN_ITERATIONS + '[$][A-Za-z0-9_-]{22}[$][A-Za-z0-9_-]{43}$');
+    ok(format.test(hash), 'format', hash.split('$').slice(0, 2));
+    equal(pinHashIterations(hash), PIN_ITERATIONS, 'the cost is recorded in the hash');
     ok(await verifyPin('2468', hash), 'right PIN');
     ok(!(await verifyPin('2469', hash)), 'wrong PIN');
     ok(!(await verifyPin('2468', 'not-a-hash')), 'garbage');
     ok(!(await verifyPin('2468', 'pbkdf2-sha256$0$aa$bb')), 'zero iterations');
     ok(hash !== (await hashPin('2468')), 'salted');
+    // Another cost still verifies, with the count in the hash.
+    const cheaper = await hashPin('2468', 2000);
+    ok(await verifyPin('2468', cheaper), 'a hash with another cost verifies');
+    ok(!isPinHash('pbkdf2-sha256$99999999$' + 'a'.repeat(22) + '$' + 'b'.repeat(43)), 'an absurd cost is refused');
+    ok(isValidPin('1234') && isValidPin('123456') && !isValidPin('123') && !isValidPin('1234567') && !isValidPin('12a4'), '4 to 6 digits');
+  }),
+  check('pin', 'setHouseholdPin / verifyHouseholdPin / clearHouseholdPin', async (ctx) => {
+    const { store, dbName } = await ctx.open();
+    const seen: DataChange[] = [];
+    store.subscribe((c) => seen.push(c));
+    equal(await store.verifyHouseholdPin('1234'), false, 'no PIN yet: nothing verifies');
+    await store.setHouseholdPin('1234');
+    const [row] = await rawAll<{ parent_pin_hash: string | null }>(dbName, 'households');
+    ok(isPinHash(row.parent_pin_hash), 'only a hash is stored', row.parent_pin_hash);
+    equal((await store.getCurrentHousehold()).parent_pin_hash, row.parent_pin_hash, 'the household shows the hash');
+    ok(seen.some((c) => c.tables.includes('households')), 'households changed');
+    equal(await store.verifyHouseholdPin('1234'), true, 'right PIN');
+    equal(await store.verifyHouseholdPin('4321'), false, 'wrong PIN');
+    equal(await store.verifyHouseholdPin('12'), false, 'not a PIN');
+    await store.setHouseholdPin('987654');
+    equal([await store.verifyHouseholdPin('987654'), await store.verifyHouseholdPin('1234')], [true, false], 'changed');
+    for (const bad of ['123', '1234567', 'abcd', '12 34', '']) {
+      await rejectsWithCode(store.setHouseholdPin(bad), 'invalid', `refuses "${bad}"`);
+    }
+    equal(await store.verifyHouseholdPin('987654'), true, 'a refused PIN changes nothing');
+    await store.clearHouseholdPin();
+    equal((await store.getCurrentHousehold()).parent_pin_hash, null, 'cleared');
+    equal(await store.verifyHouseholdPin('987654'), false, 'nothing verifies after clearing');
+    await store.clearHouseholdPin(); // clearing twice is fine
+  }),
+  check('pin', 'a PIN set before the household exists creates it', async (ctx) => {
+    const { store } = await ctx.open();
+    await store.setHouseholdPin('2468');
+    equal((await store.getCurrentHousehold()).id, HOUSEHOLD_ID, 'household created');
+    equal(await store.verifyHouseholdPin('2468'), true, 'and it has the PIN');
+  }),
+  check('pin', 'the PIN is in backups and comes back on restore', async (ctx) => {
+    const { store } = await ctx.open();
+    await store.setHouseholdPin('2468');
+    const backup = await store.exportBackup();
+    ok(isPinHash(backup.tables.households[0].parent_pin_hash), 'backed up as its hash');
+    await store.clearHouseholdPin();
+    await store.importBackup(JSON.parse(JSON.stringify(backup)));
+    equal(await store.verifyHouseholdPin('2468'), true, 'restored');
   }),
 
   // Migrations ------------------------------------------------------------------------

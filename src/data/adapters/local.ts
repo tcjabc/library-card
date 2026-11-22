@@ -42,6 +42,7 @@ import {
   type BackupTables,
 } from '../backup';
 import { newCardToken, newId, toIso } from '../ids';
+import { hashPin, isValidPin, verifyPin } from '../pin';
 import { addToSummary, isRepeatTap, latestEvent, summarize } from '../readRules';
 
 /**
@@ -705,6 +706,20 @@ export async function createStoreWith<Extra extends object>(
     return { moved: 0, remaining: -1 };
   });
 
+  /** The household PIN hash (or none), creating the household if this is the first use. */
+  const writePinHash = async (hash: string | null): Promise<void> => {
+    await store.getCurrentHousehold();
+    const tx = (await getDb()).transaction('households', 'readwrite');
+    const household = (await tx.store.get(HOUSEHOLD_ID))!;
+    if (household.parent_pin_hash === hash) {
+      await tx.done;
+      return;
+    }
+    await tx.store.put({ ...household, parent_pin_hash: hash });
+    await tx.done;
+    changed('households');
+  };
+
   const store: LocalDataStore = {
     adapterName: 'local',
     coverStep,
@@ -746,7 +761,27 @@ export async function createStoreWith<Extra extends object>(
       return (await (await getDb()).get('households', id)) ?? null;
     },
 
+    async setHouseholdPin(pin) {
+      if (!isValidPin(pin)) throw new DataStoreError('invalid', 'A PIN is 4 to 6 digits.');
+      // Hash first: the transaction mustn't wait on it.
+      const hash = await hashPin(pin);
+      await writePinHash(hash);
+    },
+
+    async verifyHouseholdPin(pin) {
+      const household = await (await getDb()).get('households', HOUSEHOLD_ID);
+      if (!household?.parent_pin_hash || !isValidPin(pin)) return false;
+      return verifyPin(pin, household.parent_pin_hash);
+    },
+
+    async clearHouseholdPin() {
+      await writePinHash(null);
+    },
+
     async updateHousehold(id, patch) {
+      if ('parent_pin_hash' in patch) {
+        throw new DataStoreError('invalid', 'Use setHouseholdPin or clearHouseholdPin to change the PIN.');
+      }
       const tx = (await getDb()).transaction('households', 'readwrite');
       const existing = await tx.store.get(id);
       if (!existing) throw notFound('Household', id);

@@ -81,6 +81,10 @@ img {
   gap: var(--space-2);
 }
 
+.row--center {
+  justify-content: center;
+}
+
 .muted {
   color: var(--color-text-muted);
 }
@@ -931,6 +935,27 @@ img {
   color: var(--color-text-muted);
 }
 
+/* The household PIN: one dot per digit, never the digits. */
+.pin-dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  min-height: var(--tap-target-lg);
+}
+
+.pin-dots__dot {
+  width: var(--space-4);
+  height: var(--space-4);
+  border-radius: var(--radius-full);
+  background: var(--color-text);
+}
+
+.pin-dots__dot--empty {
+  background: transparent;
+  border: var(--border-thick) solid var(--color-border);
+}
+
 .gate__message {
   min-height: 1.5em;
   color: var(--color-text-muted);
@@ -964,6 +989,30 @@ img {
   font-size: var(--text-xl);
   border-radius: var(--radius-lg);
   font-variant-numeric: tabular-nums;
+}
+
+/* Short screens: the gate and PIN pad, with what's under them (Forgot the PIN?), fit without
+   scrolling. Keys stay at the standard tap target. */
+@media (max-height: 50rem) {
+  .gate {
+    gap: var(--space-2);
+  }
+
+  .gate__question {
+    font-size: var(--text-xl);
+  }
+
+  .pin-dots {
+    min-height: var(--tap-target-sm);
+  }
+
+  .numpad {
+    gap: var(--space-2);
+  }
+
+  .numpad__key {
+    min-height: var(--tap-target);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

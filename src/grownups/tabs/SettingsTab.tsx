@@ -20,7 +20,8 @@ import { Sheet } from '../../ui/Sheet';
 import { useToast } from '../../ui/Toast';
 import { formatBytes, formatTimestampDate, isAppStorageKey } from '../helpers';
 import { endGrownUpSession } from '../session';
-import { useGrownUpSession } from '../useGrownUpSession';
+import { HouseholdPinSection } from '../pin/HouseholdPinSection';
+import { usePinGuard } from '../pin/pinGuardContext';
 import type { TabProps } from './types';
 
 const t = strings.grownups.settings;
@@ -43,7 +44,7 @@ function clearAppStorage(): void {
 /** Grown-ups > Settings: household name, backup and restore, reset, developer tools. */
 export function SettingsTab({ store, household }: TabProps) {
   const toast = useToast();
-  const { runAsGrownUp } = useGrownUpSession();
+  const pin = usePinGuard();
   const [name, setName] = useState(household.name);
   const [nameError, setNameError] = useState<string | null>(null);
   const device = deviceTimeZone();
@@ -128,11 +129,12 @@ export function SettingsTab({ store, household }: TabProps) {
       return;
     }
     const current = summariseBackup(await store.exportBackup());
-    setRestoring({ backup: check.backup, incoming: summariseBackup(check.backup), current });
+    // The PIN first (if the household has one), so the confirm below doesn't ask again.
+    await pin.runProtected('restoreBackup', () => setRestoring({ backup: check.backup, incoming: summariseBackup(check.backup), current }));
   };
 
   const restore = (backup: Backup, then: 'restore' | 'leave' | 'newHousehold' = 'restore') =>
-    runAsGrownUp(async () => {
+    pin.runProtected('restoreBackup', async () => {
       // With sync on, this device leaves the household first (restoring would otherwise
       // replace the household's data on every device).
       if (then !== 'restore' && sync) await sync.stop(true);
@@ -140,8 +142,13 @@ export function SettingsTab({ store, household }: TabProps) {
       // The backup's finished journeys were celebrated where they happened: don't replay them here.
       await markAllCompletionsCelebrated(store);
       if (then === 'newHousehold' && sync) {
-        await sync.start();
-        toast({ message: ts.started });
+        // A synced household has a PIN from the first push: the backup's, or a new one.
+        const hasPin = Boolean((await store.getCurrentHousehold()).parent_pin_hash);
+        if (hasPin || (await pin.chooseNewPin({ intro: strings.grownups.pin.forStart }))) {
+          const { words } = await sync.start();
+          toast({ message: ts.started });
+          await pin.writeDownWords(words);
+        }
       }
       // The reader signed in here may not be in the backup.
       const active = getActiveReaderId();
@@ -150,10 +157,10 @@ export function SettingsTab({ store, household }: TabProps) {
       const restored = await store.getCurrentHousehold();
       setName(restored.name);
       toast({ message: t.restored });
-    }, strings.gate.reasonRestore);
+    });
 
   const reset = () =>
-    runAsGrownUp(async () => {
+    pin.runProtected('resetDevice', async () => {
       // With sync on: leave the household on this device only (the others keep it), then clear.
       if (syncOn && sync) await sync.stop(false);
       else await store.resetDevice();
@@ -161,7 +168,7 @@ export function SettingsTab({ store, household }: TabProps) {
       clearActiveReader();
       endGrownUpSession();
       navigate('/', { replace: true });
-    }, strings.gate.reasonReset);
+    });
 
   const counts = (summary: BackupSummary) => fmt(t.counts, { ...summary });
 
@@ -243,6 +250,8 @@ export function SettingsTab({ store, household }: TabProps) {
         </form>
       </section>
 
+      <HouseholdPinSection store={store} household={household} />
+
       <section className="stack card">
         <h2>{t.backupHeading}</h2>
         <p>{t.backupIntro}</p>
@@ -283,7 +292,7 @@ export function SettingsTab({ store, household }: TabProps) {
         <h2>{t.resetHeading}</h2>
         <p>{t.resetIntro}</p>
         <div className="row">
-          <button type="button" className="btn btn--danger" onClick={() => setResetting(true)}>
+          <button type="button" className="btn btn--danger" onClick={() => void pin.runProtected('resetDevice', () => setResetting(true))}>
             {t.reset}
           </button>
         </div>

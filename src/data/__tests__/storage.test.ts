@@ -53,7 +53,7 @@ describe('coverage', () => {
     await store.close();
     const covered = [
       // household
-      'getCurrentHousehold', 'getHousehold', 'updateHousehold',
+      'getCurrentHousehold', 'getHousehold', 'updateHousehold', 'setHouseholdPin', 'verifyHouseholdPin', 'clearHouseholdPin',
       // readers
       'createReader', 'getReader', 'getReaderByCardToken', 'listReaders', 'updateReader', 'rotateCardToken', 'deleteReader',
       'previewDeleteReader',

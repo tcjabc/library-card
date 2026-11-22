@@ -8,7 +8,8 @@ import { getCelebrated, markCelebrated, nextCelebration, resetCelebrationsForTes
 import { checkJourneyCompletion } from '../../journeys/completion';
 import { BUCKET_BYTES } from '../photos';
 import { createSyncService, type SyncService, type SyncState } from '../service';
-import { deriveKeys } from '../vendor/crypto.js';
+import { deriveKeys, generateKey } from '../vendor/crypto.js';
+import { keyToWords } from '../vendor/words.js';
 import { fetchTransport, type SyncEnv, type Timers } from '../vendor/sync.js';
 
 /**
@@ -202,6 +203,72 @@ describe.skipIf(!wranglerPath)('sync through the local relay (workerd)', () => {
   }
   const dueOn = async (d: Device, readerId: string) =>
     nextCelebration(await d.store.listJourneyHistory(readerId), getCelebrated() ?? new Set())?.id ?? null;
+
+  it('household PIN: set on A works on B, a change on B reaches A, and it can’t be cleared while syncing', async () => {
+    const a = await device('a');
+    const b = await device('b');
+    await a.store.setHouseholdPin('2468');
+    const { words } = await a.sync.start();
+    await b.sync.join(words, 'replace');
+    expect(await b.store.verifyHouseholdPin('2468')).toBe(true);
+
+    await b.store.setHouseholdPin('1357');
+    await b.sync.syncNow();
+    await a.sync.syncNow();
+    expect(await a.store.verifyHouseholdPin('1357')).toBe(true);
+    expect(await a.store.verifyHouseholdPin('2468')).toBe(false);
+    expect((await a.store.getCurrentHousehold()).parent_pin_hash).toBe((await b.store.getCurrentHousehold()).parent_pin_hash);
+
+    await expect(b.store.clearHouseholdPin()).rejects.toMatchObject({ code: 'blocked' });
+  }, 60_000);
+
+  it('household PIN: changes on both devices converge (the later one wins)', async () => {
+    const a = await device('a');
+    const b = await device('b');
+    await a.store.setHouseholdPin('2468');
+    const { words } = await a.sync.start();
+    await b.sync.join(words, 'replace');
+    a.env.offline();
+    b.env.offline();
+    await a.store.setHouseholdPin('1111');
+    await new Promise((r) => setTimeout(r, 10));
+    await b.store.setHouseholdPin('2222');
+    await a.env.reconnect();
+    await b.env.reconnect();
+    await a.sync.syncNow();
+    await b.sync.syncNow();
+    await a.sync.syncNow();
+    for (const d of [a, b]) {
+      expect(await d.store.verifyHouseholdPin('2222')).toBe(true);
+      expect(await d.store.verifyHouseholdPin('1111')).toBe(false);
+    }
+  }, 60_000);
+
+  it('household PIN: a joining device gets the household’s, not its own (combine)', async () => {
+    const a = await device('a');
+    const b = await device('b');
+    await a.store.setHouseholdPin('2468');
+    const { words } = await a.sync.start();
+    // B has its own data and a PIN set after A's.
+    await b.addLibrary('Only on B');
+    await b.store.setHouseholdPin('9999');
+    expect(await b.sync.join(words, 'combine')).toEqual({ mode: 'combine' });
+    expect(await b.store.verifyHouseholdPin('2468')).toBe(true);
+    expect(await b.store.verifyHouseholdPin('9999')).toBe(false);
+    await b.sync.syncNow();
+    await a.sync.syncNow();
+    expect(await a.store.verifyHouseholdPin('2468')).toBe(true);
+    expect((await a.libraries()).map((l) => l.name)).toContain('Only on B');
+  }, 60_000);
+
+  it('household PIN: a join that fails leaves this device’s PIN as it was', async () => {
+    const b = await device('b');
+    await b.store.setHouseholdPin('9999');
+    const nobody = (await keyToWords(generateKey())).join(' ');
+    await expect(b.sync.join(nobody, 'combine')).rejects.toMatchObject({ code: 'no_household' });
+    expect(await b.store.verifyHouseholdPin('9999')).toBe(true);
+    expect(b.state()).toBe('off');
+  }, 60_000);
 
   it('a photo cover added on each device shows on the other, sealed in size buckets', async () => {
     const a = await device('a');

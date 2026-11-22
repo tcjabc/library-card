@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useState } from 'react';
 import { fmt, strings } from '../strings';
+import { NumberPad } from '../ui/NumberPad';
 import {
   NO_ATTEMPTS,
   afterWrongAnswer,
@@ -84,26 +85,6 @@ export function ParentGate({ onPass, onCancel, reason }: ParentGateProps) {
     setQuestion((q) => newGateQuestion(q));
   }, [locked, entry, question.answer, attempts, onPass, t.wrong]);
 
-  // A hardware keyboard works too (desktop, accessibility); no text field is used.
-  const handlers = useRef({ press, erase, submit });
-  useEffect(() => {
-    handlers.current = { press, erase, submit };
-  });
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
-      if (/^[0-9]$/.test(event.key)) handlers.current.press(event.key);
-      else if (event.key === 'Backspace') handlers.current.erase();
-      else if (event.key === 'Enter') handlers.current.submit();
-      else return;
-      event.preventDefault();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
-
-  const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
-
   return (
     <div className="gate" role="group" aria-labelledby={questionId}>
       <p className="gate__label">
@@ -132,22 +113,8 @@ export function ParentGate({ onPass, onCancel, reason }: ParentGateProps) {
         </>
       )}
 
-      <div className="numpad" aria-label={t.padLabel}>
-        {keys.map((k) => (
-          <button key={k} type="button" className="btn numpad__key" onClick={() => press(k)} disabled={locked}>
-            {k}
-          </button>
-        ))}
-        <button type="button" className="btn numpad__key" onClick={erase} disabled={locked || !entry} aria-label={t.delete}>
-          <span aria-hidden="true">⌫</span>
-        </button>
-        <button type="button" className="btn numpad__key" onClick={() => press('0')} disabled={locked}>
-          0
-        </button>
-        <button type="button" className="btn btn--primary numpad__key" onClick={submit} disabled={locked || !entry}>
-          {t.ok}
-        </button>
-      </div>
+      {/* A hardware keyboard works too (desktop, accessibility); no text field is used. */}
+      <NumberPad onDigit={press} onErase={erase} onSubmit={submit} disabled={locked} canErase={Boolean(entry)} canSubmit={Boolean(entry)} />
 
       {onCancel && (
         <button type="button" className="btn btn--quiet gate__cancel" onClick={onCancel}>

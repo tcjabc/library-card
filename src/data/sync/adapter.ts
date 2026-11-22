@@ -1,4 +1,4 @@
-import { DataStoreError, type DataTable } from '../DataStore';
+import { DataStoreError, HOUSEHOLD_ID, type DataTable } from '../DataStore';
 import {
   ALL_TABLES,
   createStoreWith,
@@ -172,10 +172,11 @@ function syncMethods(
   internals: StoreInternals,
   state: RecorderState,
   photos: PhotoOutboxDb,
-): SyncEngineStore & Pick<LocalDataStore, 'importBackup'> {
+): SyncEngineStore & Pick<LocalDataStore, 'importBackup' | 'clearHouseholdPin'> {
   const raw = internals.rawDb;
   // The store is extended in place, so keep the local adapter's own importBackup.
   const localImport = store.importBackup.bind(store);
+  const localClearPin = store.clearHouseholdPin.bind(store);
   const enqueuedListeners = new Set<() => void>();
   const opIdKeys = new Map<string, Promise<CryptoKey>>();
 
@@ -230,6 +231,60 @@ function syncMethods(
   };
 
   return {
+    async setAsideLocalPin() {
+      const tx = (await raw()).transaction(['households', 'records', 'outbox'], 'readwrite');
+      const households = storeOf(tx, 'households');
+      const row = await households.get(HOUSEHOLD_ID);
+      if (!row?.parent_pin_hash) {
+        await tx.done;
+        return null;
+      }
+      const rec = `households:${HOUSEHOLD_ID}`;
+      const record: StoredRecord | undefined = await storeOf(tx, 'records').get(rec);
+      const recorded = record && 'parent_pin_hash' in record.fields ? { v: record.fields.parent_pin_hash, t: record.ts.parent_pin_hash } : null;
+      const queued: OutboxEntry | undefined = await storeOf(tx, 'outbox').get([rec, 'parent_pin_hash']);
+      await households.put({ ...row, parent_pin_hash: null });
+      if (record && recorded) {
+        const fields = { ...record.fields };
+        const ts = { ...record.ts };
+        delete fields.parent_pin_hash;
+        delete ts.parent_pin_hash;
+        await storeOf(tx, 'records').put({ ...record, fields, ts });
+      }
+      if (queued) await storeOf(tx, 'outbox').delete([rec, 'parent_pin_hash']);
+      await tx.done;
+      internals.emit(['households'], false);
+      internals.broadcast(['households']);
+      return { hash: row.parent_pin_hash, recorded, queued: queued ?? null };
+    },
+
+    async putBackLocalPin(saved) {
+      const tx = (await raw()).transaction(['households', 'records', 'outbox'], 'readwrite');
+      const rec = `households:${HOUSEHOLD_ID}`;
+      const row = await storeOf(tx, 'households').get(HOUSEHOLD_ID);
+      if (row) await storeOf(tx, 'households').put({ ...row, parent_pin_hash: saved.hash });
+      const record: StoredRecord | undefined = await storeOf(tx, 'records').get(rec);
+      if (record && saved.recorded) {
+        await storeOf(tx, 'records').put({
+          ...record,
+          fields: { ...record.fields, parent_pin_hash: saved.recorded.v },
+          ts: { ...record.ts, parent_pin_hash: saved.recorded.t },
+        });
+      }
+      if (saved.queued) await storeOf(tx, 'outbox').put(saved.queued);
+      await tx.done;
+      internals.emit(['households'], false);
+      internals.broadcast(['households']);
+    },
+
+    async clearHouseholdPin() {
+      // A synced household keeps a PIN (other devices rely on it); it can only be changed.
+      if (await getConfig()) {
+        throw new DataStoreError('blocked', 'Sync is on for this device. A synced household keeps its PIN; change it instead.');
+      }
+      return localClearPin();
+    },
+
     async importBackup(data) {
       if (await getConfig()) {
         throw new DataStoreError('sync_enabled', 'Sync is on for this device. Restoring a backup would replace the household’s data on every device.');

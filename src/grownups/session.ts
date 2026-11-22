@@ -68,6 +68,8 @@ export function isGrownUpUnlocked(): boolean {
 
 export function unlockGrownUp(): void {
   writeExpiry(Date.now() + GROWN_UP_IDLE_MS);
+  // A new grown-up session: a PIN entered in an earlier one doesn't carry over.
+  writePinUnlock(null);
   schedule();
   notify();
 }
@@ -75,8 +77,66 @@ export function unlockGrownUp(): void {
 export function endGrownUpSession(): void {
   const wasSet = readExpiry() !== null;
   writeExpiry(null);
+  writePinUnlock(null);
   clearTimeout(expiryTimer);
   if (wasSet) notify();
+}
+
+/* --------------------------------------------------------------------------
+   Household PIN: a right PIN unlocks the PIN-guarded actions (pinPolicy.ts) for
+   PIN_UNLOCK_MS, within the current grown-up session only, so a confirm flow
+   doesn't ask twice. Leaving Grown-ups, or the session ending, locks them again.
+   -------------------------------------------------------------------------- */
+
+export const PIN_UNLOCK_MS = 2 * 60 * 1000;
+const PIN_KEY = 'library-card:pin-unlocked';
+
+/** Until when, and for which PIN (the end of its stored hash): a different PIN isn't unlocked. */
+interface PinUnlock {
+  until: number;
+  pin: string;
+}
+let memoryPin: PinUnlock | null = null;
+
+/** Enough of the stored hash to tell PINs apart; the hash itself stays in the database. */
+const pinTag = (pinHash: string) => pinHash.slice(-12);
+
+function readPinUnlock(): PinUnlock | null {
+  try {
+    const raw = window.sessionStorage.getItem(PIN_KEY);
+    if (raw === null) return null;
+    const value = JSON.parse(raw) as Partial<PinUnlock>;
+    return typeof value.until === 'number' && typeof value.pin === 'string' ? { until: value.until, pin: value.pin } : null;
+  } catch {
+    return memoryPin;
+  }
+}
+
+function writePinUnlock(value: PinUnlock | null): void {
+  memoryPin = value;
+  try {
+    if (value === null) window.sessionStorage.removeItem(PIN_KEY);
+    else window.sessionStorage.setItem(PIN_KEY, JSON.stringify(value));
+  } catch {
+    // Memory only for this page.
+  }
+}
+
+/** The right PIN was just entered (or chosen): `pinHash` is the household's hash now. */
+export function unlockPinActions(pinHash: string, now: number = Date.now()): void {
+  writePinUnlock({ until: now + PIN_UNLOCK_MS, pin: pinTag(pinHash) });
+}
+
+/**
+ * PIN-guarded actions run without asking: the household's current PIN (`pinHash`) was entered in
+ * the last 2 minutes of this grown-up session. A PIN changed since (on another device, or by
+ * joining a household) has to be entered again.
+ */
+export function isPinUnlocked(pinHash: string | null, now: number = Date.now()): boolean {
+  const unlock = readPinUnlock();
+  if (!pinHash || !unlock || !isGrownUpUnlocked()) return false;
+  // Never longer than the window (a stored value can't be stretched).
+  return unlock.pin === pinTag(pinHash) && unlock.until > now && unlock.until - now <= PIN_UNLOCK_MS;
 }
 
 /** Counts as activity: pushes the inactivity timeout out. No-op when locked. */
