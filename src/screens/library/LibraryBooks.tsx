@@ -1,7 +1,7 @@
 import { useCallback, useState, type ReactNode } from 'react';
 import { BookList } from '../../books/BookList';
 import { useBookView } from '../../books/bookView';
-import { BookViewToggle } from '../../books/BookViewToggle';
+import { ViewToggle } from '../../ui/ViewToggle';
 import { useReadAction } from '../../books/useReadAction';
 import { useDataQuery, type Book, type DataStore, type Loan, type Reader } from '../../data';
 import { useToday } from '../../lib/clock';
@@ -130,7 +130,7 @@ export function LibraryBooks({ reader }: { reader: Reader }) {
       </header>
 
       {anyLoans && <SearchBar value={search} onChange={setSearch} />}
-      {anyLoans && <BookViewToggle view={bookView} onChange={setBookView} />}
+      {anyLoans && <ViewToggle view={bookView} onChange={setBookView} />}
 
       <div className="chip-row view-toggle" role="group" aria-label={t.viewLabel}>
         <button type="button" className="chip" aria-pressed={!house} onClick={() => choose('mine')}>

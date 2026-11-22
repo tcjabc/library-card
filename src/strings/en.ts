@@ -20,6 +20,7 @@ export const en = {
     coverAlt: 'Cover of {title}',
     backToHub: 'Back',
     typeToConfirm: 'Type {word} to confirm',
+    more: 'More',
   },
 
   data: {
@@ -486,6 +487,10 @@ export const en = {
   },
 
   grownups: {
+    /** The Grid / List toggle on the grown-up tabs. */
+    viewLabel: 'Show as',
+    /** A tile's ⋯ menu. */
+    moreFor: 'More for {name}',
     title: 'Grown-ups',
     backToReaders: 'Back to readers',
     navLabel: 'Grown-up sections',
@@ -546,6 +551,19 @@ export const en = {
       clearBodyOne: 'This removes {name}’s read of this book. Journeys already finished stay finished.',
       clearConfirm: 'Clear reads',
       cleared: 'Cleared {name}’s reads of {title}',
+      headingFiltered: 'Home books ({count} of {total})',
+      sortLabel: 'Sort',
+      sorts: { recent: 'Recently added', title: 'Title A–Z' },
+      filterLabel: 'Show',
+      filters: { all: 'All', unread: 'Not read by anyone', nocover: 'No cover' },
+      noneInFilter: 'No books here.',
+      readBy: 'Read by {names}',
+      moreReaders: '+{count}',
+      moreFor: 'More for {title}',
+      fixShort: 'Fix',
+      isbn: 'ISBN {isbn}',
+      added: 'Added {date}',
+      noBarcode: 'No barcode',
     },
 
     readers: {

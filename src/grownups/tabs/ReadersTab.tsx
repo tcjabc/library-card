@@ -20,10 +20,13 @@ import { href } from '../../router';
 import { clearActiveReader, getActiveReaderId } from '../../session/activeReader';
 import { fmt, strings } from '../../strings';
 import { ConfirmSheet } from '../../ui/ConfirmSheet';
+import { MoreMenu } from '../../ui/MoreMenu';
 import { Sheet } from '../../ui/Sheet';
 import { useToast } from '../../ui/Toast';
+import { ViewToggle } from '../../ui/ViewToggle';
 import { readStats, tabPath } from '../helpers';
 import { useGrownUpSession } from '../useGrownUpSession';
+import { useGrownUpView } from '../views';
 import type { TabProps } from './types';
 
 const t = strings.grownups.readers;
@@ -65,7 +68,16 @@ type Dialog =
   | { kind: 'new-card'; reader: Reader }
   | { kind: 'delete'; reader: Reader; preview: DeleteReaderPreview };
 
-/** Grown-ups > Readers: who reads here, how much, and their cards. */
+function statsLine({ booksRead, rereads }: ReaderRow): string {
+  return `${booksRead === 1 ? t.booksReadOne : fmt(t.booksRead, { count: booksRead })} · ${rereads === 1 ? t.rereadsOne : fmt(t.rereads, { count: rereads })}`;
+}
+
+function journeyLine({ journey, completed }: ReaderRow): string {
+  const now = journey ? fmt(t.journeyNow, { emoji: journey.emoji, journey: journey.title, progress: journey.progress, steps: journey.steps }) : t.noJourney;
+  return completed > 0 ? `${now} · ${completed === 1 ? t.completedOne : fmt(t.completed, { count: completed })}` : now;
+}
+
+/** Grown-ups > Readers: who reads here, how much, and their cards (a List, or a Grid of cards). */
 export function ReadersTab({ store, household }: TabProps) {
   const toast = useToast();
   const { runAsGrownUp } = useGrownUpSession();
@@ -77,6 +89,7 @@ export function ReadersTab({ store, household }: TabProps) {
   const toCheck = new Map<string, number>();
   for (const event of pendingReads) toCheck.set(event.reader_id, (toCheck.get(event.reader_id) ?? 0) + 1);
   const [checkFilter, setCheckFilter] = useState<string | null>(null);
+  const [view, setView] = useGrownUpView('readers');
 
   const askDelete = async (reader: Reader) => {
     const preview = await store.previewDeleteReader(reader.id);
@@ -109,52 +122,94 @@ export function ReadersTab({ store, household }: TabProps) {
       <section className="stack card">
         <div className="row grownups__section-head">
           <h2>{fmt(t.heading, { count: rows?.length ?? 0 })}</h2>
-          <button type="button" className="btn btn--primary" onClick={() => setDialog({ kind: 'edit', reader: null })}>
-            {t.add}
-          </button>
+          <div className="row">
+            {!!rows?.length && <ViewToggle view={view} onChange={setView} label={strings.grownups.viewLabel} dense />}
+            <button type="button" className="btn btn--primary" onClick={() => setDialog({ kind: 'edit', reader: null })}>
+              {t.add}
+            </button>
+          </div>
         </div>
         {rows && rows.length === 0 && <p className="muted">{t.none}</p>}
-        <ul className="dev-list">
-          {rows?.map(({ reader, booksRead, rereads, journey, completed }) => (
-            <li key={reader.id} className="dev-list__row">
-              <div className="grownups-reader">
-                <span className="avatar avatar--md" aria-hidden="true">
-                  {reader.avatar}
-                </span>
-                <div className="stack grownups-reader__body">
-                  <p className="grownups__item-title">
-                    {reader.display_name}
-                    {reader.kind === 'grown_up' && <span className="small muted"> · {t.grownUpTag}</span>}
-                    {(toCheck.get(reader.id) ?? 0) > 0 && (
-                      <button type="button" className="btn btn--small grownups__to-check" onClick={() => setCheckFilter(reader.id)}>
-                        📝 {fmt(t.toCheck, { count: toCheck.get(reader.id) ?? 0 })}
+        {view === 'grid' ? (
+          <ul className="gu-grid">
+            {rows?.map((row) => {
+              const { reader } = row;
+              const waiting = toCheck.get(reader.id) ?? 0;
+              return (
+                <li key={reader.id} className="gu-card">
+                  <div className="gu-card__head">
+                    <span className="avatar avatar--md" aria-hidden="true">
+                      {reader.avatar}
+                    </span>
+                    <div className="stack grownups-reader__body">
+                      <p className="gu-card__title">{reader.display_name}</p>
+                      <p className="small muted">{t.kinds[reader.kind]}</p>
+                    </div>
+                  </div>
+                  <p className="small">{statsLine(row)}</p>
+                  <p className="small muted">{journeyLine(row)}</p>
+                  {waiting > 0 && (
+                    <div className="row">
+                      <button type="button" className="btn btn--small" onClick={() => setCheckFilter(reader.id)}>
+                        📝 {fmt(t.toCheck, { count: waiting })}
                       </button>
-                    )}
-                  </p>
-                  <p className="small">
-                    {booksRead === 1 ? t.booksReadOne : fmt(t.booksRead, { count: booksRead })} ·{' '}
-                    {rereads === 1 ? t.rereadsOne : fmt(t.rereads, { count: rereads })}
-                  </p>
-                  <p className="small muted">
-                    {journey ? fmt(t.journeyNow, { emoji: journey.emoji, journey: journey.title, progress: journey.progress, steps: journey.steps }) : t.noJourney}
-                    {completed > 0 && ` · ${completed === 1 ? t.completedOne : fmt(t.completed, { count: completed })}`}
-                  </p>
+                    </div>
+                  )}
+                  <MoreMenu
+                    label={fmt(strings.grownups.moreFor, { name: reader.display_name })}
+                    items={[
+                      { label: t.edit, onSelect: () => setDialog({ kind: 'edit', reader }) },
+                      { label: t.replaceCard, onSelect: () => setDialog({ kind: 'replace', reader }) },
+                      { label: t.delete, onSelect: () => void askDelete(reader), danger: true },
+                    ]}
+                  />
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <ul className="dev-list">
+            {rows?.map(({ reader, booksRead, rereads, journey, completed }) => (
+              <li key={reader.id} className="dev-list__row">
+                <div className="grownups-reader">
+                  <span className="avatar avatar--md" aria-hidden="true">
+                    {reader.avatar}
+                  </span>
+                  <div className="stack grownups-reader__body">
+                    <p className="grownups__item-title">
+                      {reader.display_name}
+                      {reader.kind === 'grown_up' && <span className="small muted"> · {t.grownUpTag}</span>}
+                      {(toCheck.get(reader.id) ?? 0) > 0 && (
+                        <button type="button" className="btn btn--small grownups__to-check" onClick={() => setCheckFilter(reader.id)}>
+                          📝 {fmt(t.toCheck, { count: toCheck.get(reader.id) ?? 0 })}
+                        </button>
+                      )}
+                    </p>
+                    <p className="small">
+                      {booksRead === 1 ? t.booksReadOne : fmt(t.booksRead, { count: booksRead })} ·{' '}
+                      {rereads === 1 ? t.rereadsOne : fmt(t.rereads, { count: rereads })}
+                    </p>
+                    <p className="small muted">
+                      {journey ? fmt(t.journeyNow, { emoji: journey.emoji, journey: journey.title, progress: journey.progress, steps: journey.steps }) : t.noJourney}
+                      {completed > 0 && ` · ${completed === 1 ? t.completedOne : fmt(t.completed, { count: completed })}`}
+                    </p>
+                  </div>
                 </div>
-              </div>
-              <div className="row">
-                <button type="button" className="btn btn--small" onClick={() => setDialog({ kind: 'edit', reader })}>
-                  {t.edit}
-                </button>
-                <button type="button" className="btn btn--small" onClick={() => setDialog({ kind: 'replace', reader })}>
-                  {t.replaceCard}
-                </button>
-                <button type="button" className="btn btn--small btn--quiet" onClick={() => void askDelete(reader)}>
-                  {t.delete}
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
+                <div className="row">
+                  <button type="button" className="btn btn--small" onClick={() => setDialog({ kind: 'edit', reader })}>
+                    {t.edit}
+                  </button>
+                  <button type="button" className="btn btn--small" onClick={() => setDialog({ kind: 'replace', reader })}>
+                    {t.replaceCard}
+                  </button>
+                  <button type="button" className="btn btn--small btn--quiet" onClick={() => void askDelete(reader)}>
+                    {t.delete}
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       {dialog?.kind === 'edit' && (

@@ -12,13 +12,15 @@ interface BookListProps<T> {
   keyOf: (item: T) => string;
   renderRow: (item: T) => ReactNode;
   label?: string;
+  /** Another look for the list (default: the kids' rows). */
+  className?: string;
 }
 
 /**
  * The List view of My Bookshelf and Library Books: one row per book. Over VIRTUALISE_OVER rows,
  * only the rows near the screen are on the page.
  */
-export function BookList<T>({ items, keyOf, renderRow, label }: BookListProps<T>) {
+export function BookList<T>({ items, keyOf, renderRow, label, className = 'book-list' }: BookListProps<T>) {
   const list = useRef<HTMLUListElement>(null);
   const keys = items.map(keyOf);
   const range = useListWindow(list, keys);
@@ -27,7 +29,7 @@ export function BookList<T>({ items, keyOf, renderRow, label }: BookListProps<T>
   const padded = range.padTop > 0 || range.padBottom > 0;
 
   return (
-    <ul ref={list} className="book-list" aria-label={label} style={padded ? { paddingTop: range.padTop, paddingBottom: range.padBottom } : undefined}>
+    <ul ref={list} className={className} aria-label={label} style={padded ? { paddingTop: range.padTop, paddingBottom: range.padBottom } : undefined}>
       {items.slice(start, end).map((item, i) => (
         <li key={keys[start + i]} className="book-list__item" data-row-key={keys[start + i]}>
           {renderRow(item)}

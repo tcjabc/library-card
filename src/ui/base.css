@@ -980,6 +980,81 @@ img {
   align-self: center;
 }
 
+/* "⋯ More": a tile's actions in a small menu (MoreMenu). */
+.more-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.more-menu__button {
+  min-width: var(--tap-target);
+  padding: 0;
+  font-size: var(--text-lg);
+  line-height: 1;
+}
+
+.more-menu__list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + var(--space-1));
+  z-index: var(--z-menu);
+  min-width: var(--menu-min);
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  border: var(--border-thin) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-raised);
+}
+
+/* Near the left edge of the screen it opens rightwards from the button. */
+.more-menu__list--start {
+  right: auto;
+  left: 0;
+}
+
+/* Near the bottom of the screen it opens upwards. */
+.more-menu__list--up {
+  top: auto;
+  bottom: calc(100% + var(--space-1));
+}
+
+.more-menu__item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: var(--tap-target);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+  font-weight: var(--weight-bold);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.more-menu__item:hover,
+.more-menu__item:focus-visible {
+  background: var(--color-surface-muted);
+}
+
+.more-menu__item--danger {
+  color: var(--color-danger);
+}
+
+/* Grid / List as a small pair in a heading or tool row (the grown-up tabs). */
+.view-toggle--dense {
+  display: inline-flex;
+}
+
+.view-toggle--dense .chip {
+  font-size: var(--text-sm);
+}
+
 /* Sheet ------------------------------------------------------------------- */
 
 .sheet {

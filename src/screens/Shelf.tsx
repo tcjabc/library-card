@@ -1,7 +1,7 @@
 import { useCallback, useState, type MouseEvent } from 'react';
 import { BookList, BookRow } from '../books/BookList';
 import { useBookView } from '../books/bookView';
-import { BookViewToggle } from '../books/BookViewToggle';
+import { ViewToggle } from '../ui/ViewToggle';
 import { ReadBadge, ReadButton } from '../books/ReadButton';
 import { useReadAction } from '../books/useReadAction';
 import { useDataQuery, type Book, type DataStore, type HomeItem, type ReadSummary, type Reader } from '../data';
@@ -94,7 +94,7 @@ export function Shelf({ reader }: { reader: Reader }) {
       ) : (
         <>
           <SearchBar value={search} onChange={setSearch} />
-          <BookViewToggle view={view} onChange={setView} />
+          <ViewToggle view={view} onChange={setView} />
 
           <div className="chip-row" role="group" aria-label={t.filterLabel}>
             {chips.map((chip) => (

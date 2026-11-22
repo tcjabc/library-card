@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import { BookList } from '../../books/BookList';
 import { BookSheet, type BookSheetMode } from '../../books/BookSheet';
 import { BookLookupError, lookupIsbn, normaliseIsbn } from '../../books/lookup';
 import { isNoIsbnBookKey, newNoIsbnBookKey, useDataQuery, type Book, type DataStore, type HomeItem, type Household, type ReadSummary, type Reader } from '../../data';
@@ -7,9 +8,13 @@ import { fmt, strings } from '../../strings';
 import { BookCover } from '../../ui/BookCover';
 import { ConfirmSheet } from '../../ui/ConfirmSheet';
 import { Sheet } from '../../ui/Sheet';
+import { MoreMenu, type MoreMenuItem } from '../../ui/MoreMenu';
 import { useToast } from '../../ui/Toast';
+import { ViewToggle } from '../../ui/ViewToggle';
+import { BOOK_FILTERS, BOOK_SORTS, filterBooks, readersByBook, sortBooks, type BookFilter, type BookSort } from '../booksView';
 import { findSameTitle, formatTimestampDate, matchesBookSearch } from '../helpers';
 import { useGrownUpSession } from '../useGrownUpSession';
+import { useGrownUpView } from '../views';
 import type { TabProps } from './types';
 
 const t = strings.grownups.books;
@@ -34,6 +39,10 @@ interface HomeEntry {
   title: string;
   /** Every read of the book by anyone. */
   reads: number;
+  /** Who has read it, in the household's reader order. */
+  readBy: Reader[];
+  addedAt: string;
+  coverUrl: string | null;
 }
 
 interface BooksData {
@@ -51,14 +60,27 @@ async function loadBooks(store: DataStore, householdId: string): Promise<BooksDa
   const books = new Map((await store.getBooks(items.map((i) => i.isbn))).map((b) => [b.isbn, b]));
   const reads = new Map<string, number>();
   for (const s of summaries) reads.set(s.isbn, (reads.get(s.isbn) ?? 0) + s.count);
+  const readBy = readersByBook(summaries, readers);
   const entries = items.map((item) => {
     const book = books.get(item.isbn) ?? null;
-    return { item, book, title: book?.title ?? item.isbn, reads: reads.get(item.isbn) ?? 0 };
+    return {
+      item,
+      book,
+      title: book?.title ?? item.isbn,
+      reads: reads.get(item.isbn) ?? 0,
+      readBy: readBy.get(item.isbn) ?? [],
+      addedAt: item.added_at,
+      coverUrl: book?.cover_url ?? null,
+    };
   });
   return { entries, readers, summaries };
 }
 
-/** Grown-ups > Books: the Home books, searchable, with add, fix, remove and per-reader reads. */
+/**
+ * Grown-ups > Books: the Home books, as a Grid of covers (the default) or a compact List; search,
+ * sort and quick filters; add, fix, remove and per-reader reads (from a book's sheet, its ⋯ menu,
+ * or the List row's buttons).
+ */
 export function BooksTab({ store, household }: TabProps) {
   const toast = useToast();
   const { runAsGrownUp } = useGrownUpSession();
@@ -69,12 +91,27 @@ export function BooksTab({ store, household }: TabProps) {
   const [readsOf, setReadsOf] = useState<HomeEntry | null>(null);
   const [saved, setSaved] = useState<{ book: Book; inHome: boolean } | null>(null);
   const [duplicate, setDuplicate] = useState<Duplicate | null>(null);
+  const [details, setDetails] = useState<HomeEntry | null>(null);
+  const [sort, setSort] = useState<BookSort>('recent');
+  const [filter, setFilter] = useState<BookFilter>('all');
+  const [view, setView] = useGrownUpView('books');
   const searchId = useId();
+  const sortId = useId();
 
   const query = useCallback((s: DataStore) => loadBooks(s, household.id), [household.id]);
   const { data } = useDataQuery(query, ['home_items', 'books', 'covers', 'readers', 'read_events']);
   const entries = data?.entries ?? [];
-  const visible = entries.filter((e) => matchesBookSearch({ title: e.title, authors: e.book?.authors ?? [] }, search));
+  const searched = entries.filter((e) => matchesBookSearch({ title: e.title, authors: e.book?.authors ?? [] }, search));
+  const visible = sortBooks(filterBooks(searched, filter), sort);
+  const narrowed = visible.length !== entries.length;
+
+  const fix = (entry: HomeEntry) =>
+    setSheet({ mode: entry.book ? { kind: 'fix', book: entry.book } : { kind: 'new', isbn: entry.item.isbn }, addToHome: false });
+  const actions = (entry: HomeEntry): MoreMenuItem[] => [
+    { label: t.fix, onSelect: () => fix(entry) },
+    { label: t.reads, onSelect: () => setReadsOf(entry) },
+    { label: t.remove, onSelect: () => setRemoving(entry), danger: true },
+  ];
 
   /**
    * A new no-barcode book can't be matched by its key, so before it is added, look for Home books
@@ -100,7 +137,7 @@ export function BooksTab({ store, household }: TabProps) {
     <>
       <section className="stack card">
         <div className="row grownups__section-head">
-          <h2>{fmt(t.heading, { count: entries.length })}</h2>
+          <h2>{narrowed ? fmt(t.headingFiltered, { count: visible.length, total: entries.length }) : fmt(t.heading, { count: entries.length })}</h2>
           <button type="button" className="btn btn--primary" onClick={() => setAdding((v) => !v)} aria-expanded={adding}>
             {adding ? t.doneAdding : `📷 ${t.scanToAdd}`}
           </button>
@@ -108,7 +145,7 @@ export function BooksTab({ store, household }: TabProps) {
         {adding && <AddBooks store={store} household={household} onSheet={setSheet} saved={saved} />}
 
         {entries.length > 0 && (
-          <div className="stack">
+          <div className="stack grownups__tools">
             <label htmlFor={searchId} className="visually-hidden">
               {t.searchLabel}
             </label>
@@ -122,30 +159,63 @@ export function BooksTab({ store, household }: TabProps) {
               aria-label={t.searchLabel}
               autoComplete="off"
             />
+            <div className="row grownups__tools-row">
+              <label htmlFor={sortId} className="small muted">
+                {t.sortLabel}
+              </label>
+              <select id={sortId} className="input input--select" value={sort} onChange={(e) => setSort(e.target.value as BookSort)}>
+                {BOOK_SORTS.map((s) => (
+                  <option key={s} value={s}>
+                    {t.sorts[s]}
+                  </option>
+                ))}
+              </select>
+              <ViewToggle view={view} onChange={setView} label={strings.grownups.viewLabel} dense />
+            </div>
+            <div className="chip-row chip-row--dense" role="group" aria-label={t.filterLabel}>
+              {BOOK_FILTERS.map((f) => (
+                <button key={f} type="button" className="chip" aria-pressed={filter === f} onClick={() => setFilter(f)}>
+                  {t.filters[f]}
+                </button>
+              ))}
+            </div>
           </div>
         )}
         {data && entries.length === 0 && <p className="muted">{t.empty}</p>}
-        {entries.length > 0 && visible.length === 0 && <p className="muted">{fmt(t.noMatch, { query: search.trim() })}</p>}
+        {entries.length > 0 && visible.length === 0 && (
+          <p className="muted">{filter === 'all' ? fmt(t.noMatch, { query: search.trim() }) : t.noneInFilter}</p>
+        )}
 
-        <ul className="grownups-books">
-          {visible.map((entry) => (
-            <li key={entry.item.id} className="grownups-book">
-              <div className="grownups-book__cover">
-                <BookCover title={entry.title} coverUrl={entry.book?.cover_url ?? null} />
-              </div>
-              <div className="stack grownups-book__body">
-                <p className="grownups__item-title">{entry.title}</p>
-                {entry.book && entry.book.authors.length > 0 && <p className="small muted">{entry.book.authors.join(', ')}</p>}
-                <p className="small">{entry.reads === 0 ? t.notRead : entry.reads === 1 ? t.readOnce : fmt(t.readTimes, { count: entry.reads })}</p>
-                <div className="row">
-                  <button
-                    type="button"
-                    className="btn btn--small"
-                    onClick={() =>
-                      setSheet({ mode: entry.book ? { kind: 'fix', book: entry.book } : { kind: 'new', isbn: entry.item.isbn }, addToHome: false })
-                    }
-                  >
-                    {t.fix}
+        {view === 'grid' ? (
+          <ul className="gu-grid gu-grid--books">
+            {visible.map((entry) => (
+              <li key={entry.item.id} className="gu-tile">
+                <button type="button" className="gu-tile__open" onClick={() => setDetails(entry)}>
+                  <BookCover title={entry.title} coverUrl={entry.coverUrl} seed={entry.item.isbn} fit="whole" />
+                  <span className="gu-tile__title">{entry.title}</span>
+                  <ReadBy readers={entry.readBy} />
+                </button>
+                <MoreMenu className="gu-tile__more" label={fmt(t.moreFor, { title: entry.title })} items={actions(entry)} />
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <BookList
+            className="gu-list"
+            items={visible}
+            keyOf={(entry) => entry.item.id}
+            renderRow={(entry) => (
+              <div className="gu-row">
+                <BookCover title={entry.title} coverUrl={entry.coverUrl} seed={entry.item.isbn} fit="row" />
+                <div className="gu-row__body">
+                  <p className="gu-row__title">{entry.title}</p>
+                  <p className="small muted gu-row__sub">
+                    {[entry.book?.authors.join(', '), readsLabel(entry.reads)].filter(Boolean).join(' · ')}
+                  </p>
+                </div>
+                <div className="row gu-row__actions">
+                  <button type="button" className="btn btn--small" onClick={() => fix(entry)}>
+                    {t.fixShort}
                   </button>
                   <button type="button" className="btn btn--small" onClick={() => setReadsOf(entry)}>
                     {t.reads}
@@ -154,11 +224,26 @@ export function BooksTab({ store, household }: TabProps) {
                     {t.remove}
                   </button>
                 </div>
+                <MoreMenu className="gu-row__more" label={fmt(t.moreFor, { title: entry.title })} items={actions(entry)} />
               </div>
-            </li>
-          ))}
-        </ul>
+            )}
+          />
+        )}
       </section>
+
+      {details && (
+        <BookDetails
+          entry={entries.find((e) => e.item.id === details.item.id) ?? details}
+          onAction={(action) => {
+            const entry = details;
+            setDetails(null);
+            if (action === 'fix') fix(entry);
+            else if (action === 'reads') setReadsOf(entry);
+            else setRemoving(entry);
+          }}
+          onClose={() => setDetails(null)}
+        />
+      )}
 
       {sheet && (
         <BookSheet
@@ -239,6 +324,68 @@ export function BooksTab({ store, household }: TabProps) {
         />
       )}
     </>
+  );
+}
+
+function readsLabel(reads: number): string {
+  return reads === 0 ? t.notRead : reads === 1 ? t.readOnce : fmt(t.readTimes, { count: reads });
+}
+
+/** The few readers shown as avatars on a tile; the rest as "+N". */
+const AVATARS_SHOWN = 4;
+
+/** A tile's tiny row of avatars of the readers who have read it, or "Not read yet". */
+function ReadBy({ readers }: { readers: readonly Reader[] }) {
+  if (readers.length === 0) return <span className="gu-readby gu-readby--none">{t.notRead}</span>;
+  const shown = readers.slice(0, AVATARS_SHOWN);
+  return (
+    <span className="gu-readby">
+      <span className="visually-hidden">{fmt(t.readBy, { names: readers.map((r) => r.display_name).join(', ') })}</span>
+      {shown.map((r) => (
+        <span key={r.id} className="gu-readby__avatar" aria-hidden="true" title={r.display_name}>
+          {r.avatar}
+        </span>
+      ))}
+      {readers.length > AVATARS_SHOWN && (
+        <span className="gu-readby__more" aria-hidden="true">
+          {fmt(t.moreReaders, { count: readers.length - AVATARS_SHOWN })}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** A Grid book opened: its cover and details, and the same actions as before (Fix this book, Reads, Remove). */
+function BookDetails({ entry, onAction, onClose }: { entry: HomeEntry; onAction: (action: 'fix' | 'reads' | 'remove') => void; onClose: () => void }) {
+  const authors = entry.book?.authors ?? [];
+  return (
+    <Sheet title={entry.title} onClose={onClose}>
+      <div className="gu-details">
+        <div className="gu-details__cover">
+          <BookCover title={entry.title} coverUrl={entry.coverUrl} seed={entry.item.isbn} fit="whole" />
+        </div>
+        <div className="stack gu-details__body">
+          {authors.length > 0 && <p>{fmt(strings.common.byAuthors, { authors: authors.join(', ') })}</p>}
+          <p className="small muted">{isNoIsbnBookKey(entry.item.isbn) ? t.noBarcode : fmt(t.isbn, { isbn: entry.item.isbn })}</p>
+          <p className="small muted">{fmt(t.added, { date: formatTimestampDate(entry.addedAt) })}</p>
+          <p className="small">{readsLabel(entry.reads)}</p>
+          {entry.readBy.length > 0 && (
+            <p className="small">{fmt(t.readBy, { names: entry.readBy.map((r) => `${r.avatar} ${r.display_name}`).join(', ') })}</p>
+          )}
+        </div>
+      </div>
+      <div className="row">
+        <button type="button" className="btn btn--primary" onClick={() => onAction('fix')}>
+          {t.fix}
+        </button>
+        <button type="button" className="btn" onClick={() => onAction('reads')}>
+          {t.reads}
+        </button>
+        <button type="button" className="btn btn--quiet" onClick={() => onAction('remove')}>
+          {t.remove}
+        </button>
+      </div>
+    </Sheet>
   );
 }
 

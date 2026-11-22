@@ -1,44 +1,19 @@
-import { useState } from 'react';
 import type { Id } from '../data';
+import { readViewChoice, useViewChoice, writeViewChoice, type ViewChoice } from '../lib/viewChoice';
 
 /**
  * My Bookshelf and Library Books as a Grid (big whole covers, the default) or a List (rows with a
- * small cover), remembered per screen and per reader on this device (localStorage; the
- * library-card: prefix means "Reset this device" clears it). Grid when unset or when storage is
- * unavailable.
+ * small cover), remembered per screen and per reader on this device (src/lib/viewChoice.ts).
  */
 
-export type BookView = 'grid' | 'list';
+export type BookView = ViewChoice;
 export type BookViewScreen = 'shelf' | 'library';
 
-const PREFIX = 'library-card:book-view:';
+export const bookViewKey = (screen: BookViewScreen, readerId: Id) => `library-card:book-view:${screen}:${readerId}`;
 
-export const bookViewKey = (screen: BookViewScreen, readerId: Id) => `${PREFIX}${screen}:${readerId}`;
+export const getBookView = (screen: BookViewScreen, readerId: Id): BookView => readViewChoice(bookViewKey(screen, readerId), 'grid');
 
-export function getBookView(screen: BookViewScreen, readerId: Id): BookView {
-  try {
-    return window.localStorage.getItem(bookViewKey(screen, readerId)) === 'list' ? 'list' : 'grid';
-  } catch {
-    return 'grid';
-  }
-}
+export const setBookView = (screen: BookViewScreen, readerId: Id, view: BookView): void => writeViewChoice(bookViewKey(screen, readerId), view, 'grid');
 
-export function setBookView(screen: BookViewScreen, readerId: Id, view: BookView): void {
-  try {
-    if (view === 'grid') window.localStorage.removeItem(bookViewKey(screen, readerId));
-    else window.localStorage.setItem(bookViewKey(screen, readerId), view);
-  } catch {
-    // Storage blocked: the choice lasts until the page closes.
-  }
-}
-
-/** The screen's Grid / List choice for the active reader: remembered on this device, read again when the reader changes. */
-export function useBookView(screen: BookViewScreen, readerId: Id): [BookView, (view: BookView) => void] {
-  const [state, setState] = useState(() => ({ readerId, view: getBookView(screen, readerId) }));
-  const view = state.readerId === readerId ? state.view : getBookView(screen, readerId);
-  const choose = (next: BookView) => {
-    setState({ readerId, view: next });
-    setBookView(screen, readerId, next);
-  };
-  return [view, choose];
-}
+/** The screen's Grid / List choice for the active reader: read again when the reader changes. */
+export const useBookView = (screen: BookViewScreen, readerId: Id) => useViewChoice(bookViewKey(screen, readerId), 'grid');

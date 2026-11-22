@@ -234,6 +234,247 @@
   height: 100%;
 }
 
+/* Grid / List views ---------------------------------------------------------------- */
+
+/* Search, sort, Grid / List and quick filters above a tab's books. */
+.grownups__tools-row {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+}
+
+.grownups__tools-row .view-toggle {
+  margin-left: auto;
+}
+
+.input--select {
+  padding-right: var(--space-3);
+  cursor: pointer;
+}
+
+/* Cards (Readers, Libraries, Loans, library card barcodes) in a Grid. */
+.gu-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--grownups-card-min)), 1fr));
+  gap: var(--space-3);
+}
+
+/* Book tiles: three across on a phone held upright, five to eight on wider screens. */
+.gu-grid--books {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (min-width: 36rem) {
+  .gu-grid--books {
+    grid-template-columns: repeat(auto-fill, minmax(var(--grownups-tile-min), 1fr));
+  }
+}
+
+.gu-tile {
+  position: relative;
+}
+
+.gu-tile__open {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Always two lines high, so the tiles line up along each row. */
+.gu-tile__title {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  line-height: 1.25;
+  height: calc(2em * 1.25);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.gu-tile__more {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+}
+
+.gu-tile__more .more-menu__button {
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+
+/* Who has read a book: a tiny row of avatars, or "Not read yet". */
+.gu-readby {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--space-5);
+  line-height: 1;
+}
+
+.gu-readby__avatar {
+  font-size: var(--text-md);
+}
+
+.gu-readby--none,
+.gu-readby__more {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.gu-readby__more {
+  font-weight: var(--weight-bold);
+}
+
+/* A compact List: one row per book, the actions on the right (⋯ on narrow screens). */
+.gu-list {
+  --list-cover-height: var(--grownups-row-cover);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-anchor: none;
+}
+
+.gu-list > li + li {
+  border-top: var(--border-thin) solid var(--color-border);
+}
+
+.gu-row {
+  display: grid;
+  grid-template-columns: var(--list-cover-height) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--grownups-row-min);
+  padding: var(--space-2) 0;
+}
+
+.gu-row .cover-row {
+  justify-self: center;
+}
+
+.gu-row__body {
+  min-width: 0;
+}
+
+.gu-row__title,
+.gu-row__sub {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gu-row__title {
+  font-weight: var(--weight-bold);
+}
+
+.gu-row__actions {
+  flex-wrap: nowrap;
+  gap: var(--space-2);
+}
+
+.gu-row__more {
+  display: none;
+}
+
+@media (max-width: 40rem) {
+  .gu-row__actions {
+    display: none;
+  }
+
+  .gu-row__more {
+    display: inline-flex;
+  }
+}
+
+/* A Grid book opened: its cover beside the details. */
+.gu-details {
+  display: grid;
+  grid-template-columns: minmax(var(--cover-min), 9rem) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+/* A card in a Grid (Readers, Libraries, Loans, library card barcodes): ⋯ in its top corner. */
+.gu-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  padding-right: calc(var(--tap-target) + var(--space-2));
+  border: var(--border-thin) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  min-width: 0;
+}
+
+.gu-card > .more-menu {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+}
+
+.gu-card__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.gu-card__title {
+  font-weight: var(--weight-bold);
+  overflow-wrap: anywhere;
+}
+
+/* A reader's library card barcodes (Cards, Grid): each with its own ⋯. */
+.gu-card--no-menu {
+  padding-right: var(--space-3);
+}
+
+.gu-barcodes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.gu-barcode {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* A loan card: its whole cover beside the details. */
+.gu-card--loan {
+  display: grid;
+  grid-template-columns: var(--grownups-cover) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-3);
+}
+
+.gu-card--loan .row {
+  gap: var(--space-2);
+}
+
 /* Books ----------------------------------------------------------------------- */
 
 .grownups__add {

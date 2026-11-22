@@ -3,9 +3,12 @@ import { libraryCardTitle } from '../../cards/makeStrip';
 import type { DataStore, Household, Library, LibraryCard, Reader } from '../../data';
 import { fmt, strings } from '../../strings';
 import { ConfirmSheet } from '../../ui/ConfirmSheet';
+import { MoreMenu, type MoreMenuItem } from '../../ui/MoreMenu';
 import { Sheet } from '../../ui/Sheet';
 import { useToast } from '../../ui/Toast';
+import { ViewToggle } from '../../ui/ViewToggle';
 import { useGrownUpSession } from '../useGrownUpSession';
+import { useGrownUpView } from '../views';
 import { LibraryCardSheet } from './LibraryCardSheet';
 
 const t = strings.grownups.libraryCards;
@@ -25,64 +28,113 @@ interface LibraryCardsSectionProps {
   cards: readonly LibraryCard[];
 }
 
-/** Grown-ups > Cards: each reader's library card barcodes (printed on the back of their card). */
+/**
+ * Grown-ups > Cards: each reader's library card barcodes (printed on the back of their card), as
+ * a List or a Grid of cards (one per reader, each barcode's Edit / Copy / Delete in its ⋯).
+ */
 export function LibraryCardsSection({ store, household, readers, libraries, cards }: LibraryCardsSectionProps) {
   const toast = useToast();
   const { runAsGrownUp } = useGrownUpSession();
   const [dialog, setDialog] = useState<Dialog>(null);
+  const [view, setView] = useGrownUpView('cards');
   const title = (card: LibraryCard) => libraryCardTitle(card, libraries) ?? t.untitled;
+  const actions = (reader: Reader, card: LibraryCard): MoreMenuItem[] => [
+    { label: t.edit, onSelect: () => setDialog({ kind: 'edit', reader, card }) },
+    ...(readers.length > 1 ? [{ label: t.copy, onSelect: () => setDialog({ kind: 'copy', reader, card }) }] : []),
+    { label: t.delete, onSelect: () => setDialog({ kind: 'delete', reader, card }), danger: true },
+  ];
 
   return (
     <section className="stack card">
-      <h2>{t.heading}</h2>
+      <div className="row grownups__section-head">
+        <h2>{t.heading}</h2>
+        {readers.length > 0 && <ViewToggle view={view} onChange={setView} label={strings.grownups.viewLabel} dense />}
+      </div>
       <p>{t.intro}</p>
       <p className="alert">{strings.grownups.cards.matte}</p>
-      <ul className="library-cards">
-        {readers.map((reader) => {
-          const theirs = cards.filter((c) => c.reader_id === reader.id);
-          return (
-            <li key={reader.id} className="library-cards__reader stack">
-              <p className="reader-row__name">
-                <span aria-hidden="true">{reader.avatar}</span> {reader.display_name}
-              </p>
-              {theirs.length === 0 ? (
-                <p className="small muted">{t.noneYet}</p>
-              ) : (
-                <ul className="dev-list">
-                  {theirs.map((card) => (
-                    <li key={card.id} className="dev-list__row">
-                      <div className="stack">
-                        <p>{title(card)}</p>
-                        <p className="small muted">
-                          {t.formats[card.format]} · <span className="library-cards__value">{card.value}</span>
-                        </p>
-                      </div>
-                      <div className="row">
-                        <button type="button" className="btn btn--small" onClick={() => setDialog({ kind: 'edit', reader, card })}>
-                          {t.edit}
-                        </button>
-                        {readers.length > 1 && (
-                          <button type="button" className="btn btn--small" onClick={() => setDialog({ kind: 'copy', reader, card })}>
-                            {t.copy}
+      {view === 'grid' ? (
+        <ul className="gu-grid">
+          {readers.map((reader) => {
+            const theirs = cards.filter((c) => c.reader_id === reader.id);
+            return (
+              <li key={reader.id} className="gu-card gu-card--no-menu">
+                <p className="gu-card__title">
+                  <span aria-hidden="true">{reader.avatar}</span> {reader.display_name}
+                </p>
+                {theirs.length === 0 ? (
+                  <p className="small muted">{t.noneYet}</p>
+                ) : (
+                  <ul className="gu-barcodes">
+                    {theirs.map((card) => (
+                      <li key={card.id} className="gu-barcode">
+                        <div className="stack grownups-book__body">
+                          <p>{title(card)}</p>
+                          <p className="small muted">
+                            {t.formats[card.format]} · <span className="library-cards__value">{card.value}</span>
+                          </p>
+                        </div>
+                        <MoreMenu label={fmt(strings.grownups.moreFor, { name: title(card) })} items={actions(reader, card)} />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <div className="row">
+                  <button type="button" className="btn btn--small btn--primary" onClick={() => setDialog({ kind: 'edit', reader, card: null })}>
+                    {t.add}
+                  </button>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <ul className="library-cards">
+          {readers.map((reader) => {
+            const theirs = cards.filter((c) => c.reader_id === reader.id);
+            return (
+              <li key={reader.id} className="library-cards__reader stack">
+                <p className="reader-row__name">
+                  <span aria-hidden="true">{reader.avatar}</span> {reader.display_name}
+                </p>
+                {theirs.length === 0 ? (
+                  <p className="small muted">{t.noneYet}</p>
+                ) : (
+                  <ul className="dev-list">
+                    {theirs.map((card) => (
+                      <li key={card.id} className="dev-list__row">
+                        <div className="stack">
+                          <p>{title(card)}</p>
+                          <p className="small muted">
+                            {t.formats[card.format]} · <span className="library-cards__value">{card.value}</span>
+                          </p>
+                        </div>
+                        <div className="row">
+                          <button type="button" className="btn btn--small" onClick={() => setDialog({ kind: 'edit', reader, card })}>
+                            {t.edit}
                           </button>
-                        )}
-                        <button type="button" className="btn btn--small btn--quiet" onClick={() => setDialog({ kind: 'delete', reader, card })}>
-                          {t.delete}
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <div className="row">
-                <button type="button" className="btn btn--small btn--primary" onClick={() => setDialog({ kind: 'edit', reader, card: null })}>
-                  {t.add}
-                </button>
-              </div>
-            </li>
-          );
-        })}
-      </ul>
+                          {readers.length > 1 && (
+                            <button type="button" className="btn btn--small" onClick={() => setDialog({ kind: 'copy', reader, card })}>
+                              {t.copy}
+                            </button>
+                          )}
+                          <button type="button" className="btn btn--small btn--quiet" onClick={() => setDialog({ kind: 'delete', reader, card })}>
+                            {t.delete}
+                          </button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <div className="row">
+                  <button type="button" className="btn btn--small btn--primary" onClick={() => setDialog({ kind: 'edit', reader, card: null })}>
+                    {t.add}
+                  </button>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
 
       {dialog?.kind === 'edit' && (
         <LibraryCardSheet

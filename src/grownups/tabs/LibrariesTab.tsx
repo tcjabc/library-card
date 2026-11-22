@@ -5,19 +5,32 @@ import { SAMPLE_ISBN, asWebUrl, fillSearchTemplate, searchTemplateFromUrl } from
 import { stickerPrefix } from '../../library/sticker';
 import { BookScanner } from '../../scan/BookScanner';
 import { fmt, strings } from '../../strings';
+import { MoreMenu } from '../../ui/MoreMenu';
 import { Sheet } from '../../ui/Sheet';
 import type { TabProps } from './types';
 import { useToast } from '../../ui/Toast';
+import { ViewToggle } from '../../ui/ViewToggle';
+import { useGrownUpView } from '../views';
 
 const t = strings.grownups.libraries;
 
-/** Grown-ups > Libraries: the places loans come from. */
+/** One library's settings in a line: loan days, sticker prefix, catalogue search or homepage. */
+function summary(lib: Library): string {
+  return (
+    fmt(t.loanDays, { days: lib.default_loan_days }) +
+    (lib.sticker_prefix ? ` · ${fmt(t.prefixShown, { prefix: lib.sticker_prefix })}` : '') +
+    (lib.search_url_template ? ` · ${t.hasSearch}` : lib.homepage_url ? ` · ${t.hasHomepage}` : '')
+  );
+}
+
+/** Grown-ups > Libraries: the places loans come from (a List, or a Grid of cards). */
 export function LibrariesTab({ store, household }: TabProps) {
   const toast = useToast();
   const { requireGrownUp } = useGrownUpSession();
   const [editing, setEditing] = useState<Library | 'new' | null>(null);
   const query = useCallback((s: DataStore) => s.listLibraries(household.id), [household.id]);
   const { data: libraries = [] } = useDataQuery(query, ['libraries']);
+  const [view, setView] = useGrownUpView('libraries');
 
   const remove = (lib: Library) =>
     requireGrownUp(async () => {
@@ -27,20 +40,37 @@ export function LibrariesTab({ store, household }: TabProps) {
 
   return (
     <section className="stack card">
-      <h2>{t.heading}</h2>
+      <div className="row grownups__section-head">
+        <h2>{t.heading}</h2>
+        {libraries.length > 0 && <ViewToggle view={view} onChange={setView} label={strings.grownups.viewLabel} dense />}
+      </div>
       {libraries.length === 0 ? (
         <p className="muted">{t.none}</p>
+      ) : view === 'grid' ? (
+        <ul className="gu-grid">
+          {libraries.map((lib) => (
+            <li key={lib.id} className="gu-card">
+              <p className="gu-card__title">
+                <span aria-hidden="true">🏛️</span> {lib.name}
+              </p>
+              <p className="small muted">{summary(lib)}</p>
+              <MoreMenu
+                label={fmt(strings.grownups.moreFor, { name: lib.name })}
+                items={[
+                  { label: t.edit, onSelect: () => setEditing(lib) },
+                  { label: t.delete, onSelect: () => remove(lib), danger: true },
+                ]}
+              />
+            </li>
+          ))}
+        </ul>
       ) : (
         <ul className="dev-list">
           {libraries.map((lib) => (
             <li key={lib.id} className="dev-list__row">
               <div className="stack">
                 <p className="reader-row__name">{lib.name}</p>
-                <p className="small muted">
-                  {fmt(t.loanDays, { days: lib.default_loan_days })}
-                  {lib.sticker_prefix ? ` · ${fmt(t.prefixShown, { prefix: lib.sticker_prefix })}` : ''}
-                  {lib.search_url_template ? ` · ${t.hasSearch}` : lib.homepage_url ? ` · ${t.hasHomepage}` : ''}
-                </p>
+                <p className="small muted">{summary(lib)}</p>
               </div>
               <div className="row">
                 <button type="button" className="btn btn--small" onClick={() => setEditing(lib)}>

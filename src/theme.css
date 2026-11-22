@@ -154,6 +154,13 @@
   --grownups-cover: 3.5rem;
   --grownups-qr: 14rem;
   --grownups-tabbar: 4rem;
+  /* Grown-up Grid views: book tiles and cards at least this wide; List rows at least this tall. */
+  --grownups-tile-min: 7.5rem;
+  --grownups-card-min: 15rem;
+  --grownups-row-min: 4rem;
+  --grownups-row-cover: 3rem;
+  /* A ⋯ menu's width. */
+  --menu-min: 11rem;
   --tap-target-lg: 4.5rem;
   --tap-target-sm: 2.5rem;
   --content-max: 40rem;
@@ -209,6 +216,7 @@
   --z-celebration: 55;
   --z-tabbar: 40;
   --z-sticky: 30;
+  --z-menu: 45;
 }
 
 /*
