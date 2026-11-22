@@ -59,6 +59,9 @@ describe('coverage', () => {
       'previewDeleteReader',
       // books and covers
       'getBook', 'getBooks', 'putBook', 'saveCoverImage', 'isCoverPhotoMissing',
+      // collections
+      'createCollection', 'getCollection', 'listCollections', 'updateCollection', 'deleteCollection', 'setBookCollection',
+      'clearBookCollection', 'listCollectionBooks',
       // home
       'addHomeItem', 'getHomeItem', 'listHomeItems', 'removeHomeItem',
       // libraries and loans

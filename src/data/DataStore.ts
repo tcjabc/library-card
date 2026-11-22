@@ -91,6 +91,42 @@ export interface Book {
    */
   cover_url: string | null;
   source: BookSource;
+  /**
+   * The collection (box set or series) the book belongs to, or null. At most one. Changed only by
+   * setBookCollection / clearBookCollection (and deleteCollection): putBook keeps it. Missing
+   * (older rows, records and backups) reads as null.
+   */
+  collection_id?: Id | null;
+  /** Its number in the collection (1–9999), or null. Several editions may share a number. */
+  volume?: number | null;
+}
+
+/**
+ * A box set or series: its books still count one by one; the set itself is never a read. Progress
+ * and the trophy are worked out per reader from the books' confirmed reads (src/collections),
+ * never stored.
+ */
+export interface Collection {
+  /** collectionIdForIsbn(isbn) when it was made with a box ISBN (so two devices make the same one), else random. */
+  id: Id;
+  household_id: Id;
+  /** 1–200 characters. */
+  title: string;
+  /** A display URL, as Book.cover_url (a catalogue address, or a photo stored on the device). */
+  cover_url: string | null;
+  /** The box's own ISBN-13, or null. */
+  isbn: Isbn | null;
+  /** How many books the set has (1–500), or null for a series of unknown length. */
+  expected_count: number | null;
+}
+
+export const MAX_COLLECTION_TITLE = 200;
+export const MAX_EXPECTED_COUNT = 500;
+export const MAX_VOLUME = 9999;
+
+/** A collection made from a box ISBN gets this id, the same on every device. */
+export function collectionIdForIsbn(isbn: Isbn): Id {
+  return `box-${isbn}`;
 }
 
 export interface HomeItem {
@@ -252,6 +288,9 @@ export type LoanPatch = Partial<
   >
 >;
 
+export type NewCollection = Pick<Collection, 'household_id' | 'title'> & Partial<Pick<Collection, 'cover_url' | 'isbn' | 'expected_count'>>;
+export type CollectionPatch = Partial<Pick<Collection, 'title' | 'cover_url' | 'isbn' | 'expected_count'>>;
+
 export type NewLibraryCard = Pick<LibraryCard, 'household_id' | 'reader_id' | 'value' | 'format'> &
   Partial<Pick<LibraryCard, 'library_id' | 'label'>>;
 export type LibraryCardPatch = Partial<Pick<LibraryCard, 'library_id' | 'value' | 'format' | 'label'>>;
@@ -304,6 +343,7 @@ export type DataTable =
   | 'libraries'
   | 'loans'
   | 'library_cards'
+  | 'collections'
   /** Read events; read summaries change with them. */
   | 'read_events'
   | 'reader_journeys';
@@ -408,6 +448,29 @@ export interface DataStore {
    * edited until it arrives. False for no cover, a catalogue cover or a photo that is here.
    */
   isCoverPhotoMissing(isbn: Isbn): Promise<boolean>;
+
+  // Collections (box sets and series) ---------------------------------------
+  /**
+   * Title trimmed (1–200), isbn a 13-digit ISBN or null, expected_count 1–500 or null ("invalid"
+   * otherwise). With an isbn the id is collectionIdForIsbn(isbn): "conflict" if that one exists.
+   */
+  createCollection(input: NewCollection): Promise<Collection>;
+  getCollection(id: Id): Promise<Collection | null>;
+  /** Sorted by title. */
+  listCollections(householdId: Id): Promise<Collection[]>;
+  /** Same checks as createCollection. The id never changes (not even with a new isbn). */
+  updateCollection(id: Id, patch: CollectionPatch): Promise<Collection>;
+  /** Keeps its books and unlinks them (collection_id and volume cleared), in one transaction. */
+  deleteCollection(id: Id): Promise<void>;
+  /**
+   * Puts a saved book in a collection with a number (1–9999, or null), moving it out of any other.
+   * "not_found" for an unknown book or collection, "invalid" for a bad number.
+   */
+  setBookCollection(isbn: BookKey, collectionId: Id, volume: number | null): Promise<Book>;
+  /** Takes a book out of its collection (the book is kept). */
+  clearBookCollection(isbn: BookKey): Promise<Book>;
+  /** The collection's books, by number (unnumbered last), then key. */
+  listCollectionBooks(collectionId: Id): Promise<Book[]>;
 
   // Home library (one row per household + ISBN) ------------------------------
   /** Idempotent: adding an ISBN already in the household returns the existing item. */

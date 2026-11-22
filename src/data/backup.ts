@@ -1,7 +1,11 @@
 import {
   HOUSEHOLD_ID,
+  MAX_COLLECTION_TITLE,
+  MAX_EXPECTED_COUNT,
+  MAX_VOLUME,
   type Book,
   type CalendarDate,
+  type Collection,
   type HomeItem,
   type Household,
   type Library,
@@ -22,14 +26,14 @@ import { checkLibraryCardBarcode } from './libraryCardRules';
  *   {
  *     format: "library-card-backup", version: 1,
  *     schema: <the IndexedDB version that wrote it>, exported_at,
- *     tables: { households, readers, books, home_items, libraries, library_cards, loans, read_events,
- *               reader_journeys },
+ *     tables: { households, readers, books, home_items, libraries, library_cards, collections, loans,
+ *               read_events, reader_journeys },
  *     covers: { "cover:<sha256>": "<base64>" }
  *   }
  *
  * read_summaries are derived from read_events, so they are rebuilt on import
- * rather than exported. library_cards came later (schema 6): a backup without it restores with
- * no library cards.
+ * rather than exported. library_cards came later (schema 6) and collections later still (schema 8):
+ * a backup without one restores with none (and books without collection_id / volume are in none).
  */
 
 export const BACKUP_FORMAT = 'library-card-backup';
@@ -42,13 +46,14 @@ export const BACKUP_TABLES = [
   'home_items',
   'libraries',
   'library_cards',
+  'collections',
   'loans',
   'read_events',
   'reader_journeys',
 ] as const;
 
 /** Tables added after the first backups: a file without one restores it empty. */
-const OPTIONAL_TABLES: readonly BackupTable[] = ['library_cards'];
+const OPTIONAL_TABLES: readonly BackupTable[] = ['library_cards', 'collections'];
 export type BackupTable = (typeof BACKUP_TABLES)[number];
 
 /** A reader as stored: files from before reader kinds and checks have neither (a child who needs the check). */
@@ -64,6 +69,7 @@ export interface BackupTables {
   home_items: HomeItem[];
   libraries: Library[];
   library_cards: LibraryCard[];
+  collections: Collection[];
   loans: Loan[];
   read_events: BackupReadEvent[];
   reader_journeys: ReaderJourney[];
@@ -83,6 +89,7 @@ export interface BackupSummary {
   readers: number;
   books: number;
   homeBooks: number;
+  collections: number;
   loans: number;
   reads: number;
   covers: number;
@@ -105,7 +112,7 @@ export type BackupCheck = { ok: true; backup: Backup } | { ok: false; problem: B
 
 // --- Validation ---------------------------------------------------------------
 
-type FieldKind = 'string' | 'string?' | 'number' | 'strings' | 'boolean?';
+type FieldKind = 'string' | 'string?' | 'number' | 'number?' | 'strings' | 'boolean?';
 
 /** Required fields per table; nullable ("string?") fields may also be missing and become null. */
 const FIELDS: Record<BackupTable, Record<string, FieldKind>> = {
@@ -120,7 +127,23 @@ const FIELDS: Record<BackupTable, Record<string, FieldKind>> = {
     card_token: 'string',
     active_journey_id: 'string?',
   },
-  books: { isbn: 'string', title: 'string', authors: 'strings', cover_url: 'string?', source: 'string' },
+  books: {
+    isbn: 'string',
+    title: 'string',
+    authors: 'strings',
+    cover_url: 'string?',
+    source: 'string',
+    collection_id: 'string?',
+    volume: 'number?',
+  },
+  collections: {
+    id: 'string',
+    household_id: 'string',
+    title: 'string',
+    cover_url: 'string?',
+    isbn: 'string?',
+    expected_count: 'number?',
+  },
   home_items: { id: 'string', household_id: 'string', isbn: 'string', added_at: 'string' },
   libraries: {
     id: 'string',
@@ -184,6 +207,7 @@ const KEY_FIELD: Record<BackupTable, string> = {
   home_items: 'id',
   libraries: 'id',
   library_cards: 'id',
+  collections: 'id',
   loans: 'id',
   read_events: 'id',
   reader_journeys: 'id',
@@ -219,9 +243,11 @@ function checkRow(table: BackupTable, row: unknown, index: number): Record<strin
             ? value === undefined || value === null || typeof value === 'boolean'
             : kind === 'number'
               ? typeof value === 'number' && Number.isFinite(value)
-              : Array.isArray(value) && value.every((v) => typeof v === 'string');
+              : kind === 'number?'
+                ? value === undefined || value === null || (typeof value === 'number' && Number.isFinite(value))
+                : Array.isArray(value) && value.every((v) => typeof v === 'string');
     if (!fine) throw new Problem('bad_row', `${where}.${field}`);
-    if ((kind === 'string?' || kind === 'boolean?') && value === undefined) out[field] = null;
+    if ((kind === 'string?' || kind === 'boolean?' || kind === 'number?') && value === undefined) out[field] = null;
   }
   return out;
 }
@@ -299,17 +325,32 @@ function validate(data: unknown, maxSchema: number): Backup {
     if (!check.ok || check.value !== row.value) throw new Problem('bad_row', `library_cards[${i}].value`);
   });
 
+  // Collections: a title, a 13-digit box ISBN or none, a count of 1–500 or none. A book's volume is
+  // 1–9999 or none; a collection_id whose collection isn't in the file is allowed (the book shows
+  // in no collection, as it would after a sync).
+  const wholeIn = (v: unknown, max: number) => v === null || (Number.isInteger(v) && (v as number) >= 1 && (v as number) <= max);
+  tables.collections.forEach((row, i) => {
+    if ((row.title as string).trim().length > MAX_COLLECTION_TITLE) throw new Problem('bad_row', `collections[${i}].title`);
+    if (row.isbn !== null && !/^\d{13}$/.test(row.isbn as string)) throw new Problem('bad_row', `collections[${i}].isbn`);
+    if (!wholeIn(row.expected_count, MAX_EXPECTED_COUNT)) throw new Problem('bad_row', `collections[${i}].expected_count`);
+  });
+  tables.books.forEach((row, i) => {
+    if (!wholeIn(row.volume, MAX_VOLUME)) throw new Problem('bad_row', `books[${i}].volume`);
+  });
+
   const covers: Record<string, string> = {};
   for (const [ref, value] of Object.entries(data.covers)) {
     if (!COVER_REF.test(ref) || typeof value !== 'string' || !BASE64.test(value)) throw new Problem('bad_cover', ref);
     covers[ref] = value;
   }
-  tables.books.forEach((book, i) => {
-    const ref = book.cover_url as string | null;
-    if (ref === null || /^https?:\/\//.test(ref)) return;
-    if (!COVER_REF.test(ref)) throw new Problem('bad_row', `books[${i}].cover_url`);
-    if (!(ref in covers)) throw new Problem('missing_cover', ref);
-  });
+  for (const table of ['books', 'collections'] as const) {
+    tables[table].forEach((row, i) => {
+      const ref = row.cover_url as string | null;
+      if (ref === null || /^https?:\/\//.test(ref)) return;
+      if (!COVER_REF.test(ref)) throw new Problem('bad_row', `${table}[${i}].cover_url`);
+      if (!(ref in covers)) throw new Problem('missing_cover', ref);
+    });
+  }
 
   return {
     format: BACKUP_FORMAT,
@@ -341,6 +382,7 @@ export function summariseBackup(backup: Backup): BackupSummary {
     readers: tables.readers.length,
     books: tables.books.length,
     homeBooks: tables.home_items.length,
+    collections: tables.collections.length,
     loans: tables.loans.length,
     reads: tables.read_events.length,
     covers: Object.keys(backup.covers).length,

@@ -444,6 +444,110 @@ export const storageChecks: StorageCheck[] = [
     equal((await rawAll(dbName, 'cover_images')).length, 0, 'removed once unused');
   }),
 
+  // Collections -------------------------------------------------------------------
+  check('collections', 'create, read, list and update: checked fields, a box ISBN gives the same id everywhere', async (ctx) => {
+    const { store } = await ctx.open();
+    const h = await store.getCurrentHousehold();
+    const box = await store.createCollection({ household_id: h.id, title: '  The Box  ', isbn: '9780000000026', expected_count: 6 });
+    equal([box.id, box.title, box.isbn, box.expected_count, box.cover_url], ['box-9780000000026', 'The Box', '9780000000026', 6, null], 'from a box ISBN');
+    const series = await store.createCollection({ household_id: h.id, title: 'A series' });
+    ok(series.id !== box.id && !series.id.startsWith('box-'), 'without one: a random id', series.id);
+    equal([series.isbn, series.expected_count], [null, null], 'no ISBN, no count');
+    await rejectsWithCode(store.createCollection({ household_id: h.id, title: 'Again', isbn: '9780000000026' }), 'conflict', 'same box twice');
+    await rejectsWithCode(store.createCollection({ household_id: h.id, title: '   ' }), 'invalid', 'empty title');
+    await rejectsWithCode(store.createCollection({ household_id: h.id, title: 'x'.repeat(201) }), 'invalid', 'title too long');
+    await rejectsWithCode(store.createCollection({ household_id: h.id, title: 'X', isbn: '978-0' }), 'invalid', 'bad ISBN');
+    await rejectsWithCode(store.createCollection({ household_id: h.id, title: 'X', expected_count: 0 }), 'invalid', 'count 0');
+    await rejectsWithCode(store.createCollection({ household_id: h.id, title: 'X', expected_count: 501 }), 'invalid', 'count 501');
+    equal((await store.listCollections(h.id)).map((c) => c.title), ['A series', 'The Box'], 'listed by title');
+    const updated = await store.updateCollection(box.id, { title: 'Box set', expected_count: null, isbn: '9780000000033' });
+    equal([updated.id, updated.title, updated.expected_count, updated.isbn], [box.id, 'Box set', null, '9780000000033'], 'updated, id kept');
+    equal((await store.getCollection(box.id))?.title, 'Box set', 'get');
+    equal(await store.getCollection('nope'), null, 'unknown');
+    await rejectsWithCode(store.updateCollection('nope', { title: 'x' }), 'not_found', 'update unknown');
+    await rejectsWithCode(store.updateCollection(box.id, { expected_count: 1.5 }), 'invalid', 'bad count');
+  }),
+  check('collections', 'members: numbers, editions sharing one, moving, taking out; putBook keeps membership', async (ctx) => {
+    const { store } = await ctx.open();
+    const h = await store.getCurrentHousehold();
+    const set = await store.createCollection({ household_id: h.id, title: 'Set', expected_count: 3 });
+    const other = await store.createCollection({ household_id: h.id, title: 'Other' });
+    for (const [isbn, title] of [[ISBN_A, 'One'], [ISBN_B, 'Two'], [ISBN_C, 'Two again'], [ISBN_D, 'Loose']]) {
+      await store.putBook({ isbn, title, authors: [], cover_url: null, source: 'manual' });
+    }
+    equal([(await store.getBook(ISBN_D))?.collection_id, (await store.getBook(ISBN_D))?.volume], [null, null], 'a new book is in none');
+    await store.setBookCollection(ISBN_B, set.id, 2);
+    await store.setBookCollection(ISBN_C, set.id, 2); // another edition of number 2
+    const one = await store.setBookCollection(ISBN_A, set.id, 1);
+    equal([one.collection_id, one.volume], [set.id, 1], 'returned');
+    equal((await store.listCollectionBooks(set.id)).map((b) => [b.isbn, b.volume]), [[ISBN_A, 1], [ISBN_B, 2], [ISBN_C, 2]], 'by number');
+    // Fixing a book (title, cover) never takes it out of its set.
+    await store.putBook({ isbn: ISBN_B, title: 'Two (fixed)', authors: ['Z'], cover_url: null, source: 'manual' });
+    equal([(await store.getBook(ISBN_B))?.collection_id, (await store.getBook(ISBN_B))?.volume], [set.id, 2], 'putBook keeps it');
+    await store.setBookCollection(ISBN_C, other.id, null);
+    equal((await store.listCollectionBooks(other.id)).map((b) => [b.isbn, b.volume]), [[ISBN_C, null]], 'moved, unnumbered');
+    equal((await store.listCollectionBooks(set.id)).length, 2, 'one book in one collection at most');
+    const out = await store.clearBookCollection(ISBN_A);
+    equal([out.collection_id, out.volume], [null, null], 'taken out');
+    ok((await store.getBook(ISBN_A)) !== null, 'and kept');
+    await rejectsWithCode(store.setBookCollection(ISBN_A, set.id, 0), 'invalid', 'number 0');
+    await rejectsWithCode(store.setBookCollection(ISBN_A, set.id, 10_000), 'invalid', 'number 10000');
+    await rejectsWithCode(store.setBookCollection(ISBN_A, 'nope', 1), 'not_found', 'unknown collection');
+    await rejectsWithCode(store.setBookCollection('9780000000999', set.id, 1), 'not_found', 'unknown book');
+    await rejectsWithCode(store.clearBookCollection('9780000000999'), 'not_found', 'clear unknown book');
+  }),
+  check('collections', 'deleting one keeps its books and unlinks them; its cover photo stays while anything uses it', async (ctx) => {
+    const { store, dbName } = await ctx.open();
+    const h = await store.getCurrentHousehold();
+    const photo = await store.saveCoverImage(jpeg(5, 5, 5));
+    const set = await store.createCollection({ household_id: h.id, title: 'Box', cover_url: photo });
+    ok(!!set.cover_url?.startsWith('blob:'), 'shown as a blob: URL', set.cover_url?.slice(0, 5));
+    equal((await rawGet<{ cover_url: string }>(dbName, 'collections', set.id))?.cover_url, `cover:${await sha256Hex(jpeg(5, 5, 5))}`, 'stored as cover:<hash>');
+    // A book that used the same photo stops using it: the box still does, so it stays.
+    await store.putBook({ isbn: ISBN_A, title: 'A', authors: [], cover_url: photo, source: 'manual' });
+    await store.putBook({ isbn: ISBN_A, title: 'A', authors: [], cover_url: null, source: 'manual' });
+    equal((await rawAll(dbName, 'cover_images')).length, 1, 'kept for the box');
+    await store.putBook({ isbn: ISBN_B, title: 'B', authors: [], cover_url: null, source: 'manual' });
+    await store.setBookCollection(ISBN_A, set.id, 1);
+    await store.setBookCollection(ISBN_B, set.id, 2);
+    await store.addHomeItem(h.id, ISBN_A);
+    await store.deleteCollection(set.id);
+    equal(await store.getCollection(set.id), null, 'gone');
+    equal(
+      [await store.getBook(ISBN_A), await store.getBook(ISBN_B)].map((b) => [b?.title, b?.collection_id, b?.volume]),
+      [['A', null, null], ['B', null, null]],
+      'books kept, unlinked',
+    );
+    ok((await store.getHomeItem(h.id, ISBN_A)) !== null, 'still at home');
+    equal((await rawAll(dbName, 'cover_images')).length, 0, 'its photo went with it (nothing else used it)');
+    // A new cover for a box drops the old photo when nothing else uses it.
+    const p1 = await store.saveCoverImage(jpeg(6));
+    const box = await store.createCollection({ household_id: h.id, title: 'Box 2', cover_url: p1 });
+    await store.updateCollection(box.id, { cover_url: 'https://example.org/box.jpg' });
+    equal((await rawAll(dbName, 'cover_images')).length, 0, 'old box photo dropped');
+    equal((await store.getCollection(box.id))?.cover_url, 'https://example.org/box.jpg', 'catalogue cover');
+    await store.deleteCollection('never-there'); // nothing to do, no error
+  }),
+  check('collections', 'a backup keeps collections, members and the box photo', async (ctx) => {
+    const { store } = await ctx.open();
+    const h = await store.getCurrentHousehold();
+    const photo = await store.saveCoverImage(jpeg(7, 7));
+    const set = await store.createCollection({ household_id: h.id, title: 'Box', isbn: '9780000000026', expected_count: 4, cover_url: photo });
+    await store.putBook({ isbn: ISBN_A, title: 'A', authors: [], cover_url: null, source: 'manual' });
+    await store.setBookCollection(ISBN_A, set.id, 3);
+    const backup = await store.exportBackup();
+    equal(backup.tables.collections.map((c) => [c.id, c.expected_count, c.cover_url?.startsWith('cover:')]), [[set.id, 4, true]], 'exported');
+    equal(Object.keys(backup.covers).length, 1, 'the box photo is in the file');
+    await store.resetDevice();
+    equal(await store.listCollections(HOUSEHOLD_ID), [], 'reset');
+    const summary = await store.importBackup(JSON.parse(JSON.stringify(backup)));
+    equal(summary.collections, 1, 'counted');
+    const back = await store.getCollection(set.id);
+    equal([back?.title, back?.isbn, back?.expected_count], ['Box', '9780000000026', 4], 'restored');
+    ok(await sameBytes(await blobAt(back?.cover_url), jpeg(7, 7)), 'with its photo');
+    equal([(await store.getBook(ISBN_A))?.collection_id, (await store.getBook(ISBN_A))?.volume], [set.id, 3], 'member restored');
+  }),
+
   // Home items --------------------------------------------------------------------
   check('home', 'home items: id is the book key, one per household + book, newest first, removable', async (ctx) => {
     const { store } = await ctx.open({ now: (() => { let t = Date.parse('2026-01-01T00:00:00Z'); return () => (t += 1000); })() });
@@ -1006,11 +1110,13 @@ export const storageChecks: StorageCheck[] = [
   }),
 
   // Migrations ------------------------------------------------------------------------
-  check('migration', 'a fresh database is created at v7 with no legacy reads store', async (ctx) => {
+  check('migration', 'a fresh database is created at v8 with no legacy reads store', async (ctx) => {
     const { store, dbName } = await ctx.open();
     await store.coverStep;
     const { version, stores } = await rawStoreNames(dbName);
-    equal(version, 7, 'version');
+    equal(version, 8, 'version');
+    equal((await rawIndexNames(dbName, 'collections')).sort(), ['by_cover', 'by_household'], 'collection indexes');
+    equal((await rawIndexNames(dbName, 'books')).sort(), ['by_collection', 'by_cover'], 'book indexes');
     equal((await rawIndexNames(dbName, 'library_cards')).sort(), ['by_household_created', 'by_library', 'by_reader'], 'library card indexes');
     ok(stores.includes('records') && stores.includes('outbox'), 'sync stores', stores);
     equal(await rawIndexNames(dbName, 'records'), ['by_parent'], 'records index');
@@ -1094,14 +1200,20 @@ export const storageChecks: StorageCheck[] = [
     const third = await ctx.attach(name);
     equal((await third.coverStep).moved, 0, 'a finished step is a no-op');
   }),
-  check('migration', 'v4 -> v7: records, outbox and library_cards stores and the read status index added, every row kept, nothing recorded', async (ctx) => {
+  check('migration', 'v4 -> v8: records, outbox, library_cards and collections stores and the read status index added, every row kept, nothing recorded', async (ctx) => {
     const name = ctx.name();
-    const fixture = await createV3Database(name); // upgrades through v4 and v5 to v6
+    const fixture = await createV3Database(name); // upgrades through v4 … v7 to v8
     const store = await ctx.attach(name);
     const { version, stores } = await rawStoreNames(name);
-    equal(version, 7, 'version');
-    ok(stores.includes('records') && stores.includes('outbox') && stores.includes('library_cards'), 'new stores', stores);
+    equal(version, 8, 'version');
+    ok(stores.includes('records') && stores.includes('outbox') && stores.includes('library_cards') && stores.includes('collections'), 'new stores', stores);
     equal(await store.listHouseholdLibraryCards(HOUSEHOLD_ID), [], 'no library cards yet');
+    equal(await store.listCollections(HOUSEHOLD_ID), [], 'no collections yet');
+    const oldBook = (await rawAll<{ isbn: string }>(name, 'books'))[0];
+    if (oldBook) {
+      const book = await store.getBook(oldBook.isbn);
+      equal([book?.collection_id, book?.volume], [null, null], 'an older book is in no collection');
+    }
     equal((await rawAll(name, 'records')).length, 0, 'migrated rows have no records until sync is turned on');
     equal((await rawAll(name, 'outbox')).length, 0, 'and nothing is queued');
     equal((await rawAll(name, 'loans')).length, fixture.loans.length, 'loans kept');
@@ -1111,7 +1223,7 @@ export const storageChecks: StorageCheck[] = [
     const name = ctx.name();
     const fixture = await createV3Database(name);
     const store = await ctx.attach(name);
-    equal((await rawStoreNames(name)).version, 7, 'version');
+    equal((await rawStoreNames(name)).version, 8, 'version');
     const indexes = await rawIndexNames(name, 'loans');
     ok(!indexes.includes('by_household_sticker') && indexes.includes('by_library_sticker') && indexes.includes('by_sticker'), 'indexes', indexes);
     const loans = await rawAll<Record<string, unknown>>(name, 'loans');
@@ -1174,13 +1286,13 @@ export const storageChecks: StorageCheck[] = [
     const journey = await store.startJourney(a.id, 'ocean_deep', '2026-01-01T00:00:00Z');
 
     const backup = await store.exportBackup();
-    equal([backup.format, backup.version, backup.schema], [BACKUP_FORMAT, 1, 7], 'format, version, schema');
+    equal([backup.format, backup.version, backup.schema], [BACKUP_FORMAT, 1, 8], 'format, version, schema');
     ok(!('records' in backup.tables) && !('outbox' in backup.tables), 'sync bookkeeping is never exported');
     ok(!('read_summaries' in backup.tables), 'summaries are not exported');
     equal(Object.keys(backup.covers), [photoRef], 'the one photo, under its cover: key');
     equal((backup.tables.books.find((x) => x.isbn === ISBN_A))?.cover_url, photoRef, 'books keep the cover: reference, not a blob: URL');
     const before = summariseBackup(backup);
-    equal(before, { readers: 2, books: 2, homeBooks: 2, loans: 2, reads: 3, covers: 1 }, 'summary counts');
+    equal(before, { readers: 2, books: 2, homeBooks: 2, collections: 0, loans: 2, reads: 3, covers: 1 }, 'summary counts');
 
     // As if downloaded and picked on another device.
     const file = JSON.parse(JSON.stringify(backup));

@@ -20,8 +20,9 @@ const problem = (o: unknown) => {
 };
 
 describe('wire ids', () => {
-  it('are "<table>:<local id>" for the nine synced tables', () => {
-    expect(SYNCED_TABLES).toEqual(['households', 'readers', 'books', 'home_items', 'libraries', 'library_cards', 'loans', 'read_events', 'reader_journeys']);
+  it('are "<table>:<local id>" for the ten synced tables', () => {
+    expect(SYNCED_TABLES).toEqual(['households', 'readers', 'books', 'home_items', 'libraries', 'library_cards', 'collections', 'loans', 'read_events', 'reader_journeys']);
+    expect(parseWireId('collections:box-9780000000002')).toEqual({ table: 'collections', localId: 'box-9780000000002' });
     expect(parseWireId(`library_cards:${UUID}`)).toEqual({ table: 'library_cards', localId: UUID });
     expect(wireId('readers', UUID)).toBe(`readers:${UUID}`);
     expect(parseWireId(`readers:${UUID}`)).toEqual({ table: 'readers', localId: UUID });
@@ -156,6 +157,7 @@ describe('rows and records', () => {
       home_items: ['isbn', 'added_at'],
       libraries: ['name', 'default_loan_days'],
       library_cards: ['reader_id', 'value', 'format', 'created_at'],
+      collections: ['title'],
       loans: ['reader_id', 'isbn', 'borrowed_at', 'renew_count'],
       read_events: ['reader_id', 'isbn', 'read_at'],
       reader_journeys: ['reader_id', 'journey_id', 'started_at'],

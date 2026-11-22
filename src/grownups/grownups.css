@@ -475,6 +475,46 @@
   gap: var(--space-2);
 }
 
+/* A set opened (Collections): its books by number, the numbers not added yet, adding books. */
+.gu-set-slots__empty {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: var(--grownups-row-min);
+  padding: var(--space-2) 0;
+  border: 0;
+  background: none;
+  color: var(--color-text-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gu-set-slots__empty .set-sheet__number {
+  width: var(--grownups-row-cover);
+}
+
+.gu-member__actions {
+  flex-wrap: nowrap;
+  gap: var(--space-2);
+}
+
+.input--number,
+.row > .input--number {
+  flex: none;
+  width: calc(var(--tap-target) * 1.5);
+  padding: 0 var(--space-2);
+  text-align: center;
+}
+
+.textarea {
+  min-height: calc(var(--tap-target) * 2);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  resize: vertical;
+}
+
 /* Books ----------------------------------------------------------------------- */
 
 .grownups__add {

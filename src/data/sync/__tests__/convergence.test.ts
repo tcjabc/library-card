@@ -15,7 +15,7 @@ import { formatStamp, type Op } from '../../../sync/vendor/sync-core.js';
 const ISBN_A = '9780000000002';
 const ISBN_B = '9780000000019';
 const T0 = Date.parse('2026-06-01T00:00:00.000Z');
-const VIEWS = ['households', 'readers', 'books', 'home_items', 'libraries', 'library_cards', 'loans', 'read_events', 'reader_journeys', 'read_summaries'];
+const VIEWS = ['households', 'readers', 'books', 'home_items', 'libraries', 'library_cards', 'collections', 'loans', 'read_events', 'reader_journeys', 'read_summaries'];
 
 interface Device {
   store: SyncDataStore;
@@ -271,6 +271,67 @@ describe('sync adapter: two devices converge', () => {
     await send(a, b);
     await send(b, a);
     for (const d of [a, b]) expect(await d.store.getReader(reader.id)).toBeNull();
+  });
+
+  it('collections: made on A, members added on B, deleting on A unlinks them everywhere', async () => {
+    const { a, b } = await household();
+    a.at = T0 + 5_000;
+    const set = await a.store.createCollection({ household_id: HOUSEHOLD_ID, title: 'Box', isbn: '9780000000026', expected_count: 2 });
+    await send(a, b);
+    expect((await b.store.getCollection(set.id))?.title).toBe('Box');
+
+    b.at = T0 + 10_000;
+    for (const [isbn, volume] of [[ISBN_A, 1], [ISBN_B, 2]] as const) {
+      await b.store.putBook({ isbn, title: `Vol ${volume}`, authors: [], cover_url: null, source: 'manual' });
+      await b.store.addHomeItem(HOUSEHOLD_ID, isbn);
+      await b.store.setBookCollection(isbn, set.id, volume);
+    }
+    await send(b, a);
+    for (const d of [a, b]) expect((await d.store.listCollectionBooks(set.id)).map((x) => [x.isbn, x.volume])).toEqual([[ISBN_A, 1], [ISBN_B, 2]]);
+    expect(await views(a)).toBe(await views(b));
+
+    a.at = T0 + 20_000;
+    await a.store.deleteCollection(set.id);
+    await send(a, b);
+    for (const d of [a, b]) {
+      expect(await d.store.getCollection(set.id)).toBeNull();
+      expect((await d.store.getBooks([ISBN_A, ISBN_B])).map((x) => [x.title, x.collection_id, x.volume])).toEqual([
+        ['Vol 1', null, null],
+        ['Vol 2', null, null],
+      ]);
+      expect((await d.store.listHomeItems(HOUSEHOLD_ID)).length).toBe(2);
+    }
+    expect(await views(a)).toBe(await views(b));
+  });
+
+  it('collections: the same box ISBN made on two devices is one collection; a book in a deleted one shows in none', async () => {
+    const { a, b } = await household();
+    for (const [d, at, title] of [[a, T0 + 10_000, 'From A'], [b, T0 + 11_000, 'From B']] as const) {
+      d.at = at;
+      await d.store.createCollection({ household_id: HOUSEHOLD_ID, title, isbn: '9780000000033', expected_count: 3 });
+    }
+    await send(a, b);
+    await send(b, a);
+    for (const d of [a, b]) {
+      const list = await d.store.listCollections(HOUSEHOLD_ID);
+      expect(list.map((c) => [c.id, c.title])).toEqual([['box-9780000000033', 'From B']]); // the later title wins
+    }
+    expect(await views(a)).toBe(await views(b));
+
+    // A adds a member while B deletes the set: the book keeps a stale collection_id, which no
+    // collection answers to (the screens show it loose); the views still match.
+    a.at = T0 + 20_000;
+    await a.store.putBook({ isbn: ISBN_A, title: 'Late member', authors: [], cover_url: null, source: 'manual' });
+    await a.store.setBookCollection(ISBN_A, 'box-9780000000033', 1);
+    b.at = T0 + 21_000;
+    await b.store.deleteCollection('box-9780000000033');
+    await send(a, b);
+    await send(b, a);
+    for (const d of [a, b]) {
+      expect(await d.store.getCollection('box-9780000000033')).toBeNull();
+      expect((await d.store.getBook(ISBN_A))?.title).toBe('Late member');
+    }
+    expect(await views(a)).toBe(await views(b));
   });
 
   it('deterministic ids: the same home book added on both devices is one row', async () => {

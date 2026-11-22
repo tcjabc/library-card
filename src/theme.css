@@ -217,6 +217,8 @@
   --z-tabbar: 40;
   --z-sticky: 30;
   --z-menu: 45;
+  /* "Updating…": over everything while a new version waits for the database. */
+  --z-updating: 90;
 }
 
 /*

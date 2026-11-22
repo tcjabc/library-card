@@ -47,6 +47,9 @@ export function confettiBurst(from: Element | { x: number; y: number }, options:
     layer.appendChild(piece);
   }
 
-  document.body.appendChild(layer);
+  // A modal dialog (a sheet, a celebration) sits above the page in the top layer: confetti for a
+  // tap inside one goes inside the topmost one, or it would be hidden behind it.
+  const modals = [...document.querySelectorAll('dialog[open]')].filter((d) => d.matches(':modal'));
+  (modals.at(-1) ?? document.body).appendChild(layer);
   setTimeout(() => layer.remove(), DURATION_MS + 100);
 }

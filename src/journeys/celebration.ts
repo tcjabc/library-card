@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { markAllTrophiesCelebrated } from '../collections/trophies';
 import { HOUSEHOLD_ID, type DataStore, type ReaderJourney } from '../data';
 
 /**
@@ -101,8 +102,9 @@ function clearLegacyFlags(readerIds: Iterable<string>): void {
 
 /**
  * Add every completion that exists now to the list (starting or joining sync, replacing with the
- * household's data, restoring a backup). With keepLegacyPending, a celebration the previous
- * version still had waiting (its flag) stays due.
+ * household's data, restoring a backup), and every collection trophy to theirs
+ * (src/collections/trophies.ts). With keepLegacyPending, a celebration the previous version still
+ * had waiting (its flag) stays due.
  */
 export async function markAllCompletionsCelebrated(store: DataStore, { keepLegacyPending = false } = {}): Promise<void> {
   const readers = await store.listReaders(HOUSEHOLD_ID);
@@ -119,6 +121,7 @@ export async function markAllCompletionsCelebrated(store: DataStore, { keepLegac
   }
   writeRaw(ids);
   clearLegacyFlags(flags.keys());
+  await markAllTrophiesCelebrated(store);
 }
 
 /** First run of this version on a device: make the list (keeping a celebration still waiting). */

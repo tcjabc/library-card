@@ -13,9 +13,15 @@ import {
   DEFAULT_LOAN_DAYS,
   DataStoreError,
   HOUSEHOLD_ID,
+  MAX_COLLECTION_TITLE,
   MAX_COVER_BYTES,
+  MAX_EXPECTED_COUNT,
+  MAX_VOLUME,
+  collectionIdForIsbn,
   type Book,
   type BookKey,
+  type Collection,
+  type CollectionPatch,
   type DataChangeListener,
   type DataStore,
   type DataTable,
@@ -55,6 +61,7 @@ import { newCardToken, newId, toIso } from '../ids';
 import { checkLibraryCardBarcode, cleanLibraryCardLabel } from '../libraryCardRules';
 import { hashPin, isValidPin, verifyPin } from '../pin';
 import { addToSummary, isRepeatTap, latestEvent, summarize } from '../readRules';
+import { setDatabaseUpgradeBlocked } from '../upgradeStatus';
 
 /**
  * Local-only adapter backed by IndexedDB. Data never leaves the device.
@@ -78,10 +85,12 @@ import { addToSummary, isRepeatTap, latestEvent, summarize } from '../readRules'
  *       library and [household, created_at]. New store only.
  *   v7  read_events: [household_id, status] index, for reads waiting for a grown-up (older events
  *       have no status: they are confirmed and stay out of it). Index only.
+ *   v8  `collections` (box sets and series), indexed by household and cover; books.collection_id
+ *       and books.volume (missing on older rows: none), with a books index by collection.
  */
 
 const DB_NAME = 'library-card';
-export const DB_VERSION = 7;
+export const DB_VERSION = 8;
 
 // Highest possible string suffix for compound-key range upper bounds.
 const MAX_STRING = '￿';
@@ -152,8 +161,9 @@ interface LibraryCardDB extends DBSchema {
   books: {
     key: BookKey;
     value: Book;
-    indexes: { by_cover: string };
+    indexes: { by_cover: string; by_collection: Id };
   };
+  collections: { key: Id; value: Collection; indexes: { by_household: Id; by_cover: string } };
   cover_images: { key: string; value: CoverImageRecord };
   /** Legacy, emptied by the cover re-key step. Deleted at the next schema version. */
   covers: { key: BookKey; value: LegacyCoverRecord };
@@ -232,103 +242,121 @@ type AnyTx<Mode extends IDBTransactionMode> = IDBPTransaction<
   Mode
 >;
 
-function openLibraryDb(name: string): Promise<DB> {
-  return openDB<LibraryCardDB>(name, DB_VERSION, {
-    async upgrade(db, oldVersion, _newVersion, tx) {
-      if (oldVersion < 1) {
-        db.createObjectStore('households', { keyPath: 'id' });
+/**
+ * Opens (and if needed upgrades) the database. An upgrade waits while another tab or window holds
+ * an older version open: every connection closes itself and reloads on "versionchange" (below),
+ * but a tab frozen in the background can't until it comes back. Meanwhile the page says
+ * "Updating…" (src/data/upgradeStatus.ts) and carries on by itself once the open goes through.
+ */
+async function openLibraryDb(name: string): Promise<DB> {
+  try {
+    return await openDB<LibraryCardDB>(name, DB_VERSION, {
+      async upgrade(db, oldVersion, _newVersion, tx) {
+        if (oldVersion < 1) {
+          db.createObjectStore('households', { keyPath: 'id' });
 
-        const readers = db.createObjectStore('readers', { keyPath: 'id' });
-        readers.createIndex('by_household', 'household_id');
-        readers.createIndex('by_card_token', 'card_token', { unique: true });
+          const readers = db.createObjectStore('readers', { keyPath: 'id' });
+          readers.createIndex('by_household', 'household_id');
+          readers.createIndex('by_card_token', 'card_token', { unique: true });
 
-        db.createObjectStore('books', { keyPath: 'isbn' });
+          db.createObjectStore('books', { keyPath: 'isbn' });
 
-        const home = db.createObjectStore('home_items', { keyPath: 'id' });
-        home.createIndex('by_household_isbn', ['household_id', 'isbn'], { unique: true });
-        home.createIndex('by_household_added', ['household_id', 'added_at']);
+          const home = db.createObjectStore('home_items', { keyPath: 'id' });
+          home.createIndex('by_household_isbn', ['household_id', 'isbn'], { unique: true });
+          home.createIndex('by_household_added', ['household_id', 'added_at']);
 
-        const loans = db.createObjectStore('loans', { keyPath: 'id' });
-        loans.createIndex('by_household_borrowed', ['household_id', 'borrowed_at']);
-        loans.createIndex('by_reader', 'reader_id');
+          const loans = db.createObjectStore('loans', { keyPath: 'id' });
+          loans.createIndex('by_household_borrowed', ['household_id', 'borrowed_at']);
+          loans.createIndex('by_reader', 'reader_id');
 
-        const reads = db.createObjectStore('reads', { keyPath: ['reader_id', 'isbn'] });
-        reads.createIndex('by_reader_read_at', ['reader_id', 'read_at']);
+          const reads = db.createObjectStore('reads', { keyPath: ['reader_id', 'isbn'] });
+          reads.createIndex('by_reader_read_at', ['reader_id', 'read_at']);
 
-        const journeys = db.createObjectStore('reader_journeys', { keyPath: 'id' });
-        journeys.createIndex('by_reader_started', ['reader_id', 'started_at']);
-      }
+          const journeys = db.createObjectStore('reader_journeys', { keyPath: 'id' });
+          journeys.createIndex('by_reader_started', ['reader_id', 'started_at']);
+        }
 
-      if (oldVersion < 2) {
-        db.createObjectStore('meta', { keyPath: 'key' });
-        db.createObjectStore('covers', { keyPath: 'isbn' });
-        const libraries = db.createObjectStore('libraries', { keyPath: 'id' });
-        libraries.createIndex('by_household', 'household_id');
+        if (oldVersion < 2) {
+          db.createObjectStore('meta', { keyPath: 'key' });
+          db.createObjectStore('covers', { keyPath: 'isbn' });
+          const libraries = db.createObjectStore('libraries', { keyPath: 'id' });
+          libraries.createIndex('by_household', 'household_id');
 
-        const loans = tx.objectStore('loans');
-        loans.createIndex('by_library', 'library_id');
-        // Replaced in v4; typed by string because the v4 schema no longer names it.
-        loans.createIndex('by_household_sticker' as never, ['household_id', 'sticker_barcode']);
-        tx.objectStore('reads').createIndex('by_household', 'household_id');
+          const loans = tx.objectStore('loans');
+          loans.createIndex('by_library', 'library_id');
+          // Replaced in v4; typed by string because the v4 schema no longer names it.
+          loans.createIndex('by_household_sticker' as never, ['household_id', 'sticker_barcode']);
+          tx.objectStore('reads').createIndex('by_household', 'household_id');
 
-        if (oldVersion >= 1) await migrateV1Data(tx);
-      }
+          if (oldVersion >= 1) await migrateV1Data(tx);
+        }
 
-      if (oldVersion < 3) {
-        db.createObjectStore('cover_images', { keyPath: 'hash' });
-        tx.objectStore('books').createIndex('by_cover', 'cover_url');
+        if (oldVersion < 3) {
+          db.createObjectStore('cover_images', { keyPath: 'hash' });
+          tx.objectStore('books').createIndex('by_cover', 'cover_url');
 
-        const events = db.createObjectStore('read_events', { keyPath: 'id' });
-        events.createIndex('by_reader_isbn_read_at', ['reader_id', 'isbn', 'read_at']);
-        events.createIndex('by_reader_read_at', ['reader_id', 'read_at']);
-        events.createIndex('by_household', 'household_id');
+          const events = db.createObjectStore('read_events', { keyPath: 'id' });
+          events.createIndex('by_reader_isbn_read_at', ['reader_id', 'isbn', 'read_at']);
+          events.createIndex('by_reader_read_at', ['reader_id', 'read_at']);
+          events.createIndex('by_household', 'household_id');
 
-        const summaries = db.createObjectStore('read_summaries', { keyPath: ['reader_id', 'isbn'] });
-        summaries.createIndex('by_reader_first', ['reader_id', 'first_read_at']);
-        summaries.createIndex('by_reader_last', ['reader_id', 'last_read_at']);
-        summaries.createIndex('by_household', 'household_id');
+          const summaries = db.createObjectStore('read_summaries', { keyPath: ['reader_id', 'isbn'] });
+          summaries.createIndex('by_reader_first', ['reader_id', 'first_read_at']);
+          summaries.createIndex('by_reader_last', ['reader_id', 'last_read_at']);
+          summaries.createIndex('by_household', 'household_id');
 
-        if (oldVersion >= 1) await migrateV2Data(tx);
-        db.deleteObjectStore('reads');
-      }
+          if (oldVersion >= 1) await migrateV2Data(tx);
+          db.deleteObjectStore('reads');
+        }
 
-      if (oldVersion < 4) {
-        const loans = tx.objectStore('loans');
-        // Typed v4 schema no longer names the old index, so ask by string.
-        if (loans.indexNames.contains('by_household_sticker' as never)) loans.deleteIndex('by_household_sticker' as never);
-        loans.createIndex('by_library_sticker', ['library_id', 'sticker_barcode']);
-        loans.createIndex('by_sticker', 'sticker_barcode');
-      }
+        if (oldVersion < 4) {
+          const loans = tx.objectStore('loans');
+          // Typed v4 schema no longer names the old index, so ask by string.
+          if (loans.indexNames.contains('by_household_sticker' as never)) loans.deleteIndex('by_household_sticker' as never);
+          loans.createIndex('by_library_sticker', ['library_id', 'sticker_barcode']);
+          loans.createIndex('by_sticker', 'sticker_barcode');
+        }
 
-      if (oldVersion < 5) {
-        const records = db.createObjectStore('records', { keyPath: 'id' });
-        records.createIndex('by_parent', 'p');
-        const outbox = db.createObjectStore('outbox', { keyPath: ['rec', 'f'] });
-        outbox.createIndex('by_t', 't');
-      }
+        if (oldVersion < 5) {
+          const records = db.createObjectStore('records', { keyPath: 'id' });
+          records.createIndex('by_parent', 'p');
+          const outbox = db.createObjectStore('outbox', { keyPath: ['rec', 'f'] });
+          outbox.createIndex('by_t', 't');
+        }
 
-      if (oldVersion < 6) {
-        const cards = db.createObjectStore('library_cards', { keyPath: 'id' });
-        cards.createIndex('by_reader', 'reader_id');
-        cards.createIndex('by_library', 'library_id');
-        cards.createIndex('by_household_created', ['household_id', 'created_at']);
-      }
+        if (oldVersion < 6) {
+          const cards = db.createObjectStore('library_cards', { keyPath: 'id' });
+          cards.createIndex('by_reader', 'reader_id');
+          cards.createIndex('by_library', 'library_id');
+          cards.createIndex('by_household_created', ['household_id', 'created_at']);
+        }
 
-      if (oldVersion < 7) {
-        tx.objectStore('read_events').createIndex('by_household_status', ['household_id', 'status']);
-      }
-    },
-    blocking(_currentVersion, blockedVersion, event) {
-      const conn = event.target as IDBDatabase;
-      conn.close();
-      // blockedVersion is null when the database is being deleted. Otherwise a
-      // newer version of the app opened it in another tab: reload into that version.
-      if (blockedVersion !== null) window.location.reload();
-    },
-    blocked() {
-      console.warn('[data/local] Database upgrade waiting for another tab to close.');
-    },
-  });
+        if (oldVersion < 7) {
+          tx.objectStore('read_events').createIndex('by_household_status', ['household_id', 'status']);
+        }
+
+        if (oldVersion < 8) {
+          const collections = db.createObjectStore('collections', { keyPath: 'id' });
+          collections.createIndex('by_household', 'household_id');
+          collections.createIndex('by_cover', 'cover_url');
+          tx.objectStore('books').createIndex('by_collection', 'collection_id');
+        }
+      },
+      blocking(_currentVersion, blockedVersion, event) {
+        const conn = event.target as IDBDatabase;
+        conn.close();
+        // blockedVersion is null when the database is being deleted. Otherwise a
+        // newer version of the app opened it in another tab: reload into that version.
+        if (blockedVersion !== null) window.location.reload();
+      },
+      blocked() {
+        console.warn('[data/local] Database upgrade waiting for another tab to close.');
+        setDatabaseUpgradeBlocked(true);
+      },
+    });
+  } finally {
+    setDatabaseUpgradeBlocked(false);
+  }
 }
 
 /** v1 -> v2 data changes. Runs inside the upgrade transaction. */
@@ -567,6 +595,36 @@ function checkCalendarDate(value: string | null | undefined, field: string): voi
   }
 }
 
+/** A collection's title: trimmed, 1–200 characters. */
+function checkedCollectionTitle(value: unknown): string {
+  const title = typeof value === 'string' ? value.trim() : '';
+  if (!title || title.length > MAX_COLLECTION_TITLE) {
+    throw new DataStoreError('invalid', `A collection's title is 1–${MAX_COLLECTION_TITLE} characters.`);
+  }
+  return title;
+}
+
+/** A box ISBN: 13 digits, or null. */
+function checkedBoxIsbn(value: unknown): string | null {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value !== 'string' || !/^\d{13}$/.test(value)) throw new DataStoreError('invalid', 'A box ISBN is 13 digits.');
+  return value;
+}
+
+/** A whole number from 1 to max, or null. */
+function checkedCount(value: unknown, max: number, field: string): number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > max) {
+    throw new DataStoreError('invalid', `${field} is a whole number from 1 to ${max}.`);
+  }
+  return value;
+}
+
+/** Book rows from before collections have neither field. */
+function withMembership(book: Book): Book {
+  return { ...book, collection_id: book.collection_id ?? null, volume: book.volume ?? null };
+}
+
 function checkLoanDays(value: number): void {
   if (!Number.isInteger(value) || value < 1) {
     throw new DataStoreError('invalid', `default_loan_days must be a positive whole number, got ${value}.`);
@@ -721,7 +779,7 @@ export async function createStoreWith<Extra extends object>(
   const isLocalCoverRef = (ref: string | null | undefined): ref is string =>
     !!ref && (ref.startsWith(COVER_PREFIX) || ref.startsWith(LEGACY_COVER_PREFIX));
 
-  type CoverStores = ('books' | 'cover_images' | 'covers')[];
+  type CoverStores = ('books' | 'cover_images' | 'covers' | 'collections')[];
   type CoverTx = IDBPTransaction<LibraryCardDB, CoverStores, IDBTransactionMode>;
   type CoverWriteTx = IDBPTransaction<LibraryCardDB, CoverStores, 'readwrite'>;
 
@@ -732,9 +790,18 @@ export async function createStoreWith<Extra extends object>(
   };
 
   /** books.cover_url as stored -> URL the UI can render. Accepts both prefixes. */
-  const resolveCover = async (tx: CoverTx, book: Book): Promise<Book> => {
-    const ref = book.cover_url;
-    if (!isLocalCoverRef(ref)) return book;
+  const resolveCover = async (tx: CoverTx, book: Book): Promise<Book> =>
+    withMembership({ ...book, cover_url: await resolveCoverRef(tx, book.cover_url) });
+
+  /** A collection as stored -> as the UI shows it (its cover photo as a blob: URL). */
+  const resolveCollection = async (tx: CoverTx, collection: Collection): Promise<Collection> => ({
+    ...collection,
+    cover_url: await resolveCoverRef(tx, collection.cover_url),
+  });
+
+  /** A stored cover reference -> a URL the UI can render (a photo not on this device yet: null). */
+  const resolveCoverRef = async (tx: CoverTx, ref: string | null): Promise<string | null> => {
+    if (!isLocalCoverRef(ref)) return ref ?? null;
     let url = coverUrls.get(ref);
     if (!url) {
       const blob = await coverBlob(tx, ref);
@@ -749,7 +816,7 @@ export async function createStoreWith<Extra extends object>(
         }
       }
     }
-    return { ...book, cover_url: url ?? null };
+    return url ?? null;
   };
 
   /** UI cover URL -> value to store. blob: URLs must be ones this adapter issued. */
@@ -762,9 +829,10 @@ export async function createStoreWith<Extra extends object>(
     return url;
   };
 
-  /** Deletes a local photo once no book uses it any more. Returns true if one was deleted. */
+  /** Deletes a local photo once no book or collection uses it any more. Returns true if one was deleted. */
   const dropUnusedCover = async (tx: CoverWriteTx, ref: string): Promise<boolean> => {
     if ((await tx.objectStore('books').index('by_cover').count(ref)) > 0) return false;
+    if ((await tx.objectStore('collections').index('by_cover').count(ref)) > 0) return false;
     if (ref.startsWith(COVER_PREFIX)) await tx.objectStore('cover_images').delete(ref.slice(COVER_PREFIX.length));
     else await tx.objectStore('covers').delete(ref.slice(LEGACY_COVER_PREFIX.length));
     return true;
@@ -1056,15 +1124,19 @@ export async function createStoreWith<Extra extends object>(
     },
 
     async putBook(book) {
+      const tx = (await getDb()).transaction(['books', 'cover_images', 'covers', 'collections'], 'readwrite');
+      const before = await tx.objectStore('books').get(book.isbn);
+      const previous = before?.cover_url ?? null;
       const stored: Book = {
         isbn: book.isbn,
         title: book.title,
         authors: [...book.authors],
         cover_url: storableCover(book.cover_url ?? null),
         source: book.source,
+        // Membership changes only through setBookCollection / clearBookCollection.
+        collection_id: before?.collection_id ?? null,
+        volume: before?.volume ?? null,
       };
-      const tx = (await getDb()).transaction(['books', 'cover_images', 'covers'], 'readwrite');
-      const previous = (await tx.objectStore('books').get(book.isbn))?.cover_url ?? null;
       await tx.objectStore('books').put(stored);
       // Drop the old photo if no book uses it any more.
       let droppedRef: string | null = null;
@@ -1110,6 +1182,120 @@ export async function createStoreWith<Extra extends object>(
       }
       changed('covers');
       return url;
+    },
+
+    // Collections -----------------------------------------------------------
+    async createCollection(input) {
+      const isbn = checkedBoxIsbn(input.isbn);
+      const collection: Collection = {
+        id: isbn ? collectionIdForIsbn(isbn) : newId(),
+        household_id: input.household_id,
+        title: checkedCollectionTitle(input.title),
+        cover_url: storableCover(input.cover_url ?? null),
+        isbn,
+        expected_count: checkedCount(input.expected_count, MAX_EXPECTED_COUNT, 'expected_count'),
+      };
+      const tx = (await getDb()).transaction(['collections', 'cover_images', 'covers', 'books'], 'readwrite');
+      if (await tx.objectStore('collections').getKey(collection.id)) {
+        throw new DataStoreError('conflict', `There is already a collection for the box ISBN ${isbn}.`);
+      }
+      await tx.objectStore('collections').add(collection);
+      const resolved = await resolveCollection(tx as unknown as CoverTx, collection);
+      await tx.done;
+      changed('collections');
+      return resolved;
+    },
+
+    async getCollection(id) {
+      const tx = (await getDb()).transaction(['collections', 'cover_images', 'covers', 'books']);
+      const row = await tx.objectStore('collections').get(id);
+      const resolved = row ? await resolveCollection(tx as unknown as CoverTx, row) : null;
+      await tx.done;
+      return resolved;
+    },
+
+    async listCollections(householdId) {
+      const tx = (await getDb()).transaction(['collections', 'cover_images', 'covers', 'books']);
+      const rows = await tx.objectStore('collections').index('by_household').getAll(householdId);
+      const out: Collection[] = [];
+      for (const row of rows) out.push(await resolveCollection(tx as unknown as CoverTx, row));
+      await tx.done;
+      return out.sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
+    },
+
+    async updateCollection(id, patch: CollectionPatch) {
+      const tx = (await getDb()).transaction(['collections', 'books', 'cover_images', 'covers'], 'readwrite');
+      const existing = await tx.objectStore('collections').get(id);
+      if (!existing) throw notFound('Collection', id);
+      const next: Collection = {
+        ...existing,
+        title: patch.title === undefined ? existing.title : checkedCollectionTitle(patch.title),
+        cover_url: patch.cover_url === undefined ? existing.cover_url : storableCover(patch.cover_url),
+        isbn: patch.isbn === undefined ? existing.isbn : checkedBoxIsbn(patch.isbn),
+        expected_count:
+          patch.expected_count === undefined ? existing.expected_count : checkedCount(patch.expected_count, MAX_EXPECTED_COUNT, 'expected_count'),
+      };
+      await tx.objectStore('collections').put(next);
+      // A photo the box no longer uses goes, unless a book uses it.
+      let dropped: string | null = null;
+      if (isLocalCoverRef(existing.cover_url) && existing.cover_url !== next.cover_url && (await dropUnusedCover(tx, existing.cover_url))) {
+        dropped = existing.cover_url;
+      }
+      const resolved = await resolveCollection(tx as unknown as CoverTx, next);
+      await tx.done;
+      if (dropped) revokeCoverUrl(dropped);
+      changed(...(dropped ? (['collections', 'covers'] as const) : (['collections'] as const)));
+      return resolved;
+    },
+
+    async deleteCollection(id) {
+      const tx = (await getDb()).transaction(['collections', 'books', 'cover_images', 'covers'], 'readwrite');
+      const existing = await tx.objectStore('collections').get(id);
+      // Its books stay, out of any collection.
+      for (const book of await tx.objectStore('books').index('by_collection').getAll(id)) {
+        await tx.objectStore('books').put({ ...book, collection_id: null, volume: null });
+      }
+      await tx.objectStore('collections').delete(id);
+      let dropped: string | null = null;
+      if (isLocalCoverRef(existing?.cover_url) && (await dropUnusedCover(tx, existing.cover_url))) dropped = existing.cover_url;
+      await tx.done;
+      if (dropped) revokeCoverUrl(dropped);
+      changed('collections', 'books', ...(dropped ? (['covers'] as const) : []));
+    },
+
+    async setBookCollection(isbn, collectionId, volume) {
+      const number = checkedCount(volume, MAX_VOLUME, 'volume');
+      const tx = (await getDb()).transaction(['books', 'collections', 'cover_images', 'covers'], 'readwrite');
+      const book = await tx.objectStore('books').get(isbn);
+      if (!book) throw notFound('Book', isbn);
+      if (!(await tx.objectStore('collections').getKey(collectionId))) throw notFound('Collection', collectionId);
+      const next: Book = { ...book, collection_id: collectionId, volume: number };
+      await tx.objectStore('books').put(next);
+      const resolved = await resolveCover(tx as unknown as CoverTx, next);
+      await tx.done;
+      changed('books');
+      return resolved;
+    },
+
+    async clearBookCollection(isbn) {
+      const tx = (await getDb()).transaction(['books', 'collections', 'cover_images', 'covers'], 'readwrite');
+      const book = await tx.objectStore('books').get(isbn);
+      if (!book) throw notFound('Book', isbn);
+      const next: Book = { ...book, collection_id: null, volume: null };
+      await tx.objectStore('books').put(next);
+      const resolved = await resolveCover(tx as unknown as CoverTx, next);
+      await tx.done;
+      changed('books');
+      return resolved;
+    },
+
+    async listCollectionBooks(collectionId) {
+      const tx = (await getDb()).transaction(['books', 'collections', 'cover_images', 'covers']);
+      const rows = await tx.objectStore('books').index('by_collection').getAll(collectionId);
+      const out: Book[] = [];
+      for (const row of rows) out.push(await resolveCover(tx as unknown as CoverTx, row));
+      await tx.done;
+      return out.sort((a, b) => (a.volume ?? Infinity) - (b.volume ?? Infinity) || a.isbn.localeCompare(b.isbn));
     },
 
     // Home library ----------------------------------------------------------
@@ -1687,9 +1873,9 @@ export async function createStoreWith<Extra extends object>(
       for (const table of BACKUP_TABLES) {
         (tables as unknown as Record<string, unknown[]>)[table] = await tx.objectStore(table).getAll();
       }
-      // The photos books use, by reference. Read inside the transaction, encode after it.
+      // The photos books and collections use, by reference. Read inside the transaction, encode after it.
       const blobs = new Map<string, Blob>();
-      for (const book of tables.books) {
+      for (const book of [...tables.books, ...tables.collections]) {
         const ref = book.cover_url;
         if (!isLocalCoverRef(ref) || blobs.has(ref)) continue;
         const blob = await coverBlob(tx as unknown as CoverTx, ref);
@@ -1705,11 +1891,13 @@ export async function createStoreWith<Extra extends object>(
         if (key !== ref) renamed.set(ref, key);
         covers[key] = bytesToBase64(new Uint8Array(await blob.arrayBuffer()));
       }
-      tables.books = tables.books.map((book) => {
-        if (!isLocalCoverRef(book.cover_url)) return book;
-        const ref = renamed.get(book.cover_url) ?? book.cover_url;
-        return { ...book, cover_url: ref in covers ? ref : null };
-      });
+      const exportedCover = <T extends { cover_url: string | null }>(row: T): T => {
+        if (!isLocalCoverRef(row.cover_url)) return row;
+        const ref = renamed.get(row.cover_url) ?? row.cover_url;
+        return { ...row, cover_url: ref in covers ? ref : null };
+      };
+      tables.books = tables.books.map((book) => exportedCover(withMembership(book)));
+      tables.collections = tables.collections.map(exportedCover);
       tables.reader_journeys = tables.reader_journeys.map(normaliseJourney);
 
       const backup: Backup = {
@@ -1800,6 +1988,7 @@ export const ALL_TABLES: DataTable[] = [
   'libraries',
   'loans',
   'library_cards',
+  'collections',
   'read_events',
   'reader_journeys',
 ];

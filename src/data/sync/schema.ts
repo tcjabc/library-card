@@ -20,6 +20,7 @@ export const SYNCED_TABLES = [
   'home_items',
   'libraries',
   'library_cards',
+  'collections',
   'loans',
   'read_events',
   'reader_journeys',
@@ -104,6 +105,21 @@ export const SCHEMA: Record<SyncedTable, TableSpec> = {
       cover_url: nullableText(4096),
       // Free text rather than a fixed list, so a source added later isn't refused by older devices.
       source: text(32, REQUIRED),
+      // Its collection (box set or series) and number in it; missing (older records) reads as none.
+      collection_id: id(NULLABLE),
+      volume: { kind: { type: 'int', min: 1, max: 9999 }, nullable: true },
+    },
+  },
+  collections: {
+    key: 'id',
+    household: true,
+    localId: 'id',
+    fields: {
+      title: text(200, REQUIRED),
+      // As books: a "cover:<sha256>" reference or a web address.
+      cover_url: nullableText(4096),
+      isbn: text(13, NULLABLE, /^\d{13}$/),
+      expected_count: { kind: { type: 'int', min: 1, max: 500 }, nullable: true },
     },
   },
   home_items: {

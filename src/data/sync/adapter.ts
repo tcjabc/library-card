@@ -66,14 +66,17 @@ const COVER_PREFIX = 'cover:';
 const coverHash = (value: unknown): string | null =>
   typeof value === 'string' && value.startsWith(COVER_PREFIX) ? value.slice(COVER_PREFIX.length) : null;
 
-/** Photos books point at that are on this device, with their outbox entries (one read of each store). */
+/** Photos books and collections point at that are on this device, with their outbox entries (one read of each store). */
 async function photoPicture(internals: StoreInternals, photos: PhotoOutboxDb) {
   const d = await internals.rawDb();
-  const tx = d.transaction(['books', 'cover_images']);
+  const tx = d.transaction(['books', 'collections', 'cover_images']);
   const books = await tx.objectStore('books').getAll();
+  const collections = await tx.objectStore('collections').getAll();
   const local = new Set((await tx.objectStore('cover_images').getAllKeys()) as string[]);
   await tx.done;
-  const referenced = new Set(books.map((b) => coverHash(b.cover_url)).filter((h): h is string => h !== null && local.has(h)));
+  const referenced = new Set(
+    [...books, ...collections].map((b) => coverHash(b.cover_url)).filter((h): h is string => h !== null && local.has(h)),
+  );
   const entries = new Map((await photos.getAll('blob_outbox')).map((e) => [e.hash, e]));
   return { referenced, entries };
 }

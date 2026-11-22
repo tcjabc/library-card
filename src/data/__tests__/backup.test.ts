@@ -28,10 +28,11 @@ function sample(): Backup {
         { id: 'r2', household_id: 'main', display_name: 'B', kind: 'child', needs_check: true, avatar: '🐢', card_token: 'tok-2', active_journey_id: null },
       ],
       books: [
-        { isbn: '9780000000002', title: 'Photo', authors: [], cover_url: `cover:${HASH}`, source: 'manual' },
-        { isbn: '9780000000019', title: 'Online', authors: ['X'], cover_url: 'https://example.org/c.jpg', source: 'google' },
-        { isbn: 'noisbn-1', title: 'None', authors: [], cover_url: null, source: 'manual' },
+        { isbn: '9780000000002', title: 'Photo', authors: [], cover_url: `cover:${HASH}`, source: 'manual', collection_id: 'box-9780000000026', volume: 1 },
+        { isbn: '9780000000019', title: 'Online', authors: ['X'], cover_url: 'https://example.org/c.jpg', source: 'google', collection_id: null, volume: null },
+        { isbn: 'noisbn-1', title: 'None', authors: [], cover_url: null, source: 'manual', collection_id: 'box-9780000000026', volume: 2 },
       ],
+      collections: [{ id: 'box-9780000000026', household_id: 'main', title: 'The Box', cover_url: `cover:${HASH}`, isbn: '9780000000026', expected_count: 6 }],
       home_items: [{ id: '9780000000002', household_id: 'main', isbn: '9780000000002', added_at: '2026-01-01T00:00:00.000Z' }],
       libraries: [
         {
@@ -200,7 +201,40 @@ describe('parseBackupText', () => {
 
 describe('summariseBackup', () => {
   it('counts readers, books, home books, loans, reads and covers', () => {
-    expect(summariseBackup(sample())).toEqual({ readers: 2, books: 3, homeBooks: 1, loans: 1, reads: 3, covers: 1 });
+    expect(summariseBackup(sample())).toEqual({ readers: 2, books: 3, homeBooks: 1, collections: 1, loans: 1, reads: 3, covers: 1 });
+  });
+});
+
+describe('collections in backups', () => {
+  it('an older backup (no collections table, books without collection_id / volume) restores with none', () => {
+    const old = broken((d) => {
+      delete d.tables.collections;
+      for (const book of d.tables.books) {
+        delete book.collection_id;
+        delete book.volume;
+      }
+    });
+    const result = validateBackup(old);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.backup.tables.collections).toEqual([]);
+    expect(result.backup.tables.books.map((b) => [b.collection_id, b.volume])).toEqual([[null, null], [null, null], [null, null]]);
+  });
+
+  it('refuses bad numbers, a bad box ISBN, an empty title and a missing collection photo', () => {
+    const problem = (edit: Parameters<typeof broken>[0]) => {
+      const r = validateBackup(broken(edit));
+      return r.ok ? 'ok' : `${r.problem} ${r.detail ?? ''}`.trim();
+    };
+    expect(problem((d) => (d.tables.books[0].volume = 0))).toBe('bad_row books[0].volume');
+    expect(problem((d) => (d.tables.books[0].volume = 2.5))).toBe('bad_row books[0].volume');
+    expect(problem((d) => (d.tables.collections[0].expected_count = 501))).toBe('bad_row collections[0].expected_count');
+    expect(problem((d) => (d.tables.collections[0].isbn = '123'))).toBe('bad_row collections[0].isbn');
+    expect(problem((d) => (d.tables.collections[0].title = ''))).toBe('bad_row collections[0].title');
+    expect(problem((d) => (d.tables.collections[0].cover_url = `cover:${'f'.repeat(64)}`))).toBe(`missing_cover cover:${'f'.repeat(64)}`);
+    // A book in a collection the file doesn't have: allowed (it shows in none).
+    expect(problem((d) => (d.tables.books[1].collection_id = 'gone'))).toBe('ok');
+    expect(problem((d) => (d.tables.collections[0].expected_count = null))).toBe('ok');
   });
 });
 

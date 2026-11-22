@@ -84,6 +84,7 @@ export interface LocalCounts {
   readers: number;
   homeBooks: number;
   libraries: number;
+  collections: number;
   loans: number;
   libraryCards: number;
   reads: number;
@@ -630,10 +631,11 @@ export async function createSyncService(options: SyncServiceOptions): Promise<Sy
   }
 
   async function localCounts(): Promise<LocalCounts> {
-    const [readers, home, libraries, loans, libraryCards, summaries] = await Promise.all([
+    const [readers, home, libraries, collections, loans, libraryCards, summaries] = await Promise.all([
       store.listReaders(HOUSEHOLD_ID),
       store.listHomeItems(HOUSEHOLD_ID),
       store.listLibraries(HOUSEHOLD_ID),
+      store.listCollections(HOUSEHOLD_ID),
       store.listLoans(HOUSEHOLD_ID),
       store.listHouseholdLibraryCards(HOUSEHOLD_ID),
       store.listHouseholdReadSummaries(HOUSEHOLD_ID),
@@ -644,6 +646,7 @@ export async function createSyncService(options: SyncServiceOptions): Promise<Sy
       readers: readers.length,
       homeBooks: home.length,
       libraries: libraries.length,
+      collections: collections.length,
       loans: loans.length,
       libraryCards: libraryCards.length,
       reads,

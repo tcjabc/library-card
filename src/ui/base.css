@@ -935,6 +935,159 @@ img {
   }
 }
 
+/* Collections (box sets and series) on My Bookshelf: one card, opened into its books. */
+.set-card__open {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* The cover's box inside a button (a set card, a grown-up tile) takes the button's full width. */
+.set-card__open .shelf-book__cover,
+.gu-tile__open .shelf-book__cover {
+  display: block;
+  width: 100%;
+}
+
+.set-badge {
+  position: absolute;
+  left: var(--space-2);
+  top: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  box-shadow: var(--shadow-card);
+}
+
+.set-badge--inline {
+  position: static;
+  display: inline-block;
+  padding: 0 var(--space-2);
+  font-size: var(--text-xs);
+  box-shadow: none;
+}
+
+/* Where a book has its read button, a set has its progress (it opens the set). */
+.set-toggle {
+  border-color: var(--color-accent);
+}
+
+.set-toggle--trophy {
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
+.set-sheet__progress {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+  text-align: center;
+}
+
+.set-sheet__progress--trophy {
+  color: var(--color-accent);
+}
+
+.set-sheet {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.set-sheet__slot {
+  display: grid;
+  grid-template-columns: var(--list-cover-height) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--list-row-min);
+  padding: var(--space-2) 0;
+  border-bottom: var(--border-thin) solid var(--color-border);
+}
+
+.set-sheet__slot--empty {
+  grid-template-columns: var(--list-cover-height) minmax(0, 1fr);
+}
+
+.set-sheet__cover {
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+
+/* A book's number in its set, on its cover (or alone, for a number not here yet). */
+.set-sheet__number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--badge-size);
+  height: var(--badge-size);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  box-shadow: var(--shadow-card);
+}
+
+.set-sheet__cover .set-sheet__number {
+  position: absolute;
+  left: calc(-1 * var(--space-1));
+  bottom: calc(-1 * var(--space-1));
+}
+
+.set-sheet__slot--empty .set-sheet__number {
+  justify-self: center;
+  background: var(--color-surface-muted);
+  box-shadow: none;
+}
+
+.set-sheet__read .read-toggle {
+  min-width: var(--list-read-min);
+}
+
+/* A small label in a row: "3 editions". */
+.chip-tag {
+  align-self: flex-start;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-surface-muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+}
+
+@media (max-width: 26rem) {
+  .set-sheet__slot {
+    grid-template-columns: var(--list-cover-height) minmax(0, 1fr);
+  }
+
+  .set-sheet__cover {
+    grid-row: span 2;
+  }
+
+  .set-sheet__read {
+    grid-column: 2;
+  }
+
+  .set-sheet__read .read-toggle {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
 /* "Find a book" (My Bookshelf, Library Books): sticks to the top while the books scroll under it. */
 .search-bar {
   position: sticky;
@@ -1053,6 +1206,32 @@ img {
 
 .view-toggle--dense .chip {
   font-size: var(--text-sm);
+}
+
+/* "Updating…" (UpdatingNotice): the whole screen, until the new version can open the database. */
+.updating-notice {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-updating);
+  display: grid;
+  place-items: center;
+  padding: var(--space-5);
+  background: var(--color-bg);
+  color: var(--color-text);
+  text-align: center;
+}
+
+.updating-notice__body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  max-width: var(--content-max);
+}
+
+.updating-notice__icon {
+  font-size: var(--text-emoji);
+  line-height: 1;
 }
 
 /* Sheet ------------------------------------------------------------------- */

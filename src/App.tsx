@@ -18,6 +18,7 @@ import { HouseholdTimeZone } from './session/HouseholdTimeZone';
 import { RequireReader } from './session/RequireReader';
 import { strings } from './strings';
 import { ToastProvider } from './ui/Toast';
+import { UpdatingNotice } from './ui/UpdatingNotice';
 
 const DevPage = lazy(() => import('./dev/DevPage'));
 const GrownUpsArea = lazy(() => import('./grownups/GrownUpsArea'));
@@ -26,6 +27,7 @@ export function App() {
   return (
     <ToastProvider>
       <GrownUpProvider>
+        <UpdatingNotice />
         <HouseholdTimeZone />
         <GrownUpReaderGuard />
         <Routes />

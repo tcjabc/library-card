@@ -11,6 +11,7 @@ export * from './DataStore';
 export { configuredAdapter, getDataStore, type AdapterName } from './store';
 export { isSyncStore, type ApplyResult, type PhotoCounts, type SyncConfig, type SyncDataStore, type SyncEngineStore, type SyncFlags, type SyncPhotoStore } from './sync/types';
 export { withSyncLock } from './sync/lock';
+export { isDatabaseUpgradeBlocked, onDatabaseUpgradeBlocked } from './upgradeStatus';
 export { useDataQuery, useDataStore, type DataQueryResult } from './react';
 export { hashPin, verifyPin } from './pin';
 export { isNoIsbnBookKey, newNoIsbnBookKey } from './ids';
