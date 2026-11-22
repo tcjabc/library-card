@@ -82,9 +82,13 @@ describe.skipIf(!wranglerPath)('sync through the local relay (workerd)', () => {
 
   beforeAll(async () => {
     const { createTestHarness } = (await import(pathToFileURL(wranglerPath!).href)) as {
-      createTestHarness(options: { root: string; workers: { configPath: string }[] }): Harness;
+      createTestHarness(options: { root: string; workers: { configPath: string; secrets?: Record<string, string> }[] }): Harness;
     };
-    harness = createTestHarness({ root: relayDir, workers: [{ configPath: 'wrangler.toml' }] });
+    // ALLOWED_ORIGINS is a Worker secret on Cloudflare; here the localhost value goes in directly.
+    harness = createTestHarness({
+      root: relayDir,
+      workers: [{ configPath: 'wrangler.toml', secrets: { ALLOWED_ORIGINS: 'http://localhost:*,https://localhost:*' } }],
+    });
     base = (await harness.listen()).url.href;
   }, 120_000);
 
@@ -226,6 +230,7 @@ describe.skipIf(!wranglerPath)('sync through the local relay (workerd)', () => {
     a.env.offline();
     b.env.offline();
     await a.store.updateLibrary(id, { name: 'Central (A)', default_loan_days: 7 });
+    await new Promise((r) => setTimeout(r, 10)); // B's edit is clearly later (same-ms stamps tie-break by device id)
     await b.store.updateLibrary(id, { name: 'Central (B)' });
     await a.env.reconnect();
     await b.env.reconnect();

@@ -7,3 +7,4 @@ relay/test/room-logic.test.js -text
 relay/wrangler.toml -text
 relay/README.md -text
 relay/package.json -text
+relay/.dev.vars.example -text

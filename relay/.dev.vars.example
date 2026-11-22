@@ -1,0 +1,3 @@
+# Local values for `wrangler dev` (copy to .dev.vars, which git ignores). Only local dev servers,
+# on any port. On Cloudflare, ALLOWED_ORIGINS is a Worker secret (see README.md).
+ALLOWED_ORIGINS="http://localhost:*,https://localhost:*"

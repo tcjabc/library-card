@@ -17,10 +17,10 @@ const value = (re) => {
   assert.ok(m, `wrangler.toml has ${re}`);
   return m[1];
 };
+const devVarsExample = readFileSync(new URL('../.dev.vars.example', import.meta.url), 'utf8');
 const CONFIG = {
   name: value(/^name = "([^"]+)"/m),
   compatibilityDate: value(/^compatibility_date = "([^"]+)"/m),
-  origins: value(/^ALLOWED_ORIGINS = "([^"]+)"/m),
   doBinding: value(/\[\[durable_objects\.bindings\]\]\s*name = "([^"]+)"/),
   doClass: value(/\[\[durable_objects\.bindings\]\]\s*name = "[^"]+"\s*class_name = "([^"]+)"/),
   migrationTag: value(/\[\[migrations\]\]\s*tag = "([^"]+)"/),
@@ -28,6 +28,9 @@ const CONFIG = {
   r2Binding: value(/\[\[r2_buckets\]\]\s*binding = "([^"]+)"/),
   r2Bucket: value(/\[\[r2_buckets\]\]\s*binding = "[^"]+"\s*bucket_name = "([^"]+)"/),
 };
+
+/** The allowed origins for these tests, as a secret through the harness (CI needs no .dev.vars). */
+const LOCAL_ORIGINS = 'http://localhost:*,https://localhost:*';
 
 const BASE = 'http://relay.test';
 const TOKEN = 'A'.repeat(43);
@@ -110,7 +113,7 @@ const bucket = async () => (await server.getWorker().getEnv())[CONFIG.r2Binding]
 let server;
 let baseUrl;
 before(async () => {
-  server = createTestHarness({ root, workers: [{ configPath: 'wrangler.toml' }] });
+  server = createTestHarness({ root, workers: [{ configPath: 'wrangler.toml', secrets: { ALLOWED_ORIGINS: LOCAL_ORIGINS } }] });
   baseUrl = (await server.listen()).url;
   // The test harness's fetch, under the name the tests use.
   mf = { dispatchFetch: (input, init) => server.fetch(input, init) };
@@ -120,11 +123,10 @@ after(async () => {
   await server?.close();
 });
 
-test('wrangler.toml: Library Card names, its own migration, R2 and localhost-only origins', () => {
+test('wrangler.toml: Library Card names, its own migration, R2, and no origins (a secret)', () => {
   assert.deepEqual(CONFIG, {
     name: 'library-card-relay',
     compatibilityDate: CONFIG.compatibilityDate,
-    origins: 'http://localhost:*,https://localhost:*',
     doBinding: 'ROOMS',
     doClass: 'LibraryRoom',
     migrationTag: 'library-card-v1',
@@ -132,8 +134,30 @@ test('wrangler.toml: Library Card names, its own migration, R2 and localhost-onl
     r2Binding: 'BLOBS',
     r2Bucket: 'library-card-blobs',
   });
-  assert.match(toml, /^keep_vars = true$/m, 'deploys keep dashboard variables such as the real ALLOWED_ORIGINS');
-  assert.doesNotMatch(toml,/github\.io|tcjabc|peek-budget|peek-sync|"Room"/i, 'no GitHub handle, real origin or Peek names committed');
+  assert.doesNotMatch(toml, /^\s*ALLOWED_ORIGINS\s*=/m, 'ALLOWED_ORIGINS is a Worker secret, never in [vars] (a deploy would reset it)');
+  assert.doesNotMatch(toml, /^\[vars\]/m, 'no plain variables are deployed');
+  assert.match(devVarsExample, /^ALLOWED_ORIGINS="http:\/\/localhost:\*,https:\/\/localhost:\*"$/m, '.dev.vars.example: localhost only');
+  for (const text of [toml, devVarsExample]) {
+    assert.doesNotMatch(text, /github\.io|tcjabc|peek-budget|peek-sync|"Room"/i, 'no GitHub handle, real origin or Peek names committed');
+  }
+});
+
+test('without ALLOWED_ORIGINS the relay refuses every request with an Origin (fail closed)', async () => {
+  // A second Worker with the secret empty (an explicit binding, so a local .dev.vars can't fill it in).
+  const closed = createTestHarness({ root, workers: [{ configPath: 'wrangler.toml', secrets: { ALLOWED_ORIGINS: '' } }] });
+  await closed.listen();
+  try {
+    for (const origin of ['http://localhost:5173', 'https://localhost', 'https://app.example.org']) {
+      for (const init of [{}, { method: 'OPTIONS', headers: { 'Access-Control-Request-Method': 'POST' } }]) {
+        const res = await closed.fetch(`${BASE}/v1/health`, { ...init, headers: { ...init.headers, Origin: origin } });
+        assert.deepEqual([res.status, (await res.json()).error], [403, 'origin_not_allowed'], `${origin} ${init.method ?? 'GET'}`);
+      }
+    }
+    const plain = await closed.fetch(`${BASE}/v1/health`);
+    assert.deepEqual([plain.status, await plain.json()], [200, { ok: true }], 'no Origin (native, curl): not a browser, still allowed');
+  } finally {
+    await closed.close();
+  }
 });
 
 test('health check and unknown endpoints', async () => {

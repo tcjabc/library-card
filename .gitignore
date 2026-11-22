@@ -1,8 +1,10 @@
 # Dependencies
 node_modules/
 
-# Local Wrangler state (relay/)
+# Local Wrangler state (relay/), and its local variables (keep .dev.vars.example)
 .wrangler/
+.dev.vars*
+!.dev.vars.example
 
 # Build output
 dist/

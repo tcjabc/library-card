@@ -285,6 +285,14 @@ test('readLimited reads a stream, and stops as soon as it passes the limit', asy
   assert.equal((await R.readLimited(null, 5)).length, 0);
 });
 
+test('origins: with no list (ALLOWED_ORIGINS unset or empty) nothing is allowed', () => {
+  for (const list of [undefined, null, '', ' , ']) {
+    for (const origin of ['http://localhost:5173', 'https://app.example.org', 'null']) {
+      assert.equal(R.originAllowed(origin, list), false, `${origin} with ${JSON.stringify(list)}`);
+    }
+  }
+});
+
 test('the WebSocket subprotocol is library-card-sync.v1', () => {
   assert.equal(R.PROTOCOL, 'library-card-sync.v1');
   assert.equal(R.protocolToken(`peek-sync.v1, bearer.${TOKEN}`), null, "Peek Budget's protocol is not accepted");

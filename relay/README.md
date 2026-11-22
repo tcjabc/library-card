@@ -1,6 +1,6 @@
 # Library Card relay
 
-> **Not deployed yet.** Nothing in the app talks to the relay so far; sync arrives in a later phase.
+> **Deployed** (6d-2) as a Cloudflare Worker. The app uses it only in builds with sync turned on (`VITE_DATA_ADAPTER=sync` and `VITE_SYNC_RELAY_URL`).
 
 A small Cloudflare Worker that passes encrypted changes and encrypted cover photos between the devices of one household. Each household is a **room**: one Durable Object holding an append-only log of sealed envelopes in SQLite, plus the room's photos in an R2 bucket. The relay can't read any of it; devices encrypt and decrypt with a key the relay never sees.
 
@@ -11,7 +11,8 @@ src/index.js       Worker: routes /v1/rooms/:roomId/… to the room, CORS, early
 src/room.js        Durable Object "LibraryRoom": SQLite log, photo list, R2 photos, hibernating WebSockets
 src/room-logic.js  The rules (auth, validation, limits, rate limits, routes) with no Cloudflare APIs, tested in Node
 test/              Node tests: the rules (in Node) and the Worker end to end (in local workerd)
-wrangler.toml      Worker config: Durable Object + SQLite migration, R2 bucket, allowed origins, logging
+wrangler.toml      Worker config: Durable Object + SQLite migration, R2 bucket, logging (origins are a secret)
+.dev.vars.example  Local ALLOWED_ORIGINS for wrangler dev (copy to .dev.vars, which git ignores)
 ```
 
 ## API
@@ -79,22 +80,30 @@ No Cloudflare account is needed.
 ```sh
 cd relay
 npm install
+cp .dev.vars.example .dev.vars   # the local ALLOWED_ORIGINS (localhost on any port), once
 npm run dev                 # wrangler dev: http://localhost:8787, with a local Durable Object and R2 bucket
 npm test                    # the rules in Node, then the Worker end to end in local workerd
 ```
 
-Local data is kept under `relay/.wrangler/` (ignored by git). `curl http://localhost:8787/v1/health` answers `{"ok":true}`.
+Local data is kept under `relay/.wrangler/` (ignored by git). `curl http://localhost:8787/v1/health` answers `{"ok":true}`. The tests pass the localhost `ALLOWED_ORIGINS` to the Worker themselves (through Wrangler's test harness), so they need no `.dev.vars` and CI needs no secret. Without `ALLOWED_ORIGINS` the relay refuses every request that has an `Origin` header.
 
-## Deploy (later)
+## Deploy
 
-Not done yet. When sync is ready:
+Deployed with these steps (the account needs R2 turned on in the dashboard first):
 
 ```sh
 cd relay
 npm install
-npx wrangler login                                    # sign in to Cloudflare in the browser
+# Sign in to Cloudflare in the browser with only the permissions the relay needs; the token is
+# kept in the OS keychain. (offline_access isn't a valid --scopes value: Wrangler adds it.)
+npx wrangler login --scopes account:read user:read workers:write workers_scripts:write workers_tail:read --use-keyring
 npx wrangler r2 bucket create library-card-blobs      # the photo bucket, once
-npx wrangler deploy --var "ALLOWED_ORIGINS:<the app's origin>,http://localhost:*,https://localhost:*"
+npx wrangler secret put ALLOWED_ORIGINS               # once; paste: <the app's origin>,http://localhost:*,https://localhost:*
+npx wrangler deploy                                   # every deploy: plain, no --var
 ```
 
-`wrangler deploy` creates the Worker, the `LibraryRoom` Durable Object class (migration `library-card-v1`) and binds the bucket, and prints the URL, for example `https://library-card-relay.<your-subdomain>.workers.dev`. The committed `wrangler.toml` only allows `localhost` origins, so set the app's real origin (for GitHub Pages, `https://<user>.github.io`) with `--var` as above, or under the Worker's **Settings > Variables** in the Cloudflare dashboard. `wrangler.toml` sets `keep_vars = true`, so a later `wrangler deploy` keeps a value set in the dashboard instead of resetting `ALLOWED_ORIGINS` to localhost. SQLite-backed Durable Objects and R2 are available on the Workers Free plan, within its limits.
+`wrangler deploy` creates or updates the Worker, the `LibraryRoom` Durable Object class (migration `library-card-v1`) and binds the bucket, and prints the URL, for example `https://library-card-relay.<your-subdomain>.workers.dev`.
+
+**Allowed origins are a Worker secret.** `ALLOWED_ORIGINS` is set once with `npx wrangler secret put ALLOWED_ORIGINS` (the app's origin, for GitHub Pages `https://<user>.github.io`, then `http://localhost:*,https://localhost:*` for local dev servers). It is not in `wrangler.toml`, so deploys never upload a value for it and can't reset it: from now on every deploy is a plain `npx wrangler deploy`, with no `--var`. `npx wrangler deploy --dry-run` should list no `ALLOWED_ORIGINS` binding. To change the origins, run `wrangler secret put` again. If the secret were missing, the relay would refuse every browser (fail closed).
+
+SQLite-backed Durable Objects and R2 are available on the Workers Free plan, within its limits.

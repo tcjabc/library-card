@@ -1,22 +1,16 @@
-# Library Card sync relay. No secrets live here or anywhere in the relay: rooms are claimed by the
-# first device that pushes (it stores only a SHA-256 of that device's token).
+# Library Card sync relay. No secrets live here: rooms are claimed by the first device that pushes
+# (it stores only a SHA-256 of that device's token).
 # Copied from Peek Budget's relay and changed: see VENDORED.md (source and commit).
 name = "library-card-relay"
 main = "src/index.js"
 compatibility_date = "2026-10-28"
 workers_dev = true
-# Keep variables set in the Cloudflare dashboard (such as the real ALLOWED_ORIGINS) when deploying,
-# instead of resetting them to the values below.
-keep_vars = true
 
-[vars]
-# Browser origins allowed to call the relay. Committed: local dev servers only, on any port. Set the
-# app's real origin when deploying (see relay/README.md), e.g.
-#   npx wrangler deploy --var "ALLOWED_ORIGINS:<the app's origin>,http://localhost:*,https://localhost:*"
-# or under the Worker's Settings > Variables in the Cloudflare dashboard. An entry ending in ":*"
-# allows any port. Requests without an Origin header (native code, curl) aren't affected; they still
-# need a valid room token.
-ALLOWED_ORIGINS = "http://localhost:*,https://localhost:*"
+# ALLOWED_ORIGINS (the browser origins allowed to call the relay, comma-separated; an entry ending in
+# ":*" allows any port) is deliberately not set here. On Cloudflare it is a Worker secret, set once
+# with `npx wrangler secret put ALLOWED_ORIGINS`, so no deploy can reset it. For `wrangler dev`, copy
+# .dev.vars.example to .dev.vars (localhost only). Without it the relay refuses every request that
+# has an Origin header. Requests without one (native code, curl) still need a valid room token.
 
 [[durable_objects.bindings]]
 name = "ROOMS"
