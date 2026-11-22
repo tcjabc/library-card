@@ -158,6 +158,9 @@
   --content-max-wide: 64rem;
   --avatar-size: 2.75rem;
   --avatar-size-lg: 5.5rem;
+  /* Reader tiles on the splash: at least this wide, wrapping to fit. */
+  --reader-tile-min: 7rem;
+  --reader-tile-avatar: 4rem;
   --qr-size: 10rem;
   /* The "Add a device" pairing code, scanned from another device's camera. */
   --qr-size-pairing: 15rem;

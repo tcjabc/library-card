@@ -24,8 +24,8 @@ function sample(): Backup {
     tables: {
       households: [{ id: 'main', name: 'Home', parent_pin_hash: null, time_zone: null }],
       readers: [
-        { id: 'r1', household_id: 'main', display_name: 'A', avatar: '🦊', card_token: 'tok-1', active_journey_id: 'j1' },
-        { id: 'r2', household_id: 'main', display_name: 'B', avatar: '🐢', card_token: 'tok-2', active_journey_id: null },
+        { id: 'r1', household_id: 'main', display_name: 'A', kind: 'grown_up', avatar: '🦊', card_token: 'tok-1', active_journey_id: 'j1' },
+        { id: 'r2', household_id: 'main', display_name: 'B', kind: 'child', avatar: '🐢', card_token: 'tok-2', active_journey_id: null },
       ],
       books: [
         { isbn: '9780000000002', title: 'Photo', authors: [], cover_url: `cover:${HASH}`, source: 'manual' },
@@ -112,6 +112,13 @@ describe('validateBackup', () => {
 
   it('accepts a library card whose library is not in the file (it shows the saved name)', () => {
     expect(validateBackup(broken((d) => (d.tables.library_cards[0].library_id = 'gone'))).ok).toBe(true);
+  });
+
+  it('accepts readers from before reader kinds (no kind: a child), and refuses an unknown kind', () => {
+    const result = validateBackup(broken((d) => delete d.tables.readers[0].kind));
+    expect(result.ok && result.backup.tables.readers[0].kind).toBeNull();
+    const bad = validateBackup(broken((d) => (d.tables.readers[0].kind = 'teacher')));
+    expect(!bad.ok && [bad.problem, bad.detail]).toEqual(['bad_row', 'readers[0].kind']);
   });
 
   it('accepts a backup from before households had a time zone', () => {

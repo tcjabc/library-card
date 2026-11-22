@@ -90,7 +90,7 @@ a newer one sends. Known fields must have the right type and size or the op is s
 | Table | Local id | Fields (required in bold) |
 | --- | --- | --- |
 | `households` | `main` | **name** (text ≤ 200), parent_pin_hash (text ≤ 300; never sent while unset), time_zone (text ≤ 64; never sent while unset) |
-| `readers` | id | **display_name** (≤ 200), **avatar** (≤ 32), **card_token** (≤ 200), active_journey_id (id or null) |
+| `readers` | id | **display_name** (≤ 200), kind (`child` or `grown_up`; missing or null = child), **avatar** (≤ 32), **card_token** (≤ 200), active_journey_id (id or null) |
 | `books` | ISBN-13 or `noisbn-<id>` | **title** (≤ 1000), **authors** (≤ 50 texts of ≤ 300), cover_url (≤ 4096 or null), **source** (≤ 32) |
 | `home_items` | book key | **isbn** (book key), **added_at** (timestamp) |
 | `libraries` | id | **name** (≤ 200), search_url_template, homepage_url (≤ 4096 or null), **default_loan_days** (1–3650), sticker_prefix (≤ 64 or null) |

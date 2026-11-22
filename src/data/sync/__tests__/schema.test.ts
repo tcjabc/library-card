@@ -99,6 +99,7 @@ describe('validate(op)', () => {
       op(`loans:${UUID}`, 'borrowed_at', 'yesterday'),
       op(`read_events:${UUID}`, 'read_at', null),
       op(`reader_journeys:${UUID}`, 'journey_id', 'j'.repeat(65)),
+      op(`readers:${UUID}`, 'kind', 'teacher'),
       op(`library_cards:${UUID}`, 'format', 'qr_code'),
       op(`library_cards:${UUID}`, 'value', 'x'.repeat(201)),
       op(`library_cards:${UUID}`, 'label', 'x'.repeat(101)),
@@ -135,11 +136,13 @@ describe('rows and records', () => {
 
   it('recordToRow needs a live record with every required field, and fills optional ones with null', () => {
     const fields = { display_name: 'A', avatar: '🦊', card_token: 'tok-1', del: false };
-    expect(recordToRow('readers', UUID, fields)).toEqual({ ...reader });
+    // A record from before reader kinds: kind null (the store reads it as a child).
+    expect(recordToRow('readers', UUID, fields)).toEqual({ ...reader, kind: null });
+    expect(recordToRow('readers', UUID, { ...fields, kind: 'grown_up' })).toEqual({ ...reader, kind: 'grown_up' });
     expect(recordToRow('readers', UUID, { ...fields, del: true })).toBeNull();
     expect(recordToRow('readers', UUID, { display_name: 'A', avatar: '🦊', card_token: 't' })).toBeNull(); // never created
     expect(recordToRow('readers', UUID, { ...fields, card_token: undefined })).toBeNull();
-    expect(recordToRow('readers', UUID, { ...fields, favourite: 'x' })).toEqual({ ...reader }); // unknown fields ignored
+    expect(recordToRow('readers', UUID, { ...fields, favourite: 'x' })).toEqual({ ...reader, kind: null }); // unknown fields ignored
   });
 
   it('every table lists its required fields', () => {

@@ -56,6 +56,16 @@ export async function rawGet<T = Record<string, unknown>>(dbName: string, storeN
   }
 }
 
+/** Writes a row straight into a store (as an older version of the app would have left it). */
+export async function rawPut(dbName: string, storeName: string, value: unknown): Promise<void> {
+  const raw = await openDB(dbName);
+  try {
+    await raw.put(storeName, value);
+  } finally {
+    raw.close();
+  }
+}
+
 export async function rawDelete(dbName: string, storeName: string, key: IDBValidKey): Promise<void> {
   const raw = await openDB(dbName);
   try {

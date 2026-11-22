@@ -163,6 +163,27 @@ describe('sync adapter: two devices converge', () => {
     expect(await views(a)).toBe(await views(b));
   });
 
+  it('reader kind: a grown-up made on A is one on B; a reader whose records have no kind is a child', async () => {
+    const { a, b, reader } = await household();
+    expect((await b.store.getReader(reader.id))?.kind).toBe('child');
+    a.at = T0 + 5_000;
+    const grown = await a.store.createReader({ household_id: HOUSEHOLD_ID, display_name: 'Grown', avatar: '🦉', kind: 'grown_up' });
+    await send(a, b);
+    expect((await b.store.getReader(grown.id))?.kind).toBe('grown_up');
+    b.at = T0 + 10_000;
+    await b.store.updateReader(grown.id, { kind: 'child' });
+    await send(b, a);
+    expect((await a.store.getReader(grown.id))?.kind).toBe('child');
+    expect(await views(a)).toBe(await views(b));
+
+    // An older device sends a reader without the kind field.
+    a.at = T0 + 20_000;
+    const older = await a.store.createReader({ household_id: HOUSEHOLD_ID, display_name: 'Older', avatar: '🐢', kind: 'grown_up' });
+    const withoutKind = (await ops(a)).filter((o) => !(o.rec === `readers:${older.id}` && o.f === 'kind'));
+    await send(a, b, withoutKind);
+    expect((await b.store.getReader(older.id))?.kind).toBe('child');
+  });
+
   it('library cards: one added on A shows on B; deleting the reader removes it on both', async () => {
     const { a, b, reader } = await household();
     const lib = await a.store.createLibrary({ household_id: HOUSEHOLD_ID, name: 'Branch' });

@@ -10,6 +10,7 @@ import {
   type ReadEvent,
   type Reader,
   type ReaderJourney,
+  type ReaderKind,
   type Timestamp,
 } from './DataStore';
 import { checkLibraryCardBarcode } from './libraryCardRules';
@@ -50,9 +51,12 @@ export const BACKUP_TABLES = [
 const OPTIONAL_TABLES: readonly BackupTable[] = ['library_cards'];
 export type BackupTable = (typeof BACKUP_TABLES)[number];
 
+/** A reader as stored: files from before reader kinds have none (read as a child). */
+export type BackupReader = Omit<Reader, 'kind'> & { kind?: ReaderKind | null };
+
 export interface BackupTables {
   households: Household[];
-  readers: Reader[];
+  readers: BackupReader[];
   books: Book[];
   home_items: HomeItem[];
   libraries: Library[];
@@ -107,6 +111,7 @@ const FIELDS: Record<BackupTable, Record<string, FieldKind>> = {
     id: 'string',
     household_id: 'string',
     display_name: 'string',
+    kind: 'string?',
     avatar: 'string',
     card_token: 'string',
     active_journey_id: 'string?',
@@ -256,6 +261,10 @@ function validate(data: unknown, maxSchema: number): Backup {
     if (tokens.has(reader.card_token)) throw new Problem('duplicate', 'card_token');
     tokens.add(reader.card_token);
   }
+  // Backups from before reader kinds have none (null: a child).
+  tables.readers.forEach((reader, i) => {
+    if (reader.kind !== null && reader.kind !== 'child' && reader.kind !== 'grown_up') throw new Problem('bad_row', `readers[${i}].kind`);
+  });
   const readerIds = new Set(tables.readers.map((r) => r.id));
   for (const table of ['loans', 'read_events', 'reader_journeys', 'library_cards'] as const) {
     tables[table].forEach((row, i) => {

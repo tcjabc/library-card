@@ -427,6 +427,83 @@ img {
   justify-content: center;
 }
 
+.splash__scan {
+  width: min(100%, 28rem);
+  margin: 0 auto;
+}
+
+.splash__who {
+  font-size: var(--text-lg);
+  text-align: center;
+}
+
+/* Reader tiles: as many to a row as fit, wrapping on small screens. */
+.reader-tiles {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--reader-tile-min), 1fr));
+  gap: var(--space-3);
+}
+
+.reader-tile {
+  appearance: none;
+  width: 100%;
+  min-height: var(--tap-target-lg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-2);
+  border: var(--border-thin) solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-weight: var(--weight-bold);
+  box-shadow: var(--shadow-card);
+  cursor: pointer;
+  transition: transform var(--duration-fast) ease-out;
+}
+
+.reader-tile:active {
+  transform: scale(0.97);
+}
+
+.reader-tile__avatar {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--reader-tile-avatar);
+  height: var(--reader-tile-avatar);
+  border-radius: var(--radius-full);
+  background: var(--color-surface-muted);
+  font-size: var(--text-3xl);
+  line-height: 1;
+}
+
+/* Children sign in with their card. */
+.reader-tile__badge {
+  position: absolute;
+  right: calc(var(--space-1) * -1);
+  bottom: calc(var(--space-1) * -1);
+  padding: var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+  font-size: var(--text-md);
+  line-height: 1;
+}
+
+.reader-tile__name {
+  font-size: var(--text-md);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
 /* Hub */
 .hub__header {
   display: flex;
@@ -1040,11 +1117,20 @@ img {
   .splash__emoji {
     font-size: var(--text-2xl);
   }
+
+  .splash__scan {
+    min-height: var(--tap-target);
+  }
+
+  .reader-tile {
+    padding: var(--space-2);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .toast,
   .tile,
+  .reader-tile,
   .btn {
     animation: none;
     transition: none;

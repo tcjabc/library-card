@@ -50,6 +50,7 @@ function Routes() {
   }, [path]);
 
   if (path === '/') return <Splash />;
+  if (path === '/scan') return <Splash scanning />;
 
   const card = matchPath('/card/:token', path);
   if (card) return <CardLink key={card.token} token={card.token} />;

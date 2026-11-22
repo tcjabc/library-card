@@ -28,6 +28,11 @@ export const en = {
 
   splash: {
     title: 'Scan your library card!',
+    scanYourCard: 'Scan your card!',
+    whoIsReading: 'Who’s reading?',
+    tileCard: '{name}: scan your library card',
+    tileOpen: '{name}: open your space',
+    back: 'Back',
     cardGuide: 'Hold your card up to the camera',
     notACard: 'Hmm, that’s not a library card. Try your card’s square code!',
     grownUpCode: 'That’s a grown-up code. Try your library card!',
@@ -469,6 +474,10 @@ export const en = {
       namePlaceholder: 'First name or nickname',
       nameRequired: 'Please add a name.',
       avatar: 'Pick an avatar',
+      kindLegend: 'Who is this?',
+      kinds: { child: 'Child', grown_up: 'Grown-up' },
+      kindHelp: 'Grown-ups can open their space by tapping their picture. Children scan their library card.',
+      grownUpTag: 'Grown-up',
       save: 'Save',
       created: 'Added {name}. Print their card from Cards.',
       saved: 'Saved {name}',

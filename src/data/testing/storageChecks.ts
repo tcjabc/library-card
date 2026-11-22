@@ -26,6 +26,7 @@ import {
   rawDelete,
   rawGet,
   rawIndexNames,
+  rawPut,
   rawStoreNames,
   sameBytes,
   sha256Hex,
@@ -223,6 +224,36 @@ export const storageChecks: StorageCheck[] = [
     await store.deleteReader(b.id);
     equal(await store.getReader(b.id), null, 'deleted after returning');
     equal(await store.getLoan(loan.id), null, 'the returned loan went with them');
+  }),
+
+  check('readers', 'kind: a child unless asked, a grown-up when chosen, changeable; older rows read as children', async (ctx) => {
+    const { store, dbName, h, a } = await withReaders(ctx);
+    equal(a.kind, 'child', 'a new reader is a child');
+    const g = await store.createReader({ household_id: h.id, display_name: 'Grown', avatar: '🦉', kind: 'grown_up' });
+    equal([g.kind, (await store.getReader(g.id))?.kind, (await store.getReaderByCardToken(g.card_token))?.kind], ['grown_up', 'grown_up', 'grown_up'], 'grown-up saved');
+    equal((await store.updateReader(a.id, { kind: 'grown_up' })).kind, 'grown_up', 'changed to a grown-up');
+    equal((await store.updateReader(a.id, { display_name: 'A2' })).kind, 'grown_up', 'other edits keep it');
+    equal((await store.rotateCardToken(a.id)).kind, 'grown_up', 'a new card keeps it');
+    equal((await store.updateReader(a.id, { kind: 'child' })).kind, 'child', 'and back');
+    await rejectsWithCode(store.createReader({ household_id: h.id, display_name: 'X', avatar: '🦊', kind: 'teacher' as 'child' }), 'invalid', 'unknown kind on create');
+    await rejectsWithCode(store.updateReader(a.id, { kind: 'teacher' as 'child' }), 'invalid', 'unknown kind on update');
+    // A reader saved before kinds existed.
+    const old = { id: 'old-reader', household_id: h.id, display_name: 'Old', avatar: '🐢', card_token: 'old-token-0123456789', active_journey_id: null };
+    await rawPut(dbName, 'readers', old);
+    equal((await store.getReader(old.id))?.kind, 'child', 'an old row is a child');
+    equal((await store.listReaders(h.id)).find((r) => r.id === old.id)?.kind, 'child', 'in the list too');
+    equal((await store.updateReader(old.id, { avatar: '🐙' })).kind, 'child', 'and stays one when edited');
+  }),
+  check('readers', 'backups keep reader kinds; readers in an older backup restore as children', async (ctx) => {
+    const { store, h } = await withReaders(ctx);
+    const g = await store.createReader({ household_id: h.id, display_name: 'Grown', avatar: '🦉', kind: 'grown_up' });
+    const backup = JSON.parse(JSON.stringify(await store.exportBackup()));
+    const { store: target } = await ctx.open();
+    await target.importBackup(backup);
+    equal((await target.getReader(g.id))?.kind, 'grown_up', 'kept');
+    for (const reader of backup.tables.readers) delete reader.kind;
+    await target.importBackup(backup);
+    equal((await target.listReaders(HOUSEHOLD_ID)).map((r) => r.kind), ['child', 'child', 'child'], 'no kind: children');
   }),
 
   // Subscribe -------------------------------------------------------------------

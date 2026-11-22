@@ -1,6 +1,15 @@
 import { useCallback, useId, useState, type FormEvent } from 'react';
 import { useCardQr } from '../../cards/useCardQr';
-import { isDataStoreError, useDataQuery, type DataStore, type DeleteReaderPreview, type Household, type Reader } from '../../data';
+import {
+  READER_KINDS,
+  isDataStoreError,
+  useDataQuery,
+  type DataStore,
+  type DeleteReaderPreview,
+  type Household,
+  type Reader,
+  type ReaderKind,
+} from '../../data';
 import { getJourney } from '../../journeys/journeys';
 import { journeyProgress } from '../../journeys/progress';
 import { AvatarPicker } from '../../readers/AvatarPicker';
@@ -85,7 +94,10 @@ export function ReadersTab({ store, household }: TabProps) {
                   {reader.avatar}
                 </span>
                 <div className="stack grownups-reader__body">
-                  <p className="grownups__item-title">{reader.display_name}</p>
+                  <p className="grownups__item-title">
+                    {reader.display_name}
+                    {reader.kind === 'grown_up' && <span className="small muted"> · {t.grownUpTag}</span>}
+                  </p>
                   <p className="small">
                     {booksRead === 1 ? t.booksReadOne : fmt(t.booksRead, { count: booksRead })} ·{' '}
                     {rereads === 1 ? t.rereadsOne : fmt(t.rereads, { count: rereads })}
@@ -194,9 +206,11 @@ function ReaderForm({ store, household, reader, onClose }: { store: DataStore; h
   const toast = useToast();
   const [name, setName] = useState(reader?.display_name ?? '');
   const [avatar, setAvatar] = useState<string>(reader?.avatar ?? DEFAULT_AVATAR);
+  const [kind, setKind] = useState<ReaderKind>(reader?.kind ?? 'child');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const nameId = useId();
+  const kindId = useId();
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
@@ -204,8 +218,8 @@ function ReaderForm({ store, household, reader, onClose }: { store: DataStore; h
     if (!displayName) return setError(t.nameRequired);
     setBusy(true);
     try {
-      if (reader) await store.updateReader(reader.id, { display_name: displayName, avatar });
-      else await store.createReader({ household_id: household.id, display_name: displayName, avatar });
+      if (reader) await store.updateReader(reader.id, { display_name: displayName, avatar, kind });
+      else await store.createReader({ household_id: household.id, display_name: displayName, avatar, kind });
       toast({ message: fmt(reader ? t.saved : t.created, { name: displayName }) });
       onClose();
     } catch (err) {
@@ -230,6 +244,21 @@ function ReaderForm({ store, household, reader, onClose }: { store: DataStore; h
           placeholder={t.namePlaceholder}
         />
         <AvatarPicker value={avatar} onChange={setAvatar} legend={t.avatar} />
+        <div className="stack">
+          <p className="field-label" id={kindId}>
+            {t.kindLegend}
+          </p>
+          <div className="chip-row chip-row--dense" role="group" aria-labelledby={kindId} aria-describedby={`${kindId}-help`}>
+            {READER_KINDS.map((value) => (
+              <button key={value} type="button" className="chip" aria-pressed={kind === value} onClick={() => setKind(value)}>
+                {t.kinds[value]}
+              </button>
+            ))}
+          </div>
+          <p id={`${kindId}-help`} className="small muted">
+            {t.kindHelp}
+          </p>
+        </div>
         {error && (
           <p className="alert alert--danger" role="alert">
             {error}

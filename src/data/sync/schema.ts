@@ -82,6 +82,8 @@ export const SCHEMA: Record<SyncedTable, TableSpec> = {
     localId: 'id',
     fields: {
       display_name: text(200, REQUIRED),
+      // "child" or "grown_up"; missing (older devices and records) reads as a child.
+      kind: text(16, NULLABLE, /^(?:child|grown_up)$/),
       avatar: text(32, REQUIRED),
       // Any non-empty text: older data and tests have short tokens, and the local adapter accepts them.
       card_token: text(200, REQUIRED),

@@ -48,7 +48,7 @@ describe('sync adapter: engine-facing store', () => {
     expect(records.map((r) => r.id).sort()).toEqual(['households:main', `readers:${reader.id}`].sort());
     const outbox = await rawAll<{ rec: string; f: string }>(dbName, 'outbox');
     expect(outbox.filter((o) => o.rec === `readers:${reader.id}`).map((o) => o.f).sort()).toEqual(
-      ['active_journey_id', 'avatar', 'card_token', 'del', 'display_name'].sort(),
+      ['active_journey_id', 'avatar', 'card_token', 'del', 'display_name', 'kind'].sort(),
     );
     expect(await store.pendingCount()).toBe(outbox.length);
   });

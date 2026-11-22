@@ -31,6 +31,8 @@ import {
   type ReadSummary,
   type Reader,
   type ReaderJourney,
+  type ReaderKind,
+  READER_KINDS,
 } from '../DataStore';
 import {
   BACKUP_FORMAT,
@@ -463,6 +465,19 @@ function checkCardFields(input: { value: string; format: string; label?: string 
   return { value: check.value, label };
 }
 
+/** A stored reader as callers see it: no kind (older rows, records, backups) means a child. */
+function readerOut(row: Reader): Reader;
+function readerOut(row: Reader | undefined): Reader | null;
+function readerOut(row: Reader | undefined): Reader | null {
+  if (!row) return null;
+  return row.kind === 'grown_up' || row.kind === 'child' ? row : { ...row, kind: 'child' };
+}
+
+function checkReaderKind(kind: unknown): ReaderKind {
+  if ((READER_KINDS as readonly unknown[]).includes(kind)) return kind as ReaderKind;
+  throw new DataStoreError('invalid', 'A reader is a "child" or a "grown_up".');
+}
+
 function notFound(kind: string, id: string): DataStoreError {
   return new DataStoreError('not_found', `${kind} not found: ${id}`);
 }
@@ -846,6 +861,7 @@ export async function createStoreWith<Extra extends object>(
         id: newId(),
         household_id: input.household_id,
         display_name: input.display_name,
+        kind: checkReaderKind(input.kind ?? 'child'),
         avatar: input.avatar,
         card_token: input.card_token ?? newCardToken(),
         active_journey_id: null,
@@ -861,17 +877,17 @@ export async function createStoreWith<Extra extends object>(
     },
 
     async getReader(id) {
-      return (await (await getDb()).get('readers', id)) ?? null;
+      return readerOut(await (await getDb()).get('readers', id));
     },
 
     async getReaderByCardToken(token) {
       if (!token) return null;
-      return (await (await getDb()).getFromIndex('readers', 'by_card_token', token)) ?? null;
+      return readerOut(await (await getDb()).getFromIndex('readers', 'by_card_token', token));
     },
 
     async listReaders(householdId) {
       const readers = await (await getDb()).getAllFromIndex('readers', 'by_household', householdId);
-      return readers.sort((a, b) => a.display_name.localeCompare(b.display_name));
+      return readers.map((r) => readerOut(r)).sort((a, b) => a.display_name.localeCompare(b.display_name));
     },
 
     async updateReader(id, patch) {
@@ -879,10 +895,11 @@ export async function createStoreWith<Extra extends object>(
       const existing = await tx.store.get(id);
       if (!existing) throw notFound('Reader', id);
       const next: Reader = {
-        ...existing,
+        ...readerOut(existing),
         display_name: patch.display_name ?? existing.display_name,
         avatar: patch.avatar ?? existing.avatar,
       };
+      if (patch.kind !== undefined) next.kind = checkReaderKind(patch.kind);
       await tx.store.put(next);
       await tx.done;
       changed('readers');
@@ -895,7 +912,7 @@ export async function createStoreWith<Extra extends object>(
         const tx = (await getDb()).transaction('readers', 'readwrite');
         const existing = await tx.store.get(readerId);
         if (!existing) throw notFound('Reader', readerId);
-        const next: Reader = { ...existing, card_token: newCardToken() };
+        const next: Reader = { ...readerOut(existing), card_token: newCardToken() };
         try {
           await tx.store.put(next);
           await tx.done;
