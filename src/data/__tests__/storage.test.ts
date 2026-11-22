@@ -65,6 +65,9 @@ describe('coverage', () => {
       'createLibrary', 'getLibrary', 'listLibraries', 'updateLibrary', 'deleteLibrary',
       'createLoan', 'getLoan', 'listLoans', 'listActiveLoans', 'listReturnedLoans', 'findActiveLoansBySticker',
       'updateLoan', 'renewLoan', 'unrenewLoan', 'returnLoan', 'unreturnLoan', 'deleteLoan',
+      // library card barcodes
+      'addLibraryCard', 'getLibraryCard', 'listLibraryCards', 'listHouseholdLibraryCards', 'updateLibraryCard',
+      'deleteLibraryCard', 'copyLibraryCardToReaders',
       // reads
       'markRead', 'undoLatestRead', 'clearReads', 'restoreReadEvent', 'getReadSummary', 'listReadSummaries', 'listReadEvents',
       'countReadsSince', 'countHouseholdReads', 'listHouseholdReadSummaries',

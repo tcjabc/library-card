@@ -32,6 +32,8 @@ export interface BookScannerProps {
   onError?: (kind: ScannerErrorKind, error: unknown) => void;
   paused?: boolean;
   className?: string;
+  /** Replaces the mode's own hint (e.g. "Point the camera at the barcode on the library card"). */
+  hint?: string;
 }
 
 export function BookScanner({
@@ -43,6 +45,7 @@ export function BookScanner({
   onError,
   paused,
   className,
+  hint,
 }: BookScannerProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -86,7 +89,7 @@ export function BookScanner({
       onResult={onResult}
       onError={onError}
       paused={paused}
-      hint={mode === 'sticker' ? strings.scanner.stickerHint : undefined}
+      hint={hint ?? (mode === 'sticker' ? strings.scanner.stickerHint : undefined)}
       notice={message ?? notice}
       className={className}
     />

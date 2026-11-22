@@ -16,6 +16,16 @@ export { hashPin, verifyPin } from './pin';
 export { isNoIsbnBookKey, newNoIsbnBookKey } from './ids';
 export { findStickerDuplicates, pickStickerWinner, type StickerResolution } from './loanRules';
 export {
+  MAX_LIBRARY_CARD_LABEL,
+  MAX_LIBRARY_CARD_VALUE,
+  checkLibraryCardBarcode,
+  cleanLibraryCardLabel,
+  isLibraryCardFormat,
+  sameLibraryCardValue,
+  type LibraryCardCheck,
+  type LibraryCardProblem,
+} from './libraryCardRules';
+export {
   BACKUP_FORMAT,
   backupFileName,
   parseBackupText,

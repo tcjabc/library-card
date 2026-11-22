@@ -110,6 +110,8 @@
 
   /* Typography */
   --font-body: ui-rounded, 'SF Pro Rounded', 'Nunito', 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
+  /* Colour emoji, for drawing an avatar into an image (printed and downloaded cards). */
+  --font-emoji: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', 'Segoe UI Symbol', sans-serif;
   --text-xs: 0.75rem;
   --text-sm: 0.875rem;
   --text-md: 1rem;
@@ -221,8 +223,11 @@
 
 /*
  * Printed library cards (Grown-ups > Cards). Real sizes, and paper colours
- * that never follow dark mode. An ID-1 card is 85.6 x 54 mm; 2 x 5 of them
- * centred on A4 (210 x 297 mm) leave 19.4 mm and 13.5 mm margins.
+ * that never follow dark mode. Each card is a fold-over strip: two ID-1
+ * panels (85.6 x 54 mm) side by side, 171.2 x 54 mm. Five strips in one
+ * column centred on A4 (210 x 297 mm) leave 19.4 mm and 13.5 mm margins.
+ * The strip's inner layout is in src/cards/stripLayout.ts (a test keeps the
+ * two in step).
  */
 :root {
   --print-page-width: 210mm;
@@ -231,16 +236,20 @@
   --print-page-margin-y: 13.5mm;
   --print-card-width: 85.6mm;
   --print-card-height: 54mm;
-  --print-card-padding: 4mm;
+  --print-strip-width: 171.2mm;
   --print-qr-size: 42mm;
-  --print-avatar-size: 11mm;
-  --print-text-name: 5mm;
-  --print-text-small: 3mm;
-  --print-cut-width: 0.2mm;
+  --print-cut-width: 0.25mm;
+  --print-fold-width: 0.3mm;
+  --print-fold-dash: 1.6mm;
+  --print-art-width: 0.45mm;
+  --print-label-size: 2.6mm;
   --print-paper: #ffffff;
   --print-ink: #1f2430;
   --print-accent: #3b5bdb;
-  --print-cut: #c9ced6;
+  --print-cut: #9aa1ad;
+  --print-fold: #6b7385;
+  /* Outline art: light enough to colour over, dark enough to see. */
+  --print-art: #a3abba;
 }
 
 @media (prefers-color-scheme: dark) {

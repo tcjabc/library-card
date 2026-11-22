@@ -5,12 +5,14 @@ import {
   type HomeItem,
   type Household,
   type Library,
+  type LibraryCard,
   type Loan,
   type ReadEvent,
   type Reader,
   type ReaderJourney,
   type Timestamp,
 } from './DataStore';
+import { checkLibraryCardBarcode } from './libraryCardRules';
 
 /**
  * Backup files: the format, a validator and small helpers. Pure (no storage),
@@ -19,12 +21,14 @@ import {
  *   {
  *     format: "library-card-backup", version: 1,
  *     schema: <the IndexedDB version that wrote it>, exported_at,
- *     tables: { households, readers, books, home_items, libraries, loans, read_events, reader_journeys },
+ *     tables: { households, readers, books, home_items, libraries, library_cards, loans, read_events,
+ *               reader_journeys },
  *     covers: { "cover:<sha256>": "<base64>" }
  *   }
  *
  * read_summaries are derived from read_events, so they are rebuilt on import
- * rather than exported.
+ * rather than exported. library_cards came later (schema 6): a backup without it restores with
+ * no library cards.
  */
 
 export const BACKUP_FORMAT = 'library-card-backup';
@@ -36,10 +40,14 @@ export const BACKUP_TABLES = [
   'books',
   'home_items',
   'libraries',
+  'library_cards',
   'loans',
   'read_events',
   'reader_journeys',
 ] as const;
+
+/** Tables added after the first backups: a file without one restores it empty. */
+const OPTIONAL_TABLES: readonly BackupTable[] = ['library_cards'];
 export type BackupTable = (typeof BACKUP_TABLES)[number];
 
 export interface BackupTables {
@@ -48,6 +56,7 @@ export interface BackupTables {
   books: Book[];
   home_items: HomeItem[];
   libraries: Library[];
+  library_cards: LibraryCard[];
   loans: Loan[];
   read_events: ReadEvent[];
   reader_journeys: ReaderJourney[];
@@ -113,6 +122,17 @@ const FIELDS: Record<BackupTable, Record<string, FieldKind>> = {
     default_loan_days: 'number',
     sticker_prefix: 'string?',
   },
+  library_cards: {
+    id: 'string',
+    household_id: 'string',
+    reader_id: 'string',
+    library_id: 'string?',
+    library_name: 'string?',
+    value: 'string',
+    format: 'string',
+    label: 'string?',
+    created_at: 'string',
+  },
   loans: {
     id: 'string',
     household_id: 'string',
@@ -144,6 +164,7 @@ const KEY_FIELD: Record<BackupTable, string> = {
   books: 'isbn',
   home_items: 'id',
   libraries: 'id',
+  library_cards: 'id',
   loans: 'id',
   read_events: 'id',
   reader_journeys: 'id',
@@ -193,7 +214,7 @@ export interface ValidateOptions {
  * Checks that `data` is a backup this app can restore, and returns it with
  * missing nullable fields filled in as null. Checks the format and version,
  * every required field, unique keys and card tokens, that the household is
- * there, that loans, reads and journeys belong to readers in the file, and
+ * there, that loans, reads, journeys and library cards belong to readers in the file, and
  * that every cover photo a book uses is included and is valid base64.
  */
 export function validateBackup(data: unknown, options: ValidateOptions = {}): BackupCheck {
@@ -218,7 +239,7 @@ function validate(data: unknown, maxSchema: number): Backup {
 
   const tables = {} as Record<BackupTable, Record<string, unknown>[]>;
   for (const table of BACKUP_TABLES) {
-    const rows = data.tables[table];
+    const rows = data.tables[table] === undefined && OPTIONAL_TABLES.includes(table) ? [] : data.tables[table];
     if (!Array.isArray(rows)) throw new Problem('missing_table', table);
     tables[table] = rows.map((row, i) => checkRow(table, row, i));
     const keys = new Set<unknown>();
@@ -236,11 +257,17 @@ function validate(data: unknown, maxSchema: number): Backup {
     tokens.add(reader.card_token);
   }
   const readerIds = new Set(tables.readers.map((r) => r.id));
-  for (const table of ['loans', 'read_events', 'reader_journeys'] as const) {
+  for (const table of ['loans', 'read_events', 'reader_journeys', 'library_cards'] as const) {
     tables[table].forEach((row, i) => {
       if (!readerIds.has(row.reader_id)) throw new Problem('bad_reference', `${table}[${i}].reader_id`);
     });
   }
+  // A card's number must fit its barcode type. A library_id whose library isn't in the file is
+  // allowed: the card shows its saved library name, as it would after a sync.
+  tables.library_cards.forEach((row, i) => {
+    const check = checkLibraryCardBarcode(row.value as string, row.format as string);
+    if (!check.ok || check.value !== row.value) throw new Problem('bad_row', `library_cards[${i}].value`);
+  });
 
   const covers: Record<string, string> = {};
   for (const [ref, value] of Object.entries(data.covers)) {

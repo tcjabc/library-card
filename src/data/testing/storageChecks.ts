@@ -111,6 +111,12 @@ async function withReaders(ctx: CheckContext, options?: LocalStoreOptions) {
 
 const check = (group: string, name: string, run: (ctx: CheckContext) => Promise<void>): StorageCheck => ({ group, name, run });
 
+/** A clock that moves on a second at each reading, so things made in a row have different times. */
+function tick(start = Date.parse('2026-01-01T00:00:00Z')): () => number {
+  let t = start;
+  return () => (t += 1000);
+}
+
 // --- checks ------------------------------------------------------------------
 
 export const storageChecks: StorageCheck[] = [
@@ -189,7 +195,7 @@ export const storageChecks: StorageCheck[] = [
     const journey = await store.startJourney(b.id, 'ocean_deep');
     equal(
       await store.previewDeleteReader(b.id),
-      { readEvents: 3, booksRead: 2, journeys: 1, returnedLoans: 1, activeLoans: 0 },
+      { readEvents: 3, booksRead: 2, journeys: 1, returnedLoans: 1, activeLoans: 0, libraryCards: 0 },
       'dry run counts',
     );
     equal((await store.listReadEvents(b.id)).length, 3, 'the dry run deleted nothing');
@@ -354,6 +360,108 @@ export const storageChecks: StorageCheck[] = [
     equal(await store.getLibrary(lib.id), null, 'library gone');
     const kept = await Promise.all([store.getLoan(loan1.id), store.getLoan(loan2.id), store.getLoan(untouched.id)]);
     equal(kept.map((l) => [l?.library_id, l?.library_name]), [[null, 'Branch'], [null, 'Branch'], [other.id, null]], 'names copied; other loans untouched');
+  }),
+  check('library cards', 'addLibraryCard tidies and checks the number, copies the library name, lists newest first', async (ctx) => {
+    const { store, h, a, b } = await withReaders(ctx, { now: tick() });
+    const lib = await store.createLibrary({ household_id: h.id, name: 'Branch' });
+    const first = await store.addLibraryCard({ household_id: h.id, reader_id: a.id, value: ' 21234000123456 ', format: 'codabar', library_id: lib.id });
+    equal([first.value, first.format, first.library_id, first.library_name, first.label], ['21234000123456', 'codabar', lib.id, 'Branch', null], 'saved');
+    const second = await store.addLibraryCard({ household_id: h.id, reader_id: a.id, value: '*abc-12*', format: 'code_39', label: '  Pool  ' });
+    equal([second.value, second.library_id, second.library_name, second.label], ['ABC-12', null, null, 'Pool'], 'Code 39 tidied; label trimmed');
+    await store.addLibraryCard({ household_id: h.id, reader_id: b.id, value: '4006381333931', format: 'ean_13' });
+    equal((await store.listLibraryCards(a.id)).map((c) => c.id), [second.id, first.id], 'newest first');
+    equal((await store.listHouseholdLibraryCards(h.id)).length, 3, 'household list');
+    equal(await store.getLibraryCard(first.id), first, 'get');
+    equal(await store.getLibraryCard('nope'), null, 'get unknown');
+    const add = (value: string, format: string, extra = {}) =>
+      store.addLibraryCard({ household_id: h.id, reader_id: a.id, value, format: format as 'code_128', ...extra });
+    await rejectsWithCode(add('', 'code_128'), 'invalid', 'empty');
+    await rejectsWithCode(add('x'.repeat(201), 'code_128'), 'invalid', 'too long');
+    await rejectsWithCode(add('12345', 'itf'), 'invalid', 'odd ITF');
+    await rejectsWithCode(add('9780000000002', 'ean_13'), 'invalid', 'an ISBN');
+    await rejectsWithCode(add('4006381333932', 'ean_13'), 'invalid', 'bad check digit');
+    await rejectsWithCode(add('abc', 'qr_code'), 'invalid', 'unknown format');
+    await rejectsWithCode(add('123', 'code_128', { label: 'x'.repeat(101) }), 'invalid', 'label too long');
+    await rejectsWithCode(add('123', 'code_128', { library_id: 'nope' }), 'not_found', 'unknown library');
+    await rejectsWithCode(store.addLibraryCard({ household_id: h.id, reader_id: 'nope', value: '1', format: 'code_128' }), 'not_found', 'unknown reader');
+    equal((await store.listLibraryCards(a.id)).length, 2, 'nothing saved by the refused adds');
+  }),
+  check('library cards', 'updateLibraryCard changes number, type, label and library; deleteLibraryCard removes one', async (ctx) => {
+    const { store, h, a } = await withReaders(ctx);
+    const lib = await store.createLibrary({ household_id: h.id, name: 'Branch' });
+    const other = await store.createLibrary({ household_id: h.id, name: 'Other' });
+    const card = await store.addLibraryCard({ household_id: h.id, reader_id: a.id, value: 'A1', format: 'code_128', library_id: lib.id });
+    const moved = await store.updateLibraryCard(card.id, { library_id: other.id, label: 'Main' });
+    equal([moved.library_id, moved.library_name, moved.label, moved.value], [other.id, 'Other', 'Main', 'A1'], 'new library name copied');
+    const retyped = await store.updateLibraryCard(card.id, { value: '0012', format: 'itf', label: '' });
+    equal([retyped.value, retyped.format, retyped.label, retyped.library_id], ['0012', 'itf', null, other.id], 'number and type; empty label cleared');
+    const none = await store.updateLibraryCard(card.id, { library_id: null });
+    equal([none.library_id, none.library_name], [null, null], 'no library');
+    await rejectsWithCode(store.updateLibraryCard(card.id, { format: 'ean_13' }), 'invalid', 'number no longer fits the new type');
+    await rejectsWithCode(store.updateLibraryCard(card.id, { library_id: 'nope' }), 'not_found', 'unknown library');
+    await rejectsWithCode(store.updateLibraryCard('nope', { label: 'x' }), 'not_found', 'unknown card');
+    equal((await store.getLibraryCard(card.id))?.format, 'itf', 'refused updates changed nothing');
+    await store.deleteLibraryCard(card.id);
+    equal(await store.getLibraryCard(card.id), null, 'deleted');
+    equal((await store.listLibraryCards(a.id)).length, 0, 'list empty');
+  }),
+  check('library cards', 'copyLibraryCardToReaders gives each reader their own copy, skipping duplicates', async (ctx) => {
+    const { store, h, a, b } = await withReaders(ctx);
+    const c = await store.createReader({ household_id: h.id, display_name: 'C', avatar: '🐙' });
+    const lib = await store.createLibrary({ household_id: h.id, name: 'Branch' });
+    const card = await store.addLibraryCard({ household_id: h.id, reader_id: a.id, value: '31000999', format: 'code_128', library_id: lib.id, label: 'Family' });
+    await store.addLibraryCard({ household_id: h.id, reader_id: c.id, value: '31000999', format: 'code_128' });
+    const created = await store.copyLibraryCardToReaders(card.id, [a.id, b.id, c.id, b.id]);
+    equal(created.map((x) => x.reader_id), [b.id], 'only B: A owns it, C already has it, B once');
+    const copy = created[0];
+    ok(copy.id !== card.id, 'a new record');
+    equal([copy.value, copy.format, copy.library_id, copy.library_name, copy.label], ['31000999', 'code_128', lib.id, 'Branch', 'Family'], 'same details');
+    await store.updateLibraryCard(copy.id, { label: 'Mine' });
+    equal((await store.getLibraryCard(card.id))?.label, 'Family', 'the copy changes on its own');
+    equal(await store.copyLibraryCardToReaders(card.id, [b.id]), [], 'copying again adds nothing');
+    await rejectsWithCode(store.copyLibraryCardToReaders(card.id, ['nope']), 'not_found', 'unknown reader');
+    await rejectsWithCode(store.copyLibraryCardToReaders('nope', [b.id]), 'not_found', 'unknown card');
+    equal((await store.listHouseholdLibraryCards(h.id)).length, 3, 'nothing else added');
+  }),
+  check('library cards', 'deleteLibrary keeps the cards with the library name; deleteReader removes their cards', async (ctx) => {
+    const { store, h, a, b } = await withReaders(ctx);
+    const lib = await store.createLibrary({ household_id: h.id, name: 'Branch' });
+    const aCard = await store.addLibraryCard({ household_id: h.id, reader_id: a.id, value: '111', format: 'code_128', library_id: lib.id });
+    const bCard = await store.addLibraryCard({ household_id: h.id, reader_id: b.id, value: '222', format: 'code_128', library_id: lib.id });
+    await store.deleteLibrary(lib.id);
+    const kept = await store.getLibraryCard(aCard.id);
+    equal([kept?.library_id, kept?.library_name, kept?.value], [null, 'Branch', '111'], 'number kept, name copied');
+    equal((await store.previewDeleteReader(b.id)).libraryCards, 1, 'the delete preview counts them');
+    await store.deleteReader(b.id);
+    equal(await store.getLibraryCard(bCard.id), null, "the deleted reader's card is gone");
+    ok(await store.getLibraryCard(aCard.id), "the other reader's card stays");
+  }),
+  check('library cards', 'a backup round trip keeps library cards; an older backup without them still restores', async (ctx) => {
+    const { store, h, a } = await withReaders(ctx);
+    const lib = await store.createLibrary({ household_id: h.id, name: 'Branch' });
+    const card = await store.addLibraryCard({ household_id: h.id, reader_id: a.id, value: 'A123B', format: 'codabar', library_id: lib.id, label: 'Town' });
+    const backup = JSON.parse(JSON.stringify(await store.exportBackup()));
+    equal(backup.tables.library_cards.length, 1, 'exported');
+    const { store: target } = await ctx.open();
+    await target.importBackup(backup);
+    equal(await target.getLibraryCard(card.id), card, 'restored exactly');
+
+    const old = JSON.parse(JSON.stringify(backup));
+    delete old.tables.library_cards;
+    old.schema = 5;
+    const { store: third } = await ctx.open();
+    await third.getCurrentHousehold();
+    await third.addLibraryCard({ household_id: HOUSEHOLD_ID, reader_id: (await third.createReader({ household_id: HOUSEHOLD_ID, display_name: 'X', avatar: '🦊' })).id, value: '9', format: 'code_128' });
+    await third.importBackup(old);
+    equal(await third.listHouseholdLibraryCards(HOUSEHOLD_ID), [], 'restored with no library cards (and replaced this device\'s)');
+    equal((await third.listReaders(HOUSEHOLD_ID)).length, 2, 'the rest restored');
+
+    const broken = JSON.parse(JSON.stringify(backup));
+    broken.tables.library_cards[0].reader_id = 'nobody';
+    await rejectsWithCode(target.importBackup(broken), 'invalid', 'a card for a reader not in the file');
+    const badNumber = JSON.parse(JSON.stringify(backup));
+    badNumber.tables.library_cards[0].format = 'ean_13';
+    await rejectsWithCode(target.importBackup(badNumber), 'invalid', 'a number that does not fit its type');
   }),
   check('loans', 'createLoan defaults and validation', async (ctx) => {
     const { store, h, a } = await withReaders(ctx);
@@ -760,11 +868,12 @@ export const storageChecks: StorageCheck[] = [
   }),
 
   // Migrations ------------------------------------------------------------------------
-  check('migration', 'a fresh database is created at v5 with no legacy reads store', async (ctx) => {
+  check('migration', 'a fresh database is created at v6 with no legacy reads store', async (ctx) => {
     const { store, dbName } = await ctx.open();
     await store.coverStep;
     const { version, stores } = await rawStoreNames(dbName);
-    equal(version, 5, 'version');
+    equal(version, 6, 'version');
+    equal((await rawIndexNames(dbName, 'library_cards')).sort(), ['by_household_created', 'by_library', 'by_reader'], 'library card indexes');
     ok(stores.includes('records') && stores.includes('outbox'), 'sync stores', stores);
     equal(await rawIndexNames(dbName, 'records'), ['by_parent'], 'records index');
     equal(await rawIndexNames(dbName, 'outbox'), ['by_t'], 'outbox index');
@@ -847,13 +956,14 @@ export const storageChecks: StorageCheck[] = [
     const third = await ctx.attach(name);
     equal((await third.coverStep).moved, 0, 'a finished step is a no-op');
   }),
-  check('migration', 'v4 -> v5: records and outbox stores added, every row kept, nothing recorded', async (ctx) => {
+  check('migration', 'v4 -> v6: records, outbox and library_cards stores added, every row kept, nothing recorded', async (ctx) => {
     const name = ctx.name();
-    const fixture = await createV3Database(name); // upgrades through v4 to v5
+    const fixture = await createV3Database(name); // upgrades through v4 and v5 to v6
     const store = await ctx.attach(name);
     const { version, stores } = await rawStoreNames(name);
-    equal(version, 5, 'version');
-    ok(stores.includes('records') && stores.includes('outbox'), 'new stores', stores);
+    equal(version, 6, 'version');
+    ok(stores.includes('records') && stores.includes('outbox') && stores.includes('library_cards'), 'new stores', stores);
+    equal(await store.listHouseholdLibraryCards(HOUSEHOLD_ID), [], 'no library cards yet');
     equal((await rawAll(name, 'records')).length, 0, 'migrated rows have no records until sync is turned on');
     equal((await rawAll(name, 'outbox')).length, 0, 'and nothing is queued');
     equal((await rawAll(name, 'loans')).length, fixture.loans.length, 'loans kept');
@@ -863,7 +973,7 @@ export const storageChecks: StorageCheck[] = [
     const name = ctx.name();
     const fixture = await createV3Database(name);
     const store = await ctx.attach(name);
-    equal((await rawStoreNames(name)).version, 5, 'version');
+    equal((await rawStoreNames(name)).version, 6, 'version');
     const indexes = await rawIndexNames(name, 'loans');
     ok(!indexes.includes('by_household_sticker') && indexes.includes('by_library_sticker') && indexes.includes('by_sticker'), 'indexes', indexes);
     const loans = await rawAll<Record<string, unknown>>(name, 'loans');
@@ -926,7 +1036,7 @@ export const storageChecks: StorageCheck[] = [
     const journey = await store.startJourney(a.id, 'ocean_deep', '2026-01-01T00:00:00Z');
 
     const backup = await store.exportBackup();
-    equal([backup.format, backup.version, backup.schema], [BACKUP_FORMAT, 1, 5], 'format, version, schema');
+    equal([backup.format, backup.version, backup.schema], [BACKUP_FORMAT, 1, 6], 'format, version, schema');
     ok(!('records' in backup.tables) && !('outbox' in backup.tables), 'sync bookkeeping is never exported');
     ok(!('read_summaries' in backup.tables), 'summaries are not exported');
     equal(Object.keys(backup.covers), [photoRef], 'the one photo, under its cover: key');

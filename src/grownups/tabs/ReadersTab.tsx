@@ -181,6 +181,7 @@ export function ReadersTab({ store, household }: TabProps) {
             <li>{fmt(t.deleteReads, { reads: dialog.preview.readEvents, books: dialog.preview.booksRead })}</li>
             <li>{fmt(t.deleteJourneys, { count: dialog.preview.journeys })}</li>
             <li>{fmt(t.deleteLoans, { count: dialog.preview.returnedLoans })}</li>
+            {dialog.preview.libraryCards > 0 && <li>{fmt(t.deleteLibraryCards, { count: dialog.preview.libraryCards })}</li>}
           </ul>
           <p className="alert">{t.deleteWarning}</p>
         </ConfirmSheet>

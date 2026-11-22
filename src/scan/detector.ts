@@ -23,13 +23,20 @@ export interface Detection {
   format: string;
 }
 
+/**
+ * What a detector can read: the live camera, or a still image (a photo's ImageBitmap, a canvas,
+ * an <img>, ImageData or the original image file). Both the native detector and the polyfill
+ * accept all of these.
+ */
+export type DetectSource = HTMLVideoElement | HTMLCanvasElement | HTMLImageElement | ImageBitmap | ImageData | Blob;
+
 export interface Detector {
   readonly kind: 'native' | 'polyfill';
-  detect(source: HTMLVideoElement): Promise<Detection[]>;
+  detect(source: DetectSource): Promise<Detection[]>;
 }
 
 interface NativeBarcodeDetectorCtor {
-  new (options?: { formats?: string[] }): { detect(source: CanvasImageSource): Promise<Detection[]> };
+  new (options?: { formats?: string[] }): { detect(source: DetectSource): Promise<Detection[]> };
   getSupportedFormats(): Promise<string[]>;
 }
 

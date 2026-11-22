@@ -1,16 +1,18 @@
 /*
- * Printable library cards: ID-1 size (85.6 x 54 mm), 2 x 5 on an A4 page,
- * butted together so each light line is one cut. Sizes and colours come from
- * the --print-* tokens in theme.css (paper colours never follow dark mode).
+ * Printable fold-over library cards: one strip per card (front + back panel,
+ * 171.2 x 54 mm), five strips in one column on A4, butted together. Sizes and
+ * colours come from the --print-* tokens in theme.css (paper colours never
+ * follow dark mode); the drawing inside each strip is src/cards/stripSvg.ts.
  */
 
-.card-sheet {
+.strip-sheet {
+  position: relative;
   box-sizing: border-box;
   width: var(--print-page-width);
   height: var(--print-page-height);
   padding: var(--print-page-margin-y) var(--print-page-margin-x);
   display: grid;
-  grid-template-columns: repeat(2, var(--print-card-width));
+  grid-template-columns: var(--print-strip-width);
   grid-auto-rows: var(--print-card-height);
   align-content: start;
   background: var(--print-paper);
@@ -19,64 +21,37 @@
   break-after: page;
 }
 
-.card-sheet:last-child {
+.strip-sheet:last-child {
   break-after: auto;
 }
 
-.library-card {
-  box-sizing: border-box;
-  width: var(--print-card-width);
-  height: var(--print-card-height);
-  padding: var(--print-card-padding);
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--print-qr-size);
-  gap: var(--print-card-padding);
-  align-items: center;
-  /* Light cut lines, shared between neighbouring cards. */
-  outline: var(--print-cut-width) dashed var(--print-cut);
-  outline-offset: calc(var(--print-cut-width) / -2);
-  overflow: hidden;
-}
-
-.library-card__side {
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  height: 100%;
-  min-width: 0;
-}
-
-.library-card__app {
-  margin: 0;
-  font-size: var(--print-text-small);
-  font-weight: var(--weight-bold);
-  color: var(--print-accent);
-}
-
-.library-card__avatar {
-  margin: 0;
-  font-size: var(--print-avatar-size);
-  line-height: 1;
-}
-
-.library-card__name {
-  margin: 0;
-  font-size: var(--print-text-name);
-  font-weight: var(--weight-bold);
-  line-height: 1.1;
-  overflow-wrap: anywhere;
-}
-
-.library-card__qr {
-  width: var(--print-qr-size);
-  height: var(--print-qr-size);
-  background: var(--color-qr-light);
-}
-
-.library-card__qr img {
+.strip-sheet__strip,
+.strip-sheet__strip svg {
   display: block;
-  width: 100%;
-  height: 100%;
+  width: var(--print-strip-width);
+  height: var(--print-card-height);
+}
+
+/* "fold" above and below the column, on the fold line: outside every cut. */
+.strip-sheet__fold-label {
+  position: absolute;
+  left: calc(var(--print-page-margin-x) + var(--print-card-width));
+  transform: translateX(-50%);
+  font-size: var(--print-label-size);
+  line-height: 1;
+  color: var(--print-fold);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.strip-sheet__fold-label--top {
+  top: calc(var(--print-page-margin-y) / 2);
+  transform: translate(-50%, -50%);
+}
+
+.strip-sheet__fold-label--bottom {
+  bottom: calc(var(--print-page-margin-y) / 2);
+  transform: translate(-50%, 50%);
 }
 
 /* Screen preview: the real-size page, scaled to fit. */
@@ -96,6 +71,45 @@
 .card-preview__page {
   width: max-content;
   transform-origin: top left;
+}
+
+/* Library card barcodes (Grown-ups > Cards). */
+.library-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.library-cards__reader + .library-cards__reader {
+  padding-top: var(--space-4);
+  border-top: var(--border-thin) solid var(--color-border);
+}
+
+.library-cards__value {
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+/* The redrawn barcode: always dark on white, like a printed one. */
+.library-card-preview__bars {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  background: var(--color-qr-light);
+  border-radius: var(--radius-sm);
+}
+
+.library-card-preview__pass {
+  color: var(--color-read);
+  font-weight: var(--weight-bold);
+}
+
+.library-card-preview__fail {
+  color: var(--color-danger);
+  font-weight: var(--weight-bold);
 }
 
 /* Only the print portal prints; it never shows on screen. */

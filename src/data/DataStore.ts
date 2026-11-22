@@ -119,6 +119,32 @@ export interface Loan {
   renew_count: number;
 }
 
+/** Barcode types a library card can use (scanner format names). */
+export const LIBRARY_CARD_FORMATS = ['code_128', 'code_39', 'codabar', 'itf', 'ean_13'] as const;
+export type LibraryCardFormat = (typeof LIBRARY_CARD_FORMATS)[number];
+
+/**
+ * A reader's library card number at one library, redrawn on the back of their printed card.
+ * Only the value and barcode type are kept (never a photo).
+ */
+export interface LibraryCard {
+  id: Id;
+  household_id: Id;
+  reader_id: Id;
+  library_id: Id | null;
+  /**
+   * The library's name when the card was saved (and when its library is deleted), shown if
+   * library_id is unset or its library is gone.
+   */
+  library_name: string | null;
+  /** What the barcode holds, exactly as the library's scanner reads it (at most 200 characters). */
+  value: string;
+  format: LibraryCardFormat;
+  /** Optional name for the card, e.g. "Swimming pool" (at most 100 characters). */
+  label: string | null;
+  created_at: Timestamp;
+}
+
 /** One "I read this!" tap. A book can be read many times. */
 export interface ReadEvent {
   id: Id;
@@ -189,6 +215,10 @@ export type LoanPatch = Partial<
   >
 >;
 
+export type NewLibraryCard = Pick<LibraryCard, 'household_id' | 'reader_id' | 'value' | 'format'> &
+  Partial<Pick<LibraryCard, 'library_id' | 'label'>>;
+export type LibraryCardPatch = Partial<Pick<LibraryCard, 'library_id' | 'value' | 'format' | 'label'>>;
+
 export interface ListLoansOptions {
   /** true: only loans not yet returned. false: only returned. Omitted: all. */
   active?: boolean;
@@ -205,6 +235,8 @@ export interface DeleteReaderPreview {
   returnedLoans: number;
   /** Loans not yet returned. deleteReader() refuses while this is above 0. */
   activeLoans: number;
+  /** Library card barcodes (deleted with the reader). */
+  libraryCards: number;
 }
 
 /** Loan length when a library sets none, or a loan has no library. */
@@ -234,6 +266,7 @@ export type DataTable =
   | 'home_items'
   | 'libraries'
   | 'loans'
+  | 'library_cards'
   /** Read events; read summaries change with them. */
   | 'read_events'
   | 'reader_journeys';
@@ -389,6 +422,28 @@ export interface DataStore {
   /** Undoes returnLoan: the loan is active again. */
   unreturnLoan(id: Id): Promise<Loan>;
   deleteLoan(id: Id): Promise<void>;
+
+  // Library card barcodes (printed on the back of a reader's card) ----------
+  /**
+   * The value is trimmed and checked for its format (see checkLibraryCardBarcode: "invalid"
+   * otherwise); a label is trimmed (empty clears it, at most 100 characters). "not_found" for an
+   * unknown reader or library. The library's name is copied onto the card.
+   */
+  addLibraryCard(input: NewLibraryCard): Promise<LibraryCard>;
+  getLibraryCard(id: Id): Promise<LibraryCard | null>;
+  /** The reader's library cards, newest first. */
+  listLibraryCards(readerId: Id): Promise<LibraryCard[]>;
+  /** Every reader's library cards in the household, newest first. */
+  listHouseholdLibraryCards(householdId: Id): Promise<LibraryCard[]>;
+  /** Same checks as addLibraryCard. Changing the library copies the new library's name. */
+  updateLibraryCard(id: Id, patch: LibraryCardPatch): Promise<LibraryCard>;
+  deleteLibraryCard(id: Id): Promise<void>;
+  /**
+   * Gives each reader their own copy of the card (same library, value, format and label).
+   * Readers that already have this value and format, and the card's own reader, are skipped.
+   * "not_found" for an unknown card or reader. Returns the new cards.
+   */
+  copyLibraryCardToReaders(id: Id, readerIds: Id[]): Promise<LibraryCard[]>;
 
   // Reads ("I read this!") --------------------------------------------------
   /**

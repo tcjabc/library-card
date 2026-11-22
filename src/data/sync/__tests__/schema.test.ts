@@ -20,8 +20,9 @@ const problem = (o: unknown) => {
 };
 
 describe('wire ids', () => {
-  it('are "<table>:<local id>" for the eight synced tables', () => {
-    expect(SYNCED_TABLES).toEqual(['households', 'readers', 'books', 'home_items', 'libraries', 'loans', 'read_events', 'reader_journeys']);
+  it('are "<table>:<local id>" for the nine synced tables', () => {
+    expect(SYNCED_TABLES).toEqual(['households', 'readers', 'books', 'home_items', 'libraries', 'library_cards', 'loans', 'read_events', 'reader_journeys']);
+    expect(parseWireId(`library_cards:${UUID}`)).toEqual({ table: 'library_cards', localId: UUID });
     expect(wireId('readers', UUID)).toBe(`readers:${UUID}`);
     expect(parseWireId(`readers:${UUID}`)).toEqual({ table: 'readers', localId: UUID });
     expect(parseWireId('books:9780000000002')).toEqual({ table: 'books', localId: '9780000000002' });
@@ -98,6 +99,10 @@ describe('validate(op)', () => {
       op(`loans:${UUID}`, 'borrowed_at', 'yesterday'),
       op(`read_events:${UUID}`, 'read_at', null),
       op(`reader_journeys:${UUID}`, 'journey_id', 'j'.repeat(65)),
+      op(`library_cards:${UUID}`, 'format', 'qr_code'),
+      op(`library_cards:${UUID}`, 'value', 'x'.repeat(201)),
+      op(`library_cards:${UUID}`, 'label', 'x'.repeat(101)),
+      op(`library_cards:${UUID}`, 'created_at', 'today'),
     ];
     for (const o of bad) expect(problem(o), `${o.rec} ${o.f} ${JSON.stringify(o.v)?.slice(0, 20)}`).toBe('bad_value');
   });
@@ -147,6 +152,7 @@ describe('rows and records', () => {
       books: ['title', 'authors', 'source'],
       home_items: ['isbn', 'added_at'],
       libraries: ['name', 'default_loan_days'],
+      library_cards: ['reader_id', 'value', 'format', 'created_at'],
       loans: ['reader_id', 'isbn', 'borrowed_at', 'renew_count'],
       read_events: ['reader_id', 'isbn', 'read_at'],
       reader_journeys: ['reader_id', 'journey_id', 'started_at'],

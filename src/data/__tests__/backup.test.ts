@@ -44,6 +44,19 @@ function sample(): Backup {
           sticker_prefix: null,
         },
       ],
+      library_cards: [
+        {
+          id: 'c1',
+          household_id: 'main',
+          reader_id: 'r2',
+          library_id: 'l1',
+          library_name: 'Branch',
+          value: '21234000123456',
+          format: 'codabar',
+          label: null,
+          created_at: '2026-01-01T00:00:00.000Z',
+        },
+      ],
       loans: [
         {
           id: 'n1',
@@ -92,6 +105,15 @@ describe('validateBackup', () => {
     expect(result.ok && result.backup.tables.reader_journeys[0].abandoned_at).toBeNull();
   });
 
+  it('accepts a backup from before library cards: they restore empty', () => {
+    const result = validateBackup(broken((d) => delete d.tables.library_cards));
+    expect(result.ok && result.backup.tables.library_cards).toEqual([]);
+  });
+
+  it('accepts a library card whose library is not in the file (it shows the saved name)', () => {
+    expect(validateBackup(broken((d) => (d.tables.library_cards[0].library_id = 'gone'))).ok).toBe(true);
+  });
+
   it('accepts a backup from before households had a time zone', () => {
     const result = validateBackup(broken((d) => delete d.tables.households[0].time_zone));
     expect(result.ok && result.backup.tables.households[0].time_zone).toBeNull();
@@ -115,6 +137,11 @@ describe('validateBackup', () => {
     ['no "main" household', broken((d) => (d.tables.households[0].id = 'other')), 'no_household'],
     ['a read by an unknown reader', broken((d) => (d.tables.read_events[0].reader_id = 'ghost')), 'bad_reference'],
     ['a loan of an unknown reader', broken((d) => (d.tables.loans[0].reader_id = 'ghost')), 'bad_reference'],
+    ['a library card of an unknown reader', broken((d) => (d.tables.library_cards[0].reader_id = 'ghost')), 'bad_reference'],
+    ['library cards that are not a list', broken((d) => (d.tables.library_cards = {})), 'missing_table'],
+    ['a library card number that does not fit its type', broken((d) => (d.tables.library_cards[0].format = 'ean_13')), 'bad_row'],
+    ['a library card in an unknown type', broken((d) => (d.tables.library_cards[0].format = 'qr_code')), 'bad_row'],
+    ['a library card number not tidied', broken((d) => (d.tables.library_cards[0].value = ' 21234000123456')), 'bad_row'],
     ['covers missing', broken((d) => delete d.covers), 'bad_cover'],
     ['a badly named cover', broken((d) => (d.covers['cover:xyz'] = 'AAAA')), 'bad_cover'],
     ['a cover that is not base64', broken((d) => (d.covers[`cover:${HASH}`] = '***')), 'bad_cover'],

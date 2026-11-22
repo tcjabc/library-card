@@ -85,6 +85,7 @@ export interface LocalCounts {
   homeBooks: number;
   libraries: number;
   loans: number;
+  libraryCards: number;
   reads: number;
 }
 
@@ -629,16 +630,24 @@ export async function createSyncService(options: SyncServiceOptions): Promise<Sy
   }
 
   async function localCounts(): Promise<LocalCounts> {
-    const [readers, home, libraries, loans, summaries] = await Promise.all([
+    const [readers, home, libraries, loans, libraryCards, summaries] = await Promise.all([
       store.listReaders(HOUSEHOLD_ID),
       store.listHomeItems(HOUSEHOLD_ID),
       store.listLibraries(HOUSEHOLD_ID),
       store.listLoans(HOUSEHOLD_ID),
+      store.listHouseholdLibraryCards(HOUSEHOLD_ID),
       store.listHouseholdReadSummaries(HOUSEHOLD_ID),
     ]);
     // Every read event (re-reads too), as the backup summary counts them.
     const reads = summaries.reduce((n, s) => n + s.count, 0);
-    return { readers: readers.length, homeBooks: home.length, libraries: libraries.length, loans: loans.length, reads };
+    return {
+      readers: readers.length,
+      homeBooks: home.length,
+      libraries: libraries.length,
+      loans: loans.length,
+      libraryCards: libraryCards.length,
+      reads,
+    };
   }
   const localItemCount = async () => Object.values(await localCounts()).reduce((a, b) => a + b, 0);
 

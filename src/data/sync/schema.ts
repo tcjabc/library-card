@@ -1,4 +1,4 @@
-import { HOUSEHOLD_ID } from '../DataStore';
+import { HOUSEHOLD_ID, LIBRARY_CARD_FORMATS } from '../DataStore';
 import { DELETED, isFieldName, isOp, type JsonValue, type Op } from '../../sync/vendor/sync-core.js';
 
 /**
@@ -19,6 +19,7 @@ export const SYNCED_TABLES = [
   'books',
   'home_items',
   'libraries',
+  'library_cards',
   'loans',
   'read_events',
   'reader_journeys',
@@ -116,6 +117,22 @@ export const SCHEMA: Record<SyncedTable, TableSpec> = {
       homepage_url: nullableText(4096),
       default_loan_days: { kind: { type: 'int', min: 1, max: 3650 }, required: true },
       sticker_prefix: nullableText(64),
+    },
+  },
+  library_cards: {
+    key: 'id',
+    household: true,
+    localId: 'id',
+    parentReader: 'reader_id',
+    fields: {
+      reader_id: id(REQUIRED),
+      library_id: id(NULLABLE),
+      library_name: nullableText(300),
+      value: text(200, REQUIRED),
+      // Only the barcode types this version can draw: a card in a newer type stays hidden here.
+      format: text(32, REQUIRED, new RegExp(`^(?:${LIBRARY_CARD_FORMATS.join('|')})$`)),
+      label: nullableText(100),
+      created_at: timestamp(REQUIRED),
     },
   },
   loans: {

@@ -15,7 +15,7 @@ import { formatStamp, type Op } from '../../../sync/vendor/sync-core.js';
 const ISBN_A = '9780000000002';
 const ISBN_B = '9780000000019';
 const T0 = Date.parse('2026-06-01T00:00:00.000Z');
-const VIEWS = ['households', 'readers', 'books', 'home_items', 'libraries', 'loans', 'read_events', 'reader_journeys', 'read_summaries'];
+const VIEWS = ['households', 'readers', 'books', 'home_items', 'libraries', 'library_cards', 'loans', 'read_events', 'reader_journeys', 'read_summaries'];
 
 interface Device {
   store: SyncDataStore;
@@ -159,6 +159,50 @@ describe('sync adapter: two devices converge', () => {
       expect(await d.store.getReader(reader.id)).toBeNull();
       expect(await d.store.listReadEvents(reader.id)).toEqual([]);
       expect(await d.store.countHouseholdReads(HOUSEHOLD_ID)).toBe(0);
+    }
+    expect(await views(a)).toBe(await views(b));
+  });
+
+  it('library cards: one added on A shows on B; deleting the reader removes it on both', async () => {
+    const { a, b, reader } = await household();
+    const lib = await a.store.createLibrary({ household_id: HOUSEHOLD_ID, name: 'Branch' });
+    a.at = T0 + 5_000;
+    const card = await a.store.addLibraryCard({ household_id: HOUSEHOLD_ID, reader_id: reader.id, value: '21234000123456', format: 'codabar', library_id: lib.id, label: 'Town' });
+    await send(a, b);
+    expect(await b.store.getLibraryCard(card.id)).toEqual(card);
+    expect(await b.store.listLibraryCards(reader.id)).toEqual([card]);
+    expect(await views(a)).toBe(await views(b));
+
+    b.at = T0 + 20_000;
+    await b.store.deleteReader(reader.id);
+    await send(b, a);
+    for (const d of [a, b]) {
+      expect(await d.store.getLibraryCard(card.id)).toBeNull();
+      expect(await d.store.listHouseholdLibraryCards(HOUSEHOLD_ID)).toEqual([]);
+    }
+    expect(await views(a)).toBe(await views(b));
+  });
+
+  it('library cards: a deleted library leaves its cards with the name, even when added meanwhile on the other device', async () => {
+    const { a, b, reader } = await household();
+    const lib = await a.store.createLibrary({ household_id: HOUSEHOLD_ID, name: 'Branch' });
+    a.at = T0 + 5_000;
+    const early = await a.store.addLibraryCard({ household_id: HOUSEHOLD_ID, reader_id: reader.id, value: 'A1', format: 'code_128', library_id: lib.id });
+    await send(a, b);
+    // B adds a card at the library while A deletes it, before they sync.
+    b.at = T0 + 10_000;
+    const late = await b.store.addLibraryCard({ household_id: HOUSEHOLD_ID, reader_id: reader.id, value: 'B2', format: 'code_128', library_id: lib.id });
+    a.at = T0 + 12_000;
+    await a.store.deleteLibrary(lib.id);
+    await send(a, b);
+    await send(b, a);
+    for (const d of [a, b]) {
+      expect(await d.store.getLibrary(lib.id)).toBeNull();
+      const kept = await d.store.getLibraryCard(early.id);
+      expect([kept?.library_id, kept?.library_name, kept?.value]).toEqual([null, 'Branch', 'A1']);
+      // B's card still points at the library that is gone; it keeps the name it was saved with.
+      const raced = await d.store.getLibraryCard(late.id);
+      expect([raced?.library_name, raced?.value]).toEqual(['Branch', 'B2']);
     }
     expect(await views(a)).toBe(await views(b));
   });

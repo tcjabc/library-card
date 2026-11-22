@@ -8,6 +8,7 @@ import {
 } from '../../data';
 import { markAllCompletionsCelebrated } from '../../journeys/celebration';
 import { toCalendarDate } from '../../lib/dates';
+import { saveBlob } from '../../lib/download';
 import { deviceTimeZone, isTimeZone, listTimeZones } from '../../lib/timezone';
 import { href, navigate } from '../../router';
 import { clearActiveReader, getActiveReaderId } from '../../session/activeReader';
@@ -96,15 +97,8 @@ export function SettingsTab({ store, household }: TabProps) {
     setDownloading(true);
     try {
       const blob = new Blob([JSON.stringify(await store.exportBackup())], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
       // The real date, not the developer tools' pretend one.
-      link.download = backupFileName(toCalendarDate(new Date()));
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      saveBlob(blob, backupFileName(toCalendarDate(new Date())));
       const size = formatBytes(blob.size);
       setLastDownload(fmt(t.downloaded, { size }));
       toast({ message: fmt(t.downloaded, { size }) });

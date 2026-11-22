@@ -172,7 +172,7 @@ describe('local counts', () => {
   it('counts readers, home books, libraries, loans and reads', async () => {
     const store = await newStore();
     const sync = await service(store);
-    expect(await sync.localCounts()).toEqual({ readers: 0, homeBooks: 0, libraries: 0, loans: 0, reads: 0 });
+    expect(await sync.localCounts()).toEqual({ readers: 0, homeBooks: 0, libraries: 0, loans: 0, libraryCards: 0, reads: 0 });
     expect(await sync.localItemCount()).toBe(0);
 
     await store.getCurrentHousehold();
@@ -182,10 +182,11 @@ describe('local counts', () => {
     await store.addHomeItem(HOUSEHOLD_ID, isbn);
     const library = await store.createLibrary({ household_id: HOUSEHOLD_ID, name: 'Central' });
     await store.createLoan({ household_id: HOUSEHOLD_ID, reader_id: reader.id, isbn, library_id: library.id });
+    await store.addLibraryCard({ household_id: HOUSEHOLD_ID, reader_id: reader.id, value: '31000123', format: 'code_128', library_id: library.id });
     await store.markRead(reader.id, isbn);
     await store.markRead(reader.id, isbn, new Date(Date.now() + 60_000).toISOString());
-    expect(await sync.localCounts()).toEqual({ readers: 1, homeBooks: 1, libraries: 1, loans: 1, reads: 2 });
-    expect(await sync.localItemCount()).toBe(6);
+    expect(await sync.localCounts()).toEqual({ readers: 1, homeBooks: 1, libraries: 1, loans: 1, libraryCards: 1, reads: 2 });
+    expect(await sync.localItemCount()).toBe(7);
     void generateKey;
   });
 });

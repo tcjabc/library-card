@@ -23,7 +23,10 @@ import {
   type Household,
   type Id,
   type Library,
+  type LibraryCard,
+  type LibraryCardPatch,
   type Loan,
+  type NewLibraryCard,
   type ReadEvent,
   type ReadSummary,
   type Reader,
@@ -42,6 +45,7 @@ import {
   type BackupTables,
 } from '../backup';
 import { newCardToken, newId, toIso } from '../ids';
+import { checkLibraryCardBarcode, cleanLibraryCardLabel } from '../libraryCardRules';
 import { hashPin, isValidPin, verifyPin } from '../pin';
 import { addToSummary, isRepeatTap, latestEvent, summarize } from '../readRules';
 
@@ -63,10 +67,12 @@ import { addToSummary, isRepeatTap, latestEvent, summarize } from '../readRules'
  *       `outbox` (the latest pending op per [record, field]). Device id, clock,
  *       cursor, last-synced time and sync config are `meta` keys. New stores
  *       only; no data changes. Present for every adapter, used by "sync".
+ *   v6  `library_cards` (a reader's library card numbers, for printed cards), indexed by reader,
+ *       library and [household, created_at]. New store only.
  */
 
 const DB_NAME = 'library-card';
-export const DB_VERSION = 5;
+export const DB_VERSION = 6;
 
 // Highest possible string suffix for compound-key range upper bounds.
 const MAX_STRING = '￿';
@@ -160,6 +166,11 @@ interface LibraryCardDB extends DBSchema {
       /** Any loan with this sticker; callers filter by household and activity. */
       by_sticker: string;
     };
+  };
+  library_cards: {
+    key: Id;
+    value: LibraryCard;
+    indexes: { by_reader: Id; by_library: Id; by_household_created: [Id, string] };
   };
   /** Legacy, deleted by the v3 upgrade. Typed so the v1/v2 steps can still run. */
   reads: {
@@ -283,6 +294,13 @@ function openLibraryDb(name: string): Promise<DB> {
         records.createIndex('by_parent', 'p');
         const outbox = db.createObjectStore('outbox', { keyPath: ['rec', 'f'] });
         outbox.createIndex('by_t', 't');
+      }
+
+      if (oldVersion < 6) {
+        const cards = db.createObjectStore('library_cards', { keyPath: 'id' });
+        cards.createIndex('by_reader', 'reader_id');
+        cards.createIndex('by_library', 'library_id');
+        cards.createIndex('by_household_created', ['household_id', 'created_at']);
       }
     },
     blocking(_currentVersion, blockedVersion, event) {
@@ -432,6 +450,18 @@ function normaliseJourney(journey: ReaderJourney): ReaderJourney {
 
 const isActiveJourney = (journey: ReaderJourney | undefined): journey is ReaderJourney =>
   !!journey && journey.completed_at === null && (journey.abandoned_at ?? null) === null;
+
+/** Newest first; the id breaks ties so the order is the same on every device. */
+const newestCardFirst = (a: LibraryCard, b: LibraryCard) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id);
+
+/** A library card's value (tidied for its format) and label, or "invalid". */
+function checkCardFields(input: { value: string; format: string; label?: string | null }): { value: string; label: string | null } {
+  const check = checkLibraryCardBarcode(typeof input.value === 'string' ? input.value : '', input.format);
+  if (!check.ok) throw new DataStoreError('invalid', `That library card number doesn't fit its barcode type (${check.problem}).`);
+  const label = cleanLibraryCardLabel(input.label);
+  if (label === 'too_long') throw new DataStoreError('invalid', 'A library card label is at most 100 characters.');
+  return { value: check.value, label };
+}
 
 function notFound(kind: string, id: string): DataStoreError {
   return new DataStoreError('not_found', `${kind} not found: ${id}`);
@@ -880,7 +910,7 @@ export async function createStoreWith<Extra extends object>(
 
     async deleteReader(id) {
       const tx = (await getDb()).transaction(
-        ['readers', 'loans', 'read_events', 'read_summaries', 'reader_journeys'],
+        ['readers', 'loans', 'read_events', 'read_summaries', 'reader_journeys', 'library_cards'],
         'readwrite',
       );
       if (!(await tx.objectStore('readers').get(id))) throw notFound('Reader', id);
@@ -900,13 +930,16 @@ export async function createStoreWith<Extra extends object>(
       for (const key of await tx.objectStore('reader_journeys').index('by_reader_started').getAllKeys(prefixRange(id))) {
         await tx.objectStore('reader_journeys').delete(key);
       }
+      for (const key of await tx.objectStore('library_cards').index('by_reader').getAllKeys(id)) {
+        await tx.objectStore('library_cards').delete(key);
+      }
       await tx.objectStore('readers').delete(id);
       await tx.done;
-      changed('readers', 'loans', 'read_events', 'reader_journeys');
+      changed('readers', 'loans', 'read_events', 'reader_journeys', 'library_cards');
     },
 
     async previewDeleteReader(id) {
-      const tx = (await getDb()).transaction(['readers', 'loans', 'read_events', 'read_summaries', 'reader_journeys']);
+      const tx = (await getDb()).transaction(['readers', 'loans', 'read_events', 'read_summaries', 'reader_journeys', 'library_cards']);
       if (!(await tx.objectStore('readers').getKey(id))) throw notFound('Reader', id);
       const loans = await tx.objectStore('loans').index('by_reader').getAll(id);
       const preview = {
@@ -915,6 +948,7 @@ export async function createStoreWith<Extra extends object>(
         journeys: await tx.objectStore('reader_journeys').index('by_reader_started').count(prefixRange(id)),
         returnedLoans: loans.filter((loan) => loan.returned_at !== null).length,
         activeLoans: loans.filter((loan) => loan.returned_at === null).length,
+        libraryCards: await tx.objectStore('library_cards').index('by_reader').count(id),
       };
       await tx.done;
       return preview;
@@ -1057,7 +1091,7 @@ export async function createStoreWith<Extra extends object>(
     },
 
     async deleteLibrary(id) {
-      const tx = (await getDb()).transaction(['libraries', 'loans'], 'readwrite');
+      const tx = (await getDb()).transaction(['libraries', 'loans', 'library_cards'], 'readwrite');
       const library = await tx.objectStore('libraries').get(id);
       const loans = await tx.objectStore('loans').index('by_library').getAll(id);
       for (const loan of loans) {
@@ -1067,9 +1101,101 @@ export async function createStoreWith<Extra extends object>(
           library_name: library?.name ?? loan.library_name ?? null,
         });
       }
+      // Cards keep their number and show the library's name from now on.
+      for (const card of await tx.objectStore('library_cards').index('by_library').getAll(id)) {
+        await tx.objectStore('library_cards').put({ ...card, library_id: null, library_name: library?.name ?? card.library_name });
+      }
       await tx.objectStore('libraries').delete(id);
       await tx.done;
-      changed('libraries', 'loans');
+      changed('libraries', 'loans', 'library_cards');
+    },
+
+    // Library card barcodes -------------------------------------------------
+    async addLibraryCard(input: NewLibraryCard) {
+      const fields = checkCardFields(input);
+      const tx = (await getDb()).transaction(['readers', 'libraries', 'library_cards'], 'readwrite');
+      if (!(await tx.objectStore('readers').getKey(input.reader_id))) throw notFound('Reader', input.reader_id);
+      const libraryId = input.library_id ?? null;
+      const library = libraryId ? await tx.objectStore('libraries').get(libraryId) : undefined;
+      if (libraryId && !library) throw notFound('Library', libraryId);
+      const card: LibraryCard = {
+        id: newId(),
+        household_id: input.household_id,
+        reader_id: input.reader_id,
+        library_id: libraryId,
+        library_name: library?.name ?? null,
+        value: fields.value,
+        format: input.format,
+        label: fields.label,
+        created_at: nowIso(),
+      };
+      await tx.objectStore('library_cards').add(card);
+      await tx.done;
+      changed('library_cards');
+      return card;
+    },
+
+    async getLibraryCard(id) {
+      return (await (await getDb()).get('library_cards', id)) ?? null;
+    },
+
+    async listLibraryCards(readerId) {
+      const cards = await (await getDb()).getAllFromIndex('library_cards', 'by_reader', readerId);
+      return cards.sort(newestCardFirst);
+    },
+
+    async listHouseholdLibraryCards(householdId) {
+      const cards = await (await getDb()).getAllFromIndex('library_cards', 'by_household_created', prefixRange(householdId));
+      return cards.sort(newestCardFirst);
+    },
+
+    async updateLibraryCard(id, patch: LibraryCardPatch) {
+      const tx = (await getDb()).transaction(['libraries', 'library_cards'], 'readwrite');
+      const existing = await tx.objectStore('library_cards').get(id);
+      if (!existing) throw notFound('Library card', id);
+      const format = patch.format ?? existing.format;
+      const fields = checkCardFields({
+        value: patch.value ?? existing.value,
+        format,
+        label: patch.label === undefined ? existing.label : patch.label,
+      });
+      const next: LibraryCard = { ...existing, format, value: fields.value, label: fields.label };
+      if (patch.library_id !== undefined && patch.library_id !== existing.library_id) {
+        const library = patch.library_id ? await tx.objectStore('libraries').get(patch.library_id) : undefined;
+        if (patch.library_id && !library) throw notFound('Library', patch.library_id);
+        next.library_id = patch.library_id;
+        next.library_name = library?.name ?? null;
+      }
+      await tx.objectStore('library_cards').put(next);
+      await tx.done;
+      changed('library_cards');
+      return next;
+    },
+
+    async deleteLibraryCard(id) {
+      await (await getDb()).delete('library_cards', id);
+      changed('library_cards');
+    },
+
+    async copyLibraryCardToReaders(id, readerIds) {
+      const tx = (await getDb()).transaction(['readers', 'library_cards'], 'readwrite');
+      const card = await tx.objectStore('library_cards').get(id);
+      if (!card) throw notFound('Library card', id);
+      for (const readerId of readerIds) {
+        if (!(await tx.objectStore('readers').getKey(readerId))) throw notFound('Reader', readerId);
+      }
+      const created: LibraryCard[] = [];
+      for (const readerId of new Set(readerIds)) {
+        if (readerId === card.reader_id) continue;
+        const theirs = await tx.objectStore('library_cards').index('by_reader').getAll(readerId);
+        if (theirs.some((c) => c.format === card.format && c.value === card.value)) continue;
+        const copy: LibraryCard = { ...card, id: newId(), reader_id: readerId, created_at: nowIso() };
+        await tx.objectStore('library_cards').add(copy);
+        created.push(copy);
+      }
+      await tx.done;
+      if (created.length) changed('library_cards');
+      return created;
     },
 
     // Borrowed library ------------------------------------------------------
@@ -1532,6 +1658,7 @@ export const ALL_TABLES: DataTable[] = [
   'home_items',
   'libraries',
   'loans',
+  'library_cards',
   'read_events',
   'reader_journeys',
 ];

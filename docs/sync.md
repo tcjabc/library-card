@@ -94,6 +94,7 @@ a newer one sends. Known fields must have the right type and size or the op is s
 | `books` | ISBN-13 or `noisbn-<id>` | **title** (≤ 1000), **authors** (≤ 50 texts of ≤ 300), cover_url (≤ 4096 or null), **source** (≤ 32) |
 | `home_items` | book key | **isbn** (book key), **added_at** (timestamp) |
 | `libraries` | id | **name** (≤ 200), search_url_template, homepage_url (≤ 4096 or null), **default_loan_days** (1–3650), sticker_prefix (≤ 64 or null) |
+| `library_cards` | id | **reader_id**, library_id (id or null), library_name (≤ 300 or null), **value** (≤ 200), **format** (`code_128`, `code_39`, `codabar`, `itf` or `ean_13`), label (≤ 100 or null), **created_at** |
 | `loans` | id | **reader_id**, **isbn**, library_id, library_name (≤ 300), sticker_barcode (≤ 200), **borrowed_at**, due_date (YYYY-MM-DD or null), returned_at, **renew_count** (0–100,000) |
 | `read_events` | id | **reader_id**, **isbn**, **read_at** |
 | `reader_journeys` | id | **reader_id**, **journey_id** (≤ 64), **started_at**, completed_at, abandoned_at |
@@ -109,8 +110,9 @@ The typed tables ("views") are rebuilt from records. A row is shown only if:
 
 - its record isn't deleted;
 - every required field is present and valid;
-- for loans, read events and journeys, its reader is visible (an orphan stays hidden until its
-  reader arrives, and deleting a reader hides its children everywhere);
+- for loans, read events, journeys and library cards, its reader is visible (an orphan stays
+  hidden until its reader arrives, and deleting a reader hides its children everywhere);
+- for library cards, the format is one this version can draw (a newer type stays hidden);
 - for readers, no other visible reader has the same card token (below).
 
 ## Conflict rules
@@ -167,7 +169,7 @@ or another, fails at once with `SyncBusyError`; while one runs, the other tabs' 
 forgotten after two minutes.)
 
 **What a replace drops.** `localCounts()` counts this device's readers, home books, libraries,
-loans and reads (every read event, re-reads included). The join screen shows them before
+loans, library cards and reads (every read event, re-reads included). The join screen shows them before
 "Use the household's data only", and a device where they are all 0 joins as a replace without
 asking.
 
@@ -212,6 +214,11 @@ asking.
 - **Restoring a backup** keeps working as before (photos are in the file). Afterwards every
   journey it holds is marked celebrated on this device.
 - **Deleting data** (a reader, a loan…) is a tombstone that syncs like any other change.
+- **Deleting a library** clears `library_id` on its loans and library cards and copies the
+  library's name onto them (ordinary field ops). A card saved with a library also keeps that
+  library's name from the start, so a card whose library vanished in a race (deleted on one device
+  while the card was added on another) still shows a name. Cards show the live library's name
+  when it exists, else `library_name`, else their label.
 - **Delete household** (`deleteHousehold()`): deletes the room on the relay (its log and photos).
   Local data stays on every device.
 
