@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   GROWN_UP_TABS,
   formatBytes,
+  findSameTitle,
   formatTimestampDate,
   isAppStorageKey,
   matchesBookSearch,
@@ -11,6 +12,7 @@ import {
   sortActiveLoans,
   sortReturnedLoans,
   tabPath,
+  titleKey,
 } from '../helpers';
 
 describe('parseGrownUpsPath and tabPath', () => {
@@ -51,6 +53,37 @@ describe('matchesBookSearch', () => {
 
   it('an empty query matches everything', () => {
     expect(matchesBookSearch(book, '   ')).toBe(true);
+  });
+});
+
+describe('titleKey and findSameTitle', () => {
+  it('ignores case, spaces and punctuation', () => {
+    expect(titleKey('The Gruffalo!')).toBe(titleKey('the   gruffalo'));
+    expect(titleKey('Room on the Broom')).toBe(titleKey('ROOM ON THE BROOM.'));
+    expect(titleKey('Can’t Sleep, Little Bear?')).toBe(titleKey('cant sleep little bear'));
+    expect(titleKey('Pépé')).toBe(titleKey('pepe'));
+    expect(titleKey('Thegruffalo')).toBe(titleKey('The Gruffalo'));
+  });
+
+  it('keeps letters of any script and digits', () => {
+    expect(titleKey('小王子')).toBe(titleKey(' 小 王子 '));
+    expect(titleKey('小王子')).not.toBe(titleKey('大王子'));
+    expect(titleKey('Book 1')).not.toBe(titleKey('Book 2'));
+  });
+
+  it('finds every item with the same title, and nothing for a different one', () => {
+    const shelf = [
+      { id: 'a', title: 'The Gruffalo' },
+      { id: 'b', title: 'The Gruffalo’s Child' },
+      { id: 'c', title: 'the gruffalo' },
+    ];
+    expect(findSameTitle('THE GRUFFALO!', shelf).map((i) => i.id)).toEqual(['a', 'c']);
+    expect(findSameTitle('Gruffalo', shelf)).toEqual([]);
+    expect(findSameTitle('Stick Man', shelf)).toEqual([]);
+  });
+
+  it('a title with no letters or digits matches nothing', () => {
+    expect(findSameTitle(' ?! ', [{ title: '!!' }, { title: '' }])).toEqual([]);
   });
 });
 

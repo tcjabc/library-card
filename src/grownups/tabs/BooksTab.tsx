@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { BookSheet, type BookSheetMode } from '../../books/BookSheet';
 import { BookLookupError, lookupIsbn, normaliseIsbn } from '../../books/lookup';
-import { newNoIsbnBookKey, useDataQuery, type Book, type DataStore, type HomeItem, type Household, type ReadSummary, type Reader } from '../../data';
+import { isNoIsbnBookKey, newNoIsbnBookKey, useDataQuery, type Book, type DataStore, type HomeItem, type Household, type ReadSummary, type Reader } from '../../data';
 import { BookScanner } from '../../scan/BookScanner';
 import { fmt, strings } from '../../strings';
 import { BookCover } from '../../ui/BookCover';
 import { ConfirmSheet } from '../../ui/ConfirmSheet';
 import { Sheet } from '../../ui/Sheet';
 import { useToast } from '../../ui/Toast';
-import { formatTimestampDate, matchesBookSearch } from '../helpers';
+import { findSameTitle, formatTimestampDate, matchesBookSearch } from '../helpers';
 import { useGrownUpSession } from '../useGrownUpSession';
 import type { TabProps } from './types';
 
@@ -21,6 +21,12 @@ type Lookup =
   | { state: 'message'; text: string; retryIsbn?: string; manualIsbn?: string };
 
 type SheetState = { mode: BookSheetMode; addToHome: boolean } | null;
+
+/** Home books with the title of a new no-barcode book, waiting for "Use that one" or "Add anyway". */
+interface Duplicate {
+  matches: HomeEntry[];
+  choose: (choice: 'use' | 'add' | 'back') => void;
+}
 
 interface HomeEntry {
   item: HomeItem;
@@ -62,12 +68,33 @@ export function BooksTab({ store, household }: TabProps) {
   const [removing, setRemoving] = useState<HomeEntry | null>(null);
   const [readsOf, setReadsOf] = useState<HomeEntry | null>(null);
   const [saved, setSaved] = useState<{ book: Book; inHome: boolean } | null>(null);
+  const [duplicate, setDuplicate] = useState<Duplicate | null>(null);
   const searchId = useId();
 
   const query = useCallback((s: DataStore) => loadBooks(s, household.id), [household.id]);
   const { data } = useDataQuery(query, ['home_items', 'books', 'covers', 'readers', 'read_events']);
   const entries = data?.entries ?? [];
   const visible = entries.filter((e) => matchesBookSearch({ title: e.title, authors: e.book?.authors ?? [] }, search));
+
+  /**
+   * A new no-barcode book can't be matched by its key, so before it is added, look for Home books
+   * with the same title. "Use that one" drops the new book; closing the warning goes back to it.
+   */
+  const checkDuplicate = (title: string) => {
+    const matches = findSameTitle(title, entries);
+    if (matches.length === 0) return Promise.resolve(true);
+    return new Promise<boolean>((resolve) => {
+      setDuplicate({
+        matches,
+        choose: (choice) => {
+          setDuplicate(null);
+          if (choice === 'use') setSheet(null);
+          resolve(choice === 'add');
+        },
+      });
+    });
+  };
+  const newNoBarcode = sheet !== null && sheet.addToHome && sheet.mode.kind === 'new' && isNoIsbnBookKey(sheet.mode.isbn);
 
   return (
     <>
@@ -139,6 +166,7 @@ export function BooksTab({ store, household }: TabProps) {
           mode={sheet.mode}
           store={store}
           saveLabel={sheet.addToHome ? t.addToHome : undefined}
+          confirmSave={newNoBarcode ? checkDuplicate : undefined}
           onSaved={(book) => {
             const addHome = sheet.addToHome;
             setSheet(null);
@@ -151,6 +179,36 @@ export function BooksTab({ store, household }: TabProps) {
           }}
           onClose={() => setSheet(null)}
         />
+      )}
+
+      {duplicate && (
+        <Sheet title={fmt(t.duplicateTitle, { title: duplicate.matches[0].title })} onClose={() => duplicate.choose('back')}>
+          <div className="stack">
+            <p>{t.duplicateBody}</p>
+            <ul className="grownups-books">
+              {duplicate.matches.map((entry) => (
+                <li key={entry.item.id} className="grownups-book">
+                  <div className="grownups-book__cover">
+                    <BookCover title={entry.title} coverUrl={entry.book?.cover_url ?? null} />
+                  </div>
+                  <div className="stack grownups-book__body">
+                    <p className="grownups__item-title">{entry.title}</p>
+                    {entry.book && entry.book.authors.length > 0 && <p className="small muted">{entry.book.authors.join(', ')}</p>}
+                    <p className="small muted">{fmt(t.duplicateAdded, { date: formatTimestampDate(entry.item.added_at) })}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <div className="row">
+              <button type="button" className="btn btn--primary" onClick={() => duplicate.choose('use')}>
+                {t.duplicateUse}
+              </button>
+              <button type="button" className="btn" onClick={() => duplicate.choose('add')}>
+                {t.duplicateAdd}
+              </button>
+            </div>
+          </div>
+        </Sheet>
       )}
 
       {removing && (

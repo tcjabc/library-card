@@ -28,6 +28,11 @@ interface BookSheetProps {
   store: DataStore;
   /** Label for the save button, e.g. "Add to Home". */
   saveLabel?: string;
+  /**
+   * Asked with the title before anything is saved (photo included): false keeps the sheet open
+   * unsaved, or the caller closes it. E.g. a duplicate warning.
+   */
+  confirmSave?: (title: string) => Promise<boolean>;
   onSaved: (book: Book) => void;
   onClose: () => void;
 }
@@ -35,7 +40,7 @@ interface BookSheetProps {
 const COVER_MAX_EDGE = 800;
 const COVER_QUALITY = 0.8;
 
-export function BookSheet({ mode, store, saveLabel, onSaved, onClose }: BookSheetProps) {
+export function BookSheet({ mode, store, saveLabel, confirmSave, onSaved, onClose }: BookSheetProps) {
   const t = strings.bookSheet;
   const original = mode.kind === 'new' ? null : mode.book;
   const isbn = mode.kind === 'new' ? mode.isbn : mode.book.isbn;
@@ -77,6 +82,7 @@ export function BookSheet({ mode, store, saveLabel, onSaved, onClose }: BookShee
       setError(t.titleRequired);
       return;
     }
+    if (confirmSave && !(await confirmSave(cleanTitle))) return;
     setBusy(true);
     setError(null);
     try {

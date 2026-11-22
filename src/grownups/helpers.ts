@@ -39,6 +39,18 @@ export function matchesBookSearch(book: { title: string; authors: readonly strin
   return words.every((word) => haystack.includes(word));
 }
 
+/** A title for comparing: case, accents, spaces and punctuation don't count ("The Gruffalo!" = "the gruffalo"). */
+export function titleKey(title: string): string {
+  return fold(title).replace(/ /g, '');
+}
+
+/** The items whose title is the same as `title` (by titleKey). None for a title with no letters or digits. */
+export function findSameTitle<T extends { title: string }>(title: string, items: readonly T[]): T[] {
+  const key = titleKey(title);
+  if (!key) return [];
+  return items.filter((item) => titleKey(item.title) === key);
+}
+
 const STATUS_ORDER: Record<DueStatus, number> = { overdue: 0, soon: 1, later: 2, none: 3 };
 
 /** Overdue first, then due soon, then later, then no due date; earliest due first within each; then newest borrowed. */
