@@ -1,5 +1,5 @@
 import type { BookKey, CalendarDate, Id, Loan } from '../data';
-import { toCalendarDate } from '../lib/dates';
+import { calendarDateIn, currentTimeZone, noonIn } from '../lib/timezone';
 
 /**
  * Pure helpers for library loans (public-library books only; Home Library
@@ -82,17 +82,17 @@ export function checkLoanDates({ borrowed, due, returned }: LoanDates, today: Ca
   return problems;
 }
 
-/** A stored timestamp as the local calendar date the editor shows. */
-export function timestampToDate(timestamp: string): CalendarDate {
-  return toCalendarDate(new Date(timestamp));
+/** A stored timestamp as the calendar date the editor shows, in the household's time zone. */
+export function timestampToDate(timestamp: string, zone: string = currentTimeZone()): CalendarDate {
+  return calendarDateIn(new Date(timestamp), zone);
 }
 
 /**
  * A calendar date from the editor back to a timestamp. The original is kept when its date didn't
- * change (no time is lost); a new date is stored at local noon, so it shows as that date in any
- * nearby time zone.
+ * change (no time is lost); a new date is stored at noon in the household's time zone, so it shows
+ * as that date there.
  */
-export function dateToTimestamp(date: CalendarDate, original: string | null = null): string {
-  if (original && timestampToDate(original) === date) return original;
-  return new Date(`${date}T12:00:00`).toISOString();
+export function dateToTimestamp(date: CalendarDate, original: string | null = null, zone: string = currentTimeZone()): string {
+  if (original && timestampToDate(original, zone) === date) return original;
+  return noonIn(date, zone);
 }

@@ -12,6 +12,7 @@ import { JourneyScreen } from './screens/journeys/JourneyScreen';
 import { LibraryBooks } from './screens/library/LibraryBooks';
 import { Shelf } from './screens/Shelf';
 import { Splash } from './screens/Splash';
+import { HouseholdTimeZone } from './session/HouseholdTimeZone';
 import { RequireReader } from './session/RequireReader';
 import { strings } from './strings';
 import { ToastProvider } from './ui/Toast';
@@ -23,6 +24,7 @@ export function App() {
   return (
     <ToastProvider>
       <GrownUpProvider>
+        <HouseholdTimeZone />
         <Routes />
         <CelebrationHost />
       </GrownUpProvider>

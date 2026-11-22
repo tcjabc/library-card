@@ -1,6 +1,7 @@
-import { useEffect, useId, useRef } from 'react';
+import { useCallback, useEffect, useId, useRef } from 'react';
+import { useDataQuery, type DataStore } from '../../data';
 import { isGrownUpPath } from '../../grownups/session';
-import { clearPendingCelebration, usePendingCelebration } from '../../journeys/celebration';
+import { ensureCelebrationList, markCelebrated, nextCelebration, useCelebrationList } from '../../journeys/celebration';
 import { getJourney } from '../../journeys/journeys';
 import { navigate, useHashPath } from '../../router';
 import { useActiveReaderId } from '../../session/activeReader';
@@ -13,26 +14,36 @@ const BURSTS = 6;
 const BURST_EVERY_MS = 450;
 
 /**
- * Full-screen "You reached the top!" over whatever screen the reader is on,
- * when their pending-celebration flag is set (see journeys/completion.ts).
- * The flag is cleared when they dismiss it. Not shown in the grown-up area.
+ * Full-screen "You reached the top!" over whatever screen the reader is on, for a finished
+ * journey this device hasn't celebrated yet (journeys/celebration.ts), however it was finished:
+ * here, in another tab, or on another device through sync. Dismissing it marks it celebrated on
+ * this device. Not shown in the grown-up area.
  */
 export function CelebrationHost() {
   const readerId = useActiveReaderId();
-  const journeyId = usePendingCelebration(readerId);
   const path = useHashPath();
-  if (!readerId || !journeyId || path === '/' || isGrownUpPath(path)) return null;
-  return <Celebration key={`${readerId}:${journeyId}`} readerId={readerId} journeyId={journeyId} />;
+  const { celebrated, paused } = useCelebrationList();
+  const query = useCallback((s: DataStore) => (readerId ? s.listJourneyHistory(readerId) : Promise.resolve([])), [readerId]);
+  const { data: history, store } = useDataQuery(query, ['reader_journeys']);
+
+  // First run of this version: make the list from the completions that already exist.
+  useEffect(() => {
+    if (store && celebrated === null) void ensureCelebrationList(store).catch((error: unknown) => console.error('[celebration] list', error));
+  }, [store, celebrated]);
+
+  const due = celebrated && !paused && history ? nextCelebration(history, celebrated) : null;
+  if (!readerId || !due || path === '/' || isGrownUpPath(path)) return null;
+  return <Celebration key={due.id} readerJourneyId={due.id} journeyId={due.journey_id} />;
 }
 
-function Celebration({ readerId, journeyId }: { readerId: string; journeyId: string }) {
+function Celebration({ readerJourneyId, journeyId }: { readerJourneyId: string; journeyId: string }) {
   const t = strings.journey;
   const journey = getJourney(journeyId);
   const titleId = useId();
   const button = useRef<HTMLButtonElement>(null);
 
   const done = () => {
-    clearPendingCelebration(readerId);
+    markCelebrated(readerJourneyId);
     navigate('/journeys');
   };
 

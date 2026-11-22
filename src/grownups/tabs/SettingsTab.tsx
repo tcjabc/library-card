@@ -1,4 +1,4 @@
-import { lazy, Suspense, useId, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { lazy, Suspense, useId, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import {
   backupFileName,
   parseBackupText,
@@ -6,7 +6,9 @@ import {
   type Backup,
   type BackupSummary,
 } from '../../data';
+import { markAllCompletionsCelebrated } from '../../journeys/celebration';
 import { toCalendarDate } from '../../lib/dates';
+import { deviceTimeZone, isTimeZone, listTimeZones } from '../../lib/timezone';
 import { href, navigate } from '../../router';
 import { clearActiveReader, getActiveReaderId } from '../../session/activeReader';
 import { fmt, strings } from '../../strings';
@@ -44,6 +46,10 @@ export function SettingsTab({ store, household }: TabProps) {
   const { runAsGrownUp } = useGrownUpSession();
   const [name, setName] = useState(household.name);
   const [nameError, setNameError] = useState<string | null>(null);
+  const device = deviceTimeZone();
+  const [zone, setZone] = useState(household.time_zone ?? device);
+  const [zoneError, setZoneError] = useState<string | null>(null);
+  const zones = useMemo(() => listTimeZones(), []);
   const [downloading, setDownloading] = useState(false);
   const [lastDownload, setLastDownload] = useState<string | null>(null);
   const [restoreError, setRestoreError] = useState<string | null>(null);
@@ -55,7 +61,21 @@ export function SettingsTab({ store, household }: TabProps) {
   const [syncRestoreBusy, setSyncRestoreBusy] = useState(false);
   const [syncRestoreError, setSyncRestoreError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-  const ids = { name: useId(), file: useId() };
+  const ids = { name: useId(), file: useId(), zone: useId(), zones: useId() };
+
+  const saveZone = async (event: FormEvent) => {
+    event.preventDefault();
+    const value = zone.trim();
+    if (!isTimeZone(value)) return setZoneError(t.timeZoneInvalid);
+    setZoneError(null);
+    try {
+      await store.updateHousehold(household.id, { time_zone: value });
+      toast({ message: t.timeZoneSaved });
+    } catch (error) {
+      console.error('[settings] time zone', error);
+      setZoneError(strings.bookSheet.saveError);
+    }
+  };
 
   const saveName = async (event: FormEvent) => {
     event.preventDefault();
@@ -117,6 +137,8 @@ export function SettingsTab({ store, household }: TabProps) {
       // replace the household's data on every device).
       if (then !== 'restore' && sync) await sync.stop(true);
       await store.importBackup(backup);
+      // The backup's finished journeys were celebrated where they happened: don't replay them here.
+      await markAllCompletionsCelebrated(store);
       if (then === 'newHousehold' && sync) {
         await sync.start();
         toast({ message: ts.started });
@@ -179,6 +201,43 @@ export function SettingsTab({ store, household }: TabProps) {
           {nameError && (
             <p className="alert alert--danger" role="alert">
               {nameError}
+            </p>
+          )}
+        </form>
+        <form className="stack" onSubmit={(e) => void saveZone(e)} noValidate>
+          <label htmlFor={ids.zone} className="field-label">
+            {t.timeZone}
+          </label>
+          <p className="small muted">{fmt(t.timeZoneIntro, { zone: device })}</p>
+          <div className="row">
+            <input
+              id={ids.zone}
+              className="input"
+              list={ids.zones}
+              value={zone}
+              onChange={(e) => setZone(e.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <datalist id={ids.zones}>
+              {zones.map((z) => (
+                <option key={z} value={z} />
+              ))}
+            </datalist>
+            <button type="submit" className="btn" disabled={zone.trim() === (household.time_zone ?? '')}>
+              {t.timeZoneSave}
+            </button>
+          </div>
+          {zone !== device && (
+            <div className="row">
+              <button type="button" className="btn btn--quiet btn--small" onClick={() => setZone(device)}>
+                {fmt(t.timeZoneUseDevice, { zone: device })}
+              </button>
+            </div>
+          )}
+          {zoneError && (
+            <p className="alert alert--danger" role="alert">
+              {zoneError}
             </p>
           )}
         </form>

@@ -22,8 +22,9 @@ import {
   wrapForSync,
   type RecorderState,
 } from './records';
+import { isWaiting, openPhotoOutbox, type BlobOutboxEntry, type PhotoOutboxDb } from './photoStore';
 import { SYNCED_TABLES, rowToRecord, validate } from './schema';
-import type { SyncConfig, SyncDataStore, SyncEngineStore } from './types';
+import type { SyncConfig, SyncDataStore, SyncEngineStore, SyncPhotoStore } from './types';
 
 export type { ApplyResult, SyncConfig, SyncDataStore, SyncEngineStore } from './types';
 export { isSyncStore } from './types';
@@ -54,13 +55,124 @@ function checkedKey(householdKey: string): string {
 
 export async function createSyncStore(dbName = DB_NAME, options: LocalStoreOptions = {}): Promise<SyncDataStore> {
   const state: RecorderState = { now: options.now ?? (() => Date.now()), enqueued: false };
+  const photos = await openPhotoOutbox(dbName);
   return createStoreWith(dbName, options, {
     wrap: (db) => wrapForSync(db, state),
-    extend: (store, internals) => syncMethods(store, internals, state),
+    extend: (store, internals) => ({ ...syncMethods(store, internals, state, photos), ...photoMethods(store, internals, photos) }),
   });
 }
 
-function syncMethods(store: LocalDataStore, internals: StoreInternals, state: RecorderState): SyncEngineStore & Pick<LocalDataStore, 'importBackup'> {
+const COVER_PREFIX = 'cover:';
+const coverHash = (value: unknown): string | null =>
+  typeof value === 'string' && value.startsWith(COVER_PREFIX) ? value.slice(COVER_PREFIX.length) : null;
+
+/** Photos books point at that are on this device, with their outbox entries (one read of each store). */
+async function photoPicture(internals: StoreInternals, photos: PhotoOutboxDb) {
+  const d = await internals.rawDb();
+  const tx = d.transaction(['books', 'cover_images']);
+  const books = await tx.objectStore('books').getAll();
+  const local = new Set((await tx.objectStore('cover_images').getAllKeys()) as string[]);
+  await tx.done;
+  const referenced = new Set(books.map((b) => coverHash(b.cover_url)).filter((h): h is string => h !== null && local.has(h)));
+  const entries = new Map((await photos.getAll('blob_outbox')).map((e) => [e.hash, e]));
+  return { referenced, entries };
+}
+
+/** Photo sync for the sync adapter: the photo outbox, remote photos and the missing-photo hook. */
+function photoMethods(
+  store: LocalDataStore,
+  internals: StoreInternals,
+  photos: PhotoOutboxDb,
+): SyncPhotoStore & Pick<LocalDataStore, 'resetDevice' | 'putBook'> {
+  const localReset = store.resetDevice.bind(store);
+  const localPutBook = store.putBook.bind(store);
+  const hasLocal = async (hash: string) => (await (await internals.rawDb()).getKey('cover_images', hash)) !== undefined;
+  const missing = new Set<(hash: string) => void>();
+  internals.onMissingCover((hash) => missing.forEach((fn) => fn(hash)));
+
+  return {
+    async photosToUpload(now) {
+      const { referenced, entries } = await photoPicture(internals, photos);
+      const due = [...referenced].filter((h) => {
+        const e = entries.get(h);
+        return isWaiting(e) && (!e || e.next_at <= now);
+      });
+      const d = await internals.rawDb();
+      const out: { hash: string; blob: Blob }[] = [];
+      for (const hash of due) {
+        const blob = (await d.get('cover_images', hash))?.blob;
+        if (blob) out.push({ hash, blob });
+      }
+      return out;
+    },
+
+    async nextPhotoRetryAt() {
+      const { referenced, entries } = await photoPicture(internals, photos);
+      const times = [...referenced].map((h) => entries.get(h)).filter((e): e is BlobOutboxEntry => e?.state === 'pending').map((e) => e.next_at);
+      return times.length ? Math.min(...times) : null;
+    },
+
+    async getPhotoState(hash) {
+      return (await photos.get('blob_outbox', hash)) ?? null;
+    },
+
+    async setPhotoState(hash, entry) {
+      await photos.put('blob_outbox', { ...entry, hash });
+    },
+
+    async photoCounts() {
+      const { referenced, entries } = await photoPicture(internals, photos);
+      let waiting = 0;
+      let failed = 0;
+      for (const h of referenced) {
+        const e = entries.get(h);
+        if (e?.state === 'failed') failed++;
+        else if (isWaiting(e)) waiting++;
+      }
+      return { waiting, failed };
+    },
+
+    async saveRemotePhoto(hash, blob) {
+      const d = await internals.rawDb();
+      if (!(await d.getKey('cover_images', hash))) await d.put('cover_images', { hash, blob, saved_at: new Date(internals.now()).toISOString() });
+      await photos.put('blob_outbox', { hash, state: 'uploaded', attempts: 0, next_at: 0, error: null });
+      // Covers that showed as none can show now, here and in other tabs.
+      internals.emit(['books', 'covers'], true);
+      internals.broadcast(['books', 'covers']);
+    },
+
+    hasLocalPhoto: hasLocal,
+
+    /**
+     * A book whose photo hasn't arrived yet shows no cover, so saving it from the book sheet
+     * sends no cover: keep the household's photo rather than removing it everywhere.
+     */
+    async putBook(book) {
+      if (!book.cover_url) {
+        const previous = coverHash((await (await internals.rawDb()).get('books', book.isbn))?.cover_url);
+        if (previous && !(await hasLocal(previous))) return localPutBook({ ...book, cover_url: COVER_PREFIX + previous });
+      }
+      return localPutBook(book);
+    },
+
+    onMissingPhoto(listener) {
+      missing.add(listener);
+      return () => missing.delete(listener);
+    },
+
+    async resetDevice() {
+      await localReset();
+      await photos.clear('blob_outbox');
+    },
+  };
+}
+
+function syncMethods(
+  store: LocalDataStore,
+  internals: StoreInternals,
+  state: RecorderState,
+  photos: PhotoOutboxDb,
+): SyncEngineStore & Pick<LocalDataStore, 'importBackup'> {
   const raw = internals.rawDb;
   // The store is extended in place, so keep the local adapter's own importBackup.
   const localImport = store.importBackup.bind(store);
@@ -161,7 +273,15 @@ function syncMethods(store: LocalDataStore, internals: StoreInternals, state: Re
     async pendingOps(limit = 500) {
       const config = await getConfig();
       if (!config) throw new DataStoreError('invalid', 'Sync is not on for this device.');
-      const entries: OutboxEntry[] = await (await raw()).getAllFromIndex('outbox', 'by_t', null, limit);
+      const all: OutboxEntry[] = await (await raw()).getAllFromIndex('outbox', 'by_t');
+      // A cover set to a photo that isn't on the relay yet waits until it is (or has failed).
+      const { referenced, entries: photoEntries } = await photoPicture(internals, photos);
+      const held = (e: OutboxEntry) => {
+        if (e.f !== 'cover_url' || !e.rec.startsWith('books:')) return false;
+        const hash = coverHash(e.v);
+        return hash !== null && referenced.has(hash) && isWaiting(photoEntries.get(hash));
+      };
+      const entries = all.filter((e) => !held(e)).slice(0, limit);
       const key = await opIdKeyFor(config.householdKey);
       return Promise.all(entries.map(async (e) => ({ id: await opId(key, e.rec, e.f, e.t), rec: e.rec, f: e.f, v: e.v, t: e.t, dev: e.dev }) as Op));
     },
@@ -238,6 +358,8 @@ function syncMethods(store: LocalDataStore, internals: StoreInternals, state: Re
         throw error;
       }
       await tx.done;
+      // The household's photos are fetched as needed; nothing of this device's is waiting to upload.
+      await photos.clear('blob_outbox');
       internals.revokeAllCoverUrls();
       announce(ALL_TABLES);
       return { changed: outcome.changed, skipped: outcome.skipped, tokenConflicts: rebuilt.tokenConflicts, records: outcome.touched.size };
@@ -360,6 +482,8 @@ function syncMethods(store: LocalDataStore, internals: StoreInternals, state: Re
         throw error;
       }
       await tx.done;
+      // A new room: every photo a book points at is uploaded again (the relay skips what it has).
+      await photos.clear('blob_outbox');
       if (queued) notifyEnqueued();
       return { records, queued, skipped };
     },

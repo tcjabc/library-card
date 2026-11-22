@@ -16,20 +16,32 @@ export async function resizeImage(
   const url = URL.createObjectURL(file);
   try {
     const img = await loadImage(url);
-    // Quality first (cheap, keeps detail), then size: 800 px -> 640 -> 512 ...
-    const qualities = [quality, 0.7, 0.6, 0.5, 0.4].filter((q, i) => i === 0 || q < quality);
-    let edge = maxEdge;
-    for (let round = 0; round < 6; round++) {
-      for (const q of qualities) {
-        const blob = await encode(img, edge, q);
-        if (blob.size <= maxBytes) return blob;
-      }
-      edge = Math.round(edge * 0.8);
-    }
-    throw new Error('This photo could not be made small enough.');
+    return await fitToBytes((edge, q) => encode(img, edge, q), maxEdge, quality, maxBytes);
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+/**
+ * The first encoding that is at most `maxBytes`: quality first (cheap, keeps detail), then size
+ * (800 px -> 640 -> 512 ...). Rejects if even the smallest try is too large.
+ */
+export async function fitToBytes(
+  encodeAt: (maxEdge: number, quality: number) => Promise<Blob>,
+  maxEdge: number,
+  quality: number,
+  maxBytes: number,
+): Promise<Blob> {
+  const qualities = [quality, 0.7, 0.6, 0.5, 0.4].filter((q, i) => i === 0 || q < quality);
+  let edge = maxEdge;
+  for (let round = 0; round < 6; round++) {
+    for (const q of qualities) {
+      const blob = await encodeAt(edge, q);
+      if (blob.size <= maxBytes) return blob;
+    }
+    edge = Math.round(edge * 0.8);
+  }
+  throw new Error('This photo could not be made small enough.');
 }
 
 function encode(img: HTMLImageElement, maxEdge: number, quality: number): Promise<Blob> {

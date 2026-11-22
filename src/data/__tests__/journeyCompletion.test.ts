@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createLocalStore, type LocalDataStore } from '../adapters/local';
-import { clearPendingCelebration, getPendingCelebration } from '../../journeys/celebration';
+import { nextCelebration, resetCelebrationsForTests } from '../../journeys/celebration';
 import { checkJourneyCompletion } from '../../journeys/completion';
 
 // Journey completion (src/journeys/completion.ts) against a real local store.
@@ -18,7 +18,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  clearPendingCelebration(readerId);
+  resetCelebrationsForTests();
   await store.close();
   indexedDB.deleteDatabase(dbName);
 });
@@ -37,10 +37,10 @@ describe('checkJourneyCompletion', () => {
   it('does nothing without an active journey', async () => {
     await addBooks(5, '2026-03-02T00:00:00.000Z');
     expect(await checkJourneyCompletion(store, readerId)).toBeNull();
-    expect(getPendingCelebration(readerId)).toBeNull();
+    expect(nextCelebration(await store.listJourneyHistory(readerId), new Set())).toBeNull();
   });
 
-  it('does nothing until every step is filled, then completes and flags the celebration', async () => {
+  it('does nothing until every step is filled, then completes (which is what celebrates)', async () => {
     await store.startJourney(readerId, 'ocean_deep', '2026-03-01T00:00:00.000Z');
     await addBooks(4, '2026-03-02T00:00:00.000Z');
     expect(await checkJourneyCompletion(store, readerId)).toBeNull();
@@ -48,7 +48,7 @@ describe('checkJourneyCompletion', () => {
     await store.markRead(readerId, '9780000000999', '2026-03-03T00:00:00.000Z');
     const done = await checkJourneyCompletion(store, readerId);
     expect(done?.completed_at).toBeTruthy();
-    expect(getPendingCelebration(readerId)).toBe('ocean_deep');
+    expect(nextCelebration(await store.listJourneyHistory(readerId), new Set())?.id).toBe(done?.id);
     expect(await store.getActiveJourney(readerId)).toBeNull();
     expect((await store.getReader(readerId))?.active_journey_id).toBeNull();
     expect(await store.countCompletedJourneys(readerId)).toEqual({ ocean_deep: 1 });

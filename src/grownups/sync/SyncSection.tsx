@@ -9,7 +9,7 @@ import { formatTimestampDate } from '../helpers';
 import { useGrownUpSession } from '../useGrownUpSession';
 import { AddDeviceSheet } from './AddDeviceSheet';
 import { JoinSheet } from './JoinSheet';
-import { actionErrorText, lastSyncedText, stateText, waitingText } from './syncText';
+import { actionErrorText, lastSyncedText, photosWaitingText, stateText, waitingText } from './syncText';
 
 const t = strings.grownups.sync;
 
@@ -141,8 +141,15 @@ export default function SyncSection() {
                 <p className="small muted">
                   {lastSyncedText(status.lastSynced)}
                   {status.pendingCount > 0 && ` · ${waitingText(status.pendingCount)}`}
+                  {status.photosWaiting > 0 && ` · ${photosWaitingText(status.photosWaiting)}`}
                 </p>
               </div>
+            </div>
+          )}
+          {status.photosFailed > 0 && (
+            <div className="alert" role="status">
+              <p className="field-label">{fmt(t.photosFailed, { count: status.photosFailed })}</p>
+              <p className="small">{t.photosFailedDetail}</p>
             </div>
           )}
           <div className="row">

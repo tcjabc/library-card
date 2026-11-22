@@ -20,6 +20,9 @@ export function lastSyncedText(at: string | null, now: Date = new Date()): strin
 
 export const waitingText = (count: number): string => fmt(count === 1 ? t.waiting.one : t.waiting.other, { count });
 
+export const photosWaitingText = (count: number): string =>
+  fmt(count === 1 ? t.photosWaiting.one : t.photosWaiting.other, { count });
+
 export const countsText = (counts: LocalCounts): string => fmt(t.counts, { ...counts });
 
 export const totalCount = (counts: LocalCounts): number => Object.values(counts).reduce((a, b) => a + b, 0);

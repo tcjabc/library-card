@@ -42,6 +42,11 @@ export interface Household {
   name: string;
   /** Output of hashPin() in src/data/pin.ts, or null if no PIN is set. Never the PIN itself. */
   parent_pin_hash: string | null;
+  /**
+   * IANA time zone "today" is counted in (due chips, renewals…), e.g. "Asia/Taipei". Missing or
+   * null: the device's zone. Set when sync starts or a device joins, or in Settings.
+   */
+  time_zone?: string | null;
 }
 
 export interface Reader {
@@ -204,8 +209,14 @@ export const DEFAULT_LOAN_DAYS = 30;
 /** A second "I read this!" on the same book by the same reader within this window is ignored. */
 export const READ_TAP_GUARD_MS = 10_000;
 
-/** Largest cover photo saveCoverImage accepts. */
+/** Largest cover photo saveCoverImage accepts (older photos and backups may be this large). */
 export const MAX_COVER_BYTES = 512 * 1024;
+
+/**
+ * New cover photos are re-encoded to at most this, so every one still fits the sync relay's
+ * 512 KB limit once sealed and padded to its 16 KB size bucket (src/sync/photos.ts).
+ */
+export const COVER_TARGET_BYTES = 480 * 1024;
 
 // ---------------------------------------------------------------------------
 // Change notifications

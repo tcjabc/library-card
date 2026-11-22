@@ -22,7 +22,7 @@ function sample(): Backup {
     schema: 4,
     exported_at: '2026-11-22T10:00:00.000Z',
     tables: {
-      households: [{ id: 'main', name: 'Home', parent_pin_hash: null }],
+      households: [{ id: 'main', name: 'Home', parent_pin_hash: null, time_zone: null }],
       readers: [
         { id: 'r1', household_id: 'main', display_name: 'A', avatar: '🦊', card_token: 'tok-1', active_journey_id: 'j1' },
         { id: 'r2', household_id: 'main', display_name: 'B', avatar: '🐢', card_token: 'tok-2', active_journey_id: null },
@@ -90,6 +90,11 @@ describe('validateBackup', () => {
   it('fills in missing nullable fields as null (older files)', () => {
     const result = validateBackup(broken((d) => delete d.tables.reader_journeys[0].abandoned_at));
     expect(result.ok && result.backup.tables.reader_journeys[0].abandoned_at).toBeNull();
+  });
+
+  it('accepts a backup from before households had a time zone', () => {
+    const result = validateBackup(broken((d) => delete d.tables.households[0].time_zone));
+    expect(result.ok && result.backup.tables.households[0].time_zone).toBeNull();
   });
 
   it.each([

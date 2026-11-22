@@ -93,7 +93,7 @@ type FieldKind = 'string' | 'string?' | 'number' | 'strings';
 
 /** Required fields per table; nullable ("string?") fields may also be missing and become null. */
 const FIELDS: Record<BackupTable, Record<string, FieldKind>> = {
-  households: { id: 'string', name: 'string', parent_pin_hash: 'string?' },
+  households: { id: 'string', name: 'string', parent_pin_hash: 'string?', time_zone: 'string?' },
   readers: {
     id: 'string',
     household_id: 'string',

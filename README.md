@@ -67,6 +67,7 @@ Copy `.env.example` to `.env.local` (git-ignored) to change defaults.
 | Variable                    | Default | Purpose                                               |
 | --------------------------- | ------- | ----------------------------------------------------- |
 | `VITE_DATA_ADAPTER`         | `local` | Storage backend (see below)                           |
+| `VITE_SYNC_RELAY_URL`       | none    | The sync relay's URL (with `VITE_DATA_ADAPTER=sync`)   |
 | `VITE_BASE`                 | `/`     | Public base path, e.g. `/library-card/` for Pages     |
 | `VITE_GOOGLE_BOOKS_API_KEY` | empty   | Optional; raises the Google Books fallback rate limit |
 | `VITE_SUPABASE_URL`         | none    | Reserved for the Supabase adapter                     |
@@ -142,6 +143,7 @@ rule stops feature code from importing an adapter directly.
 | Adapter    | `VITE_DATA_ADAPTER` | Status    | Notes                                     |
 | ---------- | ------------------- | --------- | ----------------------------------------- |
 | IndexedDB  | `local`             | Available | Default. Data stays on the device.        |
+| IndexedDB + sync | `sync`        | Available | `local` plus end-to-end encrypted sync through the relay (needs `VITE_SYNC_RELAY_URL`). |
 | Supabase   | `supabase`          | Planned   | Sync across devices. Needs RLS policies.  |
 | Cloudflare D1 | `d1`             | Planned   | Via a small Worker API.                   |
 
@@ -196,9 +198,31 @@ Both run on throwaway databases, including real v1 to v3 and v2 to v3 migrations
 
 _Schemas, migrations and auth for hosted adapters will be added with each one._
 
-## Sync relay
+## Sync between devices
 
-> **Not deployed yet.** The app doesn't use it so far; sync arrives in a later phase.
+With `VITE_DATA_ADAPTER=sync` and `VITE_SYNC_RELAY_URL`, Grown-ups → Settings → Sync devices
+keeps one household the same on several devices: changes, cover photos (encrypted, in 16 KB size
+buckets, at most 512 KB each), the household's time zone (every "today" and due-date chip counts
+in it) and journey completions (each device celebrates a finished journey once). There are no
+accounts: a household is 12 words, shown as a QR code to add a device. Everything is encrypted on
+the device; the relay sees only ciphertext. [docs/sync.md](docs/sync.md) has the design.
+
+### Switching Pages to sync
+
+The relay is deployed and the repository variable `VITE_SYNC_RELAY_URL` is set; Pages still builds
+with `VITE_DATA_ADAPTER=local` (no sync UI). To switch:
+
+1. Check the relay's allowed origins include the Pages origin (relay/README.md, "Deploy").
+2. Add the repository variable `VITE_DATA_ADAPTER` = `sync` under **Settings → Secrets and
+   variables → Actions → Variables**.
+3. Re-run the deploy workflow (or push to `main`). Existing devices keep their data: the sync
+   adapter uses the same database and only adds sync bookkeeping. Sync stays off on each device
+   until a grown-up starts or joins a household.
+
+To switch back, set the variable to `local` and deploy again: data stays on each device; a device
+that was syncing simply stops.
+
+## Sync relay
 
 `relay/` is its own package: a Cloudflare Worker (Durable Objects for each
 household's change log, R2 for cover photos) that passes **encrypted** changes
@@ -216,11 +240,12 @@ npm run dev --prefix relay      # wrangler dev on http://localhost:8787
 npm run test:relay              # its tests, run locally in workerd
 ```
 
-Deploying comes later: create the R2 bucket (`npx wrangler r2 bucket create
-library-card-blobs`), set `ALLOWED_ORIGINS` to the app's origin at deploy time
-(`wrangler deploy --var` or the Cloudflare dashboard; the committed config only
-allows localhost), then `npx wrangler deploy` from `relay/`. CI runs the relay
-tests before building the app, so a relay failure blocks the deploy.
+Deploying: create the R2 bucket (`npx wrangler r2 bucket create
+library-card-blobs`), set `ALLOWED_ORIGINS` once as a Worker secret
+(`npx wrangler secret put ALLOWED_ORIGINS`; it is not in `wrangler.toml`), then
+`npx wrangler deploy` from `relay/` (plain, every time). relay/README.md has
+the steps. CI runs the relay tests before building the app, so a relay failure
+blocks the deploy.
 
 ## Privacy
 

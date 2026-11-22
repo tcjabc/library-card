@@ -19,9 +19,17 @@
  * the household was deleted (shown at once after a reload, without asking the relay) and that
  * this device was in a household before (so starting a new one warns first).
  *
+ * The running tab also moves cover photos (photoSync.ts): uploads after each good sync, downloads
+ * when a cover isn't on this device. When a device starts or joins, every finished journey that
+ * already exists is marked celebrated first (journeys/celebration.ts), and a household without a
+ * time zone gets this device's.
+ *
  * The app loads it lazily (src/sync/app.ts), so the sync code stays out of the main bundle.
  */
 import { HOUSEHOLD_ID, withSyncLock, type SyncDataStore, type SyncFlags } from '../data';
+import { markAllCompletionsCelebrated, pauseCelebrations } from '../journeys/celebration';
+import { deviceTimeZone, isTimeZone } from '../lib/timezone';
+import { createPhotoSync, type PhotoKeys } from './photoSync';
 import * as crypto from './vendor/crypto.js';
 import { t } from './vendor/i18n.js';
 import { createKeyVault, type KeyVault, type VaultConfig } from './vendor/secure-key.js';
@@ -30,6 +38,7 @@ import {
   createSyncEngine,
   fetchTransport,
   JoinError,
+  normalizeRelayUrl,
   type EngineStatus,
   type EngineStore,
   type SyncEngine,
@@ -64,6 +73,10 @@ export interface SyncStatus {
   busyElsewhere: boolean;
   /** This tab doesn't run sync and hasn't heard from the tab that does for a few seconds. */
   leaderSilent: boolean;
+  /** Cover photos still to upload. */
+  photosWaiting: number;
+  /** Cover photos the relay can't take (too large, or the household's photo space is full). */
+  photosFailed: number;
 }
 
 /** What a replace would drop on this device. */
@@ -151,6 +164,8 @@ export interface SyncServiceOptions {
   leaderSilentMs?: number;
   /** The most a hiding tab spends on its last sync before handing over (ms, default 1500). */
   handOffSyncMs?: number;
+  /** fetch for cover photos (tests; the engine uses `transport`). */
+  fetch?: typeof fetch;
 }
 
 const ACTION_LOCK_NAME = 'library-card-sync-action';
@@ -163,11 +178,12 @@ const CHANNEL_NAME = 'library-card-sync';
 const NO_CONFIG: VaultConfig = { householdKey: '', relayUrl: '', enabled: false, keyLocation: 'idb', keyTag: '' };
 
 type Message =
-  | { type: 'status'; status: Pick<SyncStatus, 'state' | 'lastSynced' | 'pendingCount' | 'message'> }
+  | { type: 'status'; status: Pick<SyncStatus, 'state' | 'lastSynced' | 'pendingCount' | 'message' | 'photosWaiting' | 'photosFailed'> }
   | { type: 'hello' }
   | { type: 'config' }
   | { type: 'syncNow' }
-  | { type: 'busy'; on: boolean };
+  | { type: 'busy'; on: boolean }
+  | { type: 'wantPhoto'; hash: string };
 
 /** The vault's store, over the sync store's config (web: the key stays in IndexedDB). */
 function vaultStore(store: SyncDataStore) {
@@ -213,7 +229,14 @@ export function engineStoreFor(store: SyncDataStore, vault: KeyVault = createKey
 }
 
 /** A status for the other tabs (each tab sets `leader`, `wasPairedAt` and `busyElsewhere` itself). */
-const shared = ({ state, lastSynced, pendingCount, message }: SyncStatus) => ({ state, lastSynced, pendingCount, message });
+const shared = ({ state, lastSynced, pendingCount, message, photosWaiting, photosFailed }: SyncStatus) => ({
+  state,
+  lastSynced,
+  pendingCount,
+  message,
+  photosWaiting,
+  photosFailed,
+});
 
 const iso = (at: number | string | null): string | null =>
   at === null || at === undefined ? null : typeof at === 'number' ? new Date(at).toISOString() : at;
@@ -282,6 +305,8 @@ export async function createSyncService(options: SyncServiceOptions): Promise<Sy
     wasPairedAt: flags.wasPairedAt,
     busyElsewhere: false,
     leaderSilent: false,
+    photosWaiting: 0,
+    photosFailed: 0,
   };
   let leader = false;
   let engineStarted = false;
@@ -291,6 +316,7 @@ export async function createSyncService(options: SyncServiceOptions): Promise<Sy
   let busyTimer: ReturnType<typeof setTimeout> | undefined;
   let silentTimer: ReturnType<typeof setTimeout> | undefined;
   let handingOff = false;
+  let zoneChecked = false;
 
   const channel: ChannelLike | null =
     options.channel !== undefined ? options.channel : typeof BroadcastChannel === 'function' ? new BroadcastChannel(CHANNEL_NAME) : null;
@@ -321,6 +347,7 @@ export async function createSyncService(options: SyncServiceOptions): Promise<Sy
 
   /** The household is gone: remember it, so a reload shows it without asking the relay. */
   async function markDeleted(): Promise<void> {
+    photos.stop(); // no more photo traffic either
     if (flags.deletedAt) return;
     flags = await store.setSyncFlags({ deletedAt: stamp() });
     post({ type: 'config' });
@@ -349,6 +376,14 @@ export async function createSyncService(options: SyncServiceOptions): Promise<Sy
     // Any tab's engine may be the one that hears it (a delete from this tab, or a 410).
     if (s.state === 'deleted') track(markDeleted());
     if (!leader) return;
+    if (s.state === 'ok') {
+      // The room exists and changes went through: move photos, and fill in a missing time zone.
+      track(photos.kick());
+      if (!zoneChecked) {
+        zoneChecked = true;
+        track(fillTimeZone());
+      }
+    }
     // While sync is off the store still records changes, but nothing is waiting to be sent.
     emit({
       ...status,
@@ -359,6 +394,50 @@ export async function createSyncService(options: SyncServiceOptions): Promise<Sy
       leader: true,
     });
     post({ type: 'status', status: shared(status) });
+  });
+
+  /** A household without a time zone gets this device's (the first device to sync sets it). */
+  async function fillTimeZone(): Promise<void> {
+    const household = await store.getCurrentHousehold();
+    if (!isTimeZone(household.time_zone)) await store.updateHousehold(household.id, { time_zone: deviceTimeZone() });
+  }
+
+  // Cover photos, moved by the running tab only.
+  let roomKeys: { key: string; keys: Omit<PhotoKeys, 'base'> } | null = null;
+  const photoKeys = async (): Promise<PhotoKeys | null> => {
+    if (!leader || disposed || flags.deletedAt) return null;
+    const config = await store.getConfig();
+    const base = config?.enabled ? normalizeRelayUrl(config.relayUrl || relayUrl) : null;
+    if (!config || !base) return null;
+    if (roomKeys?.key !== config.householdKey) {
+      const [{ roomId, token }, { blobKey, blobIdKey }] = await Promise.all([
+        crypto.deriveKeys(config.householdKey),
+        crypto.deriveBlobKeys(config.householdKey),
+      ]);
+      roomKeys = { key: config.householdKey, keys: { roomId, token, blobKey, blobIdKey } };
+    }
+    return { base, ...roomKeys.keys };
+  };
+  const photos = createPhotoSync({
+    store,
+    keys: photoKeys,
+    fetch: options.fetch,
+    now: options.now,
+    random: options.random,
+    log,
+    onDeleted: () => track(markDeleted()),
+    onUploaded: () => {
+      if (leader) void engine.syncNow(); // changes that waited for these photos
+    },
+    onCounts: ({ waiting, failed }) => {
+      if (status.photosWaiting === waiting && status.photosFailed === failed) return;
+      emit({ ...status, photosWaiting: waiting, photosFailed: failed });
+      if (leader) post({ type: 'status', status: shared(status) });
+    },
+  });
+  const offMissing = store.onMissingPhoto((hash) => {
+    if (leader) photos.want(hash);
+    else post({ type: 'wantPhoto', hash });
   });
 
   /** In the running tab: start the engine once sync is on, or have it re-read the config. */
@@ -386,6 +465,7 @@ export async function createSyncService(options: SyncServiceOptions): Promise<Sy
    */
   async function changed(restart = false): Promise<void> {
     await refreshFlags();
+    zoneChecked = false; // a new or different household: check its time zone after the next sync
     if (leader) {
       if (!engineStarted || flags.deletedAt) await pickUp();
       else if (restart) await engine.restart();
@@ -447,6 +527,7 @@ export async function createSyncService(options: SyncServiceOptions): Promise<Sy
       if (message.type === 'hello') post({ type: 'status', status: shared(status) });
       else if (message.type === 'config') track(refreshFlags().then(() => (engineStarted && !flags.deletedAt ? engine.restart() : pickUp())));
       else if (message.type === 'syncNow') void engine.syncNow();
+      else if (message.type === 'wantPhoto' && typeof message.hash === 'string') photos.want(message.hash);
     } else if (message.type === 'status') {
       clearTimeout(silentTimer);
       emit({ ...status, ...message.status, leader: false, leaderSilent: false });
@@ -472,6 +553,7 @@ export async function createSyncService(options: SyncServiceOptions): Promise<Sy
       if (disposed) return resolve();
       releaseTurn = resolve;
       leader = true;
+      photos.reset();
       clearTimeout(silentTimer);
       emit({ ...status, leader: true, leaderSilent: false });
       acquired();
@@ -502,6 +584,7 @@ export async function createSyncService(options: SyncServiceOptions): Promise<Sy
       /* the next tab syncs */
     }
     engine.stop();
+    photos.stop();
     clearHub();
     engineStarted = false;
     hadSync = false;
@@ -564,6 +647,9 @@ export async function createSyncService(options: SyncServiceOptions): Promise<Sy
           return { words: (await keyToWords(config.householdKey)).join(' ') };
         }
         const key = crypto.generateKey();
+        // Journeys finished before syncing were celebrated (or are due) on this device already.
+        await markAllCompletionsCelebrated(store);
+        await fillTimeZone(); // the first device's zone, sent with everything else
         await engine.startHousehold(key);
         // A new household: the deleted one is behind us.
         if (flags.deletedAt) flags = await store.setSyncFlags({ deletedAt: null });
@@ -578,7 +664,15 @@ export async function createSyncService(options: SyncServiceOptions): Promise<Sy
         if (flags.deletedAt) throw new JoinError('deleted', t('sync.join.deleted'));
         const key = await parseRecovery(words);
         const asReplace = mode === 'replace' || (await localItemCount()) === 0;
-        await engine.joinHousehold(key, asReplace ? 'replace' : 'merge');
+        // The household's finished journeys were celebrated where they happened: hold celebrations
+        // until they are all on the list, so this device doesn't replay them.
+        const resume = pauseCelebrations();
+        try {
+          await engine.joinHousehold(key, asReplace ? 'replace' : 'merge');
+          await markAllCompletionsCelebrated(store);
+        } finally {
+          resume();
+        }
         await changed();
         return { mode: asReplace ? 'replace' : 'combine' };
       }),
@@ -615,6 +709,7 @@ export async function createSyncService(options: SyncServiceOptions): Promise<Sy
         await seen;
       }
       await engine.idle();
+      await photos.idle();
     },
 
     async recoveryWords() {
@@ -628,8 +723,11 @@ export async function createSyncService(options: SyncServiceOptions): Promise<Sy
       clearTimeout(silentTimer);
       abort.abort();
       engine.stop();
+      photos.stop();
+      offMissing();
       clearHub();
       await engine.idle();
+      await photos.idle();
       releaseTurn?.();
       await lockDone;
       channel?.close();

@@ -4,6 +4,9 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { HOUSEHOLD_ID } from '../../data/DataStore';
 import { createSyncStore } from '../../data/sync/adapter';
 import type { SyncDataStore } from '../../data/sync/types';
+import { getCelebrated, markCelebrated, nextCelebration, resetCelebrationsForTests } from '../../journeys/celebration';
+import { checkJourneyCompletion } from '../../journeys/completion';
+import { BUCKET_BYTES } from '../photos';
 import { createSyncService, type SyncService, type SyncState } from '../service';
 import { deriveKeys } from '../vendor/crypto.js';
 import { fetchTransport, type SyncEnv, type Timers } from '../vendor/sync.js';
@@ -69,6 +72,8 @@ interface Device {
   timers: ReturnType<typeof fakeTimers>;
   net: { up: boolean };
   env: SyncEnv & { online: boolean; offline(): void; reconnect(): Promise<void> };
+  /** Requests this device made for photos (blob routes). */
+  blobCalls: string[];
   libraries(): Promise<{ name: string; days: number }[]>;
   addLibrary(name: string, days?: number): Promise<string>;
   state(): SyncState;
@@ -126,11 +131,17 @@ describe.skipIf(!wranglerPath)('sync through the local relay (workerd)', () => {
         await Promise.all(listeners.on.map((fn) => fn()));
       },
     };
-    const fetchFn: typeof fetch = (input, init) => (net.up ? fetch(input, init) : Promise.reject(new TypeError('fetch failed')));
+    const blobCalls: string[] = [];
+    const fetchFn: typeof fetch = (input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.includes('/blobs')) blobCalls.push(`${init?.method ?? 'GET'} ${new URL(url).pathname}`);
+      return net.up ? fetch(input, init) : Promise.reject(new TypeError('fetch failed'));
+    };
     const sync = await createSyncService({
       store,
       relayUrl: base,
       transport: fetchTransport({ fetch: fetchFn, timers }),
+      fetch: fetchFn,
       env,
       timers,
       random: () => 0.5,
@@ -139,7 +150,7 @@ describe.skipIf(!wranglerPath)('sync through the local relay (workerd)', () => {
       log: { warn: () => {}, error: (e) => console.error(name, e) },
     });
     const d: Device = {
-      name, store, sync, timers, net, env,
+      name, store, sync, timers, net, env, blobCalls,
       async libraries() {
         return (await store.listLibraries(HOUSEHOLD_ID)).map((l) => ({ name: l.name, days: l.default_loan_days })).sort((a, b) => a.name.localeCompare(b.name));
       },
@@ -163,6 +174,104 @@ describe.skipIf(!wranglerPath)('sync through the local relay (workerd)', () => {
   }
 
   const live = (d: Device) => until(() => d.state() === 'live', `${d.name} live`);
+
+  /** A book with a photo cover saved on this device. */
+  async function addPhotoBook(d: Device, isbn: string, seed: number): Promise<void> {
+    const photo = new Uint8Array(3000).map((_, i) => (i * 7 + seed) % 256);
+    const url = await d.store.saveCoverImage(new Blob([photo as BlobPart], { type: 'image/jpeg' }));
+    await d.store.putBook({ isbn, title: `Photo ${seed}`, authors: [], cover_url: url, source: 'manual' });
+  }
+
+  /** Show the book (as a screen would) until its photo cover is there. */
+  const showsPhoto = (d: Device, isbn: string) =>
+    until(async () => /^blob:/.test((await d.store.getBook(isbn))?.cover_url ?? ''), `${d.name} shows the photo of ${isbn}`, 30_000);
+
+  /** The relay's photo list for this device's household (or the HTTP status). */
+  async function relayBlobs(d: Device): Promise<{ count: number; bytes: number } | number> {
+    const { roomId, token } = await deriveKeys((await d.store.getConfig())!.householdKey);
+    const res = await fetch(`${base}v1/rooms/${roomId}/blobs`, { headers: { Authorization: `Bearer ${token}` } });
+    if (res.status !== 200) return res.status;
+    return (await res.json()) as { count: number; bytes: number };
+  }
+
+  /** A reader on this device finishes the 5-step journey; returns the reader_journeys id. */
+  async function finishJourney(d: Device, readerId: string, seed: number): Promise<string> {
+    await d.store.startJourney(readerId, 'ocean_deep');
+    for (let i = 0; i < 5; i++) await d.store.markRead(readerId, `9781${seed}${String(i).padStart(8, '0')}`);
+    return (await checkJourneyCompletion(d.store, readerId))!.id;
+  }
+  const dueOn = async (d: Device, readerId: string) =>
+    nextCelebration(await d.store.listJourneyHistory(readerId), getCelebrated() ?? new Set())?.id ?? null;
+
+  it('a photo cover added on each device shows on the other, sealed in size buckets', async () => {
+    const a = await device('a');
+    const b = await device('b');
+    await addPhotoBook(a, '9780000000002', 1);
+    const { words } = await a.sync.start();
+    await b.sync.join(words, 'replace');
+    await live(b);
+    await showsPhoto(b, '9780000000002');
+
+    await addPhotoBook(b, '9780000000019', 2);
+    await b.sync.syncNow();
+    await showsPhoto(a, '9780000000019');
+
+    const blobs = await relayBlobs(a);
+    expect(blobs).toMatchObject({ count: 2 });
+    expect((blobs as { bytes: number }).bytes % BUCKET_BYTES).toBe(0);
+    // Each photo went up once, from the device that took it.
+    expect(a.blobCalls.filter((c) => c.startsWith('PUT'))).toHaveLength(1);
+    expect(b.blobCalls.filter((c) => c.startsWith('PUT'))).toHaveLength(1);
+    expect(a.sync.getStatus()).toMatchObject({ photosWaiting: 0, photosFailed: 0 });
+    expect(b.sync.getStatus()).toMatchObject({ photosWaiting: 0, photosFailed: 0 });
+  }, 90_000);
+
+  it('a journey finished on A celebrates once on B; joining does not replay old ones', async () => {
+    const a = await device('a');
+    const b = await device('b');
+    await a.store.getCurrentHousehold();
+    const reader = await a.store.createReader({ household_id: HOUSEHOLD_ID, display_name: 'R', avatar: '🦊' });
+    const old = await finishJourney(a, reader.id, 1);
+    const { words } = await a.sync.start();
+
+    // B is a new device: its list starts empty, and joining fills it with what already exists.
+    resetCelebrationsForTests();
+    await b.sync.join(words, 'replace');
+    expect(getCelebrated()).toEqual(new Set([old]));
+    expect(await dueOn(b, reader.id)).toBeNull();
+
+    // Finished on A afterwards: B celebrates it, once.
+    const fresh = await finishJourney(a, reader.id, 2);
+    await a.sync.syncNow();
+    await b.sync.syncNow();
+    expect(await dueOn(b, reader.id)).toBe(fresh);
+    markCelebrated(fresh);
+    await b.sync.syncNow();
+    expect(await dueOn(b, reader.id)).toBeNull();
+    resetCelebrationsForTests();
+  }, 60_000);
+
+  it('after the household is deleted, no photo traffic at all (410)', async () => {
+    const a = await device('a');
+    const b = await device('b');
+    await addPhotoBook(a, '9780000000002', 3);
+    const { words } = await a.sync.start();
+    await b.sync.join(words, 'replace');
+    await live(b);
+    await showsPhoto(b, '9780000000002');
+
+    await a.sync.deleteHousehold();
+    await until(() => b.state() === 'deleted', 'B deleted');
+    const before = b.blobCalls.length;
+    // A new photo on B, and a cover B doesn't have: neither goes near the relay.
+    await addPhotoBook(b, '9780000000019', 4);
+    await b.store.putBook({ isbn: '9780000000026', title: 'Elsewhere', authors: [], cover_url: `cover:${'c'.repeat(64)}`, source: 'manual' });
+    await b.store.getBook('9780000000026');
+    await b.sync.syncNow();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(b.blobCalls.length).toBe(before);
+    expect(await relayBlobs(a)).toBe(410);
+  }, 60_000);
 
   it('start on A, join B with combine: both have everything, edits and deletes go both ways', async () => {
     const a = await device('a');

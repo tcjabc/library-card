@@ -1,5 +1,5 @@
 import { useEffect, useId, useState, type ChangeEvent, type FormEvent } from 'react';
-import { MAX_COVER_BYTES, isNoIsbnBookKey, type Book, type DataStore } from '../data';
+import { COVER_TARGET_BYTES, isNoIsbnBookKey, type Book, type DataStore } from '../data';
 import { LibraryLookups } from '../library/LibraryLookups';
 import { resizeImage } from '../lib/image';
 import { fmt, strings } from '../strings';
@@ -61,7 +61,7 @@ export function BookSheet({ mode, store, saveLabel, onSaved, onClose }: BookShee
     setError(null);
     setBusy(true);
     try {
-      const blob = await resizeImage(file, COVER_MAX_EDGE, COVER_QUALITY, MAX_COVER_BYTES);
+      const blob = await resizeImage(file, COVER_MAX_EDGE, COVER_QUALITY, COVER_TARGET_BYTES);
       setPhoto({ blob, url: URL.createObjectURL(blob) });
     } catch {
       setError(t.photoError);

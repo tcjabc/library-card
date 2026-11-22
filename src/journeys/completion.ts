@@ -1,13 +1,13 @@
 import type { DataStore, Id, ReaderJourney } from '../data';
-import { setPendingCelebration } from './celebration';
 import { getJourney } from './journeys';
 import { isComplete, journeyProgress } from './progress';
 
 /**
- * Finishes the reader's active journey if enough books have been read, and
- * flags the celebration. Run after every read (Shelf, Library Books) and when
- * the hub or journey screen opens, so a journey completed elsewhere (another
- * tab, a read added by a grown-up) is still caught.
+ * Finishes the reader's active journey if enough books have been read. Run
+ * after every read (Shelf, Library Books) and when the hub or journey screen
+ * opens, so a journey completed elsewhere (another tab, a read added by a
+ * grown-up) is still caught. The celebration follows from the completion
+ * itself (journeys/celebration.ts), on this device and on every synced one.
  *
  * Completion is permanent: undoing a read afterwards never un-completes it.
  * Returns the completed journey, or null if nothing changed.
@@ -15,7 +15,7 @@ import { isComplete, journeyProgress } from './progress';
 export async function checkJourneyCompletion(
   store: DataStore,
   readerId: Id,
-  onComplete: (readerId: Id, journeyId: string) => void = setPendingCelebration,
+  onComplete: (readerId: Id, journeyId: string) => void = () => {},
 ): Promise<ReaderJourney | null> {
   const active = await store.getActiveJourney(readerId);
   if (!active) return null;

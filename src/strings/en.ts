@@ -609,6 +609,12 @@ export const en = {
 
     settings: {
       household: 'Household name',
+      timeZone: 'Time zone',
+      timeZoneIntro: 'Due dates and “today” follow this zone on every device. This device is in {zone}.',
+      timeZoneSave: 'Save time zone',
+      timeZoneSaved: 'Time zone saved',
+      timeZoneInvalid: 'Pick a time zone from the list.',
+      timeZoneUseDevice: 'Use this device’s ({zone})',
       householdSave: 'Save name',
       householdSaved: 'Saved',
       nameRequired: 'Please add a name.',
@@ -689,6 +695,12 @@ export const en = {
         one: '{count} change waiting',
         other: '{count} changes waiting',
       },
+      photosWaiting: {
+        one: '{count} photo waiting',
+        other: '{count} photos waiting',
+      },
+      photosFailed: 'Some photos couldn’t sync ({count})',
+      photosFailedDetail: 'Those covers stay on this device only: a photo was too large, or the household’s photo space is full. Everything else keeps syncing.',
       syncNow: 'Sync now',
       syncing: 'Syncing…',
       addDevice: 'Add a device',

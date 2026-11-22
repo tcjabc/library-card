@@ -1,11 +1,12 @@
 import { useSyncExternalStore } from 'react';
-import { isCalendarDate, toCalendarDate } from './dates';
+import { isCalendarDate } from './dates';
+import { calendarDateIn, currentTimeZone, onTimeZoneChange } from './timezone';
 
 /**
- * "Today" for due dates. A grown-up can pretend it is another day (developer
- * page), to see overdue and due-soon books without waiting. The setting is
- * per tab (sessionStorage) and only affects due-date screens, never the
- * timestamps the data layer records.
+ * "Today" for due dates, in the household's time zone (lib/timezone). A
+ * grown-up can pretend it is another day (developer page), to see overdue and
+ * due-soon books without waiting. The setting is per tab (sessionStorage) and
+ * only affects due-date screens, never the timestamps the data layer records.
  */
 
 const KEY = 'library-card:pretend-today';
@@ -37,12 +38,21 @@ export function onPretendTodayChange(listener: () => void): () => void {
   };
 }
 
-/** Today's local calendar date, or the pretend date. */
+/** Today's date in the household's time zone, or the pretend date. */
 export function todayLocal(now: Date = new Date()): string {
-  return getPretendToday() ?? toCalendarDate(now);
+  return getPretendToday() ?? calendarDateIn(now, currentTimeZone());
 }
 
-/** Today's date for rendering; follows the pretend date when it changes. */
+function subscribeToday(listener: () => void): () => void {
+  const offPretend = onPretendTodayChange(listener);
+  const offZone = onTimeZoneChange(listener);
+  return () => {
+    offPretend();
+    offZone();
+  };
+}
+
+/** Today's date for rendering; follows the pretend date and the household's zone when they change. */
 export function useToday(): string {
-  return useSyncExternalStore(onPretendTodayChange, () => todayLocal(), () => todayLocal());
+  return useSyncExternalStore(subscribeToday, () => todayLocal(), () => todayLocal());
 }

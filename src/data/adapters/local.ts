@@ -5,7 +5,8 @@ import {
   type IDBPTransaction,
   type StoreNames,
 } from 'idb';
-import { addDays, isCalendarDate, toCalendarDate } from '../../lib/dates';
+import { addDays, isCalendarDate } from '../../lib/dates';
+import { calendarDateIn, deviceTimeZone, isTimeZone } from '../../lib/timezone';
 import { fixLowercaseTitle } from '../../lib/text';
 import { strings } from '../../strings';
 import {
@@ -502,6 +503,11 @@ export interface StoreInternals {
   broadcast(tables: DataTable[]): void;
   now(): number;
   revokeAllCoverUrls(): void;
+  /**
+   * Called with a photo's SHA-256 when a book points at "cover:<hash>" that isn't on this device
+   * (sync: it was added on another device). The cover shows as none until the photo is stored.
+   */
+  onMissingCover(listener: ((hash: string) => void) | null): void;
 }
 
 /** Sync hooks: wrap every database handle the adapter uses, then extend the finished store. */
@@ -596,6 +602,7 @@ export async function createStoreWith<Extra extends object>(
   // One live blob: URL per stored reference ("cover:<hash>" or the legacy
   // "local-cover:<isbn>") for this page. Never persisted.
   const coverUrls = new Map<string, string>();
+  let missingCover: ((hash: string) => void) | null = null;
   const revokeCoverUrl = (ref: string) => {
     const url = coverUrls.get(ref);
     if (url) URL.revokeObjectURL(url);
@@ -629,6 +636,12 @@ export async function createStoreWith<Extra extends object>(
       if (blob) {
         url = URL.createObjectURL(blob);
         coverUrls.set(ref, url);
+      } else if (missingCover && ref.startsWith(COVER_PREFIX)) {
+        try {
+          missingCover(ref.slice(COVER_PREFIX.length));
+        } catch (error) {
+          console.error('[data/local] missing cover listener failed', error);
+        }
       }
     }
     return { ...book, cover_url: url ?? null };
@@ -719,7 +732,7 @@ export async function createStoreWith<Extra extends object>(
       let household = await tx.objectStore('households').get(HOUSEHOLD_ID);
       let created = false;
       if (!household) {
-        household = { id: HOUSEHOLD_ID, name: strings.data.defaultHouseholdName, parent_pin_hash: null };
+        household = { id: HOUSEHOLD_ID, name: strings.data.defaultHouseholdName, parent_pin_hash: null, time_zone: null };
         await tx.objectStore('households').add(household);
         await tx.objectStore('meta').put({ key: CURRENT_HOUSEHOLD_KEY, value: HOUSEHOLD_ID });
         created = true;
@@ -738,6 +751,9 @@ export async function createStoreWith<Extra extends object>(
       const existing = await tx.store.get(id);
       if (!existing) throw notFound('Household', id);
       const next: Household = { ...existing, ...patch, id };
+      if (patch.time_zone !== undefined && patch.time_zone !== null && !isTimeZone(patch.time_zone)) {
+        throw new DataStoreError('invalid', `"${patch.time_zone}" is not a time zone.`);
+      }
       if (patch.name !== undefined) {
         next.name = patch.name.trim();
         if (!next.name) throw new DataStoreError('invalid', 'The household name must not be empty.');
@@ -749,7 +765,7 @@ export async function createStoreWith<Extra extends object>(
     },
 
     async testOnlyAddHousehold(id, name) {
-      const household: Household = { id, name, parent_pin_hash: null };
+      const household: Household = { id, name, parent_pin_hash: null, time_zone: null };
       await (await getDb()).put('households', household);
       changed('households');
       return household;
@@ -1130,7 +1146,7 @@ export async function createStoreWith<Extra extends object>(
     },
 
     async renewLoan(id) {
-      const tx = (await getDb()).transaction(['loans', 'libraries'], 'readwrite');
+      const tx = (await getDb()).transaction(['loans', 'libraries', 'households'], 'readwrite');
       const existing = await tx.objectStore('loans').get(id);
       if (!existing) throw notFound('Loan', id);
       if (existing.returned_at !== null) {
@@ -1140,9 +1156,12 @@ export async function createStoreWith<Extra extends object>(
       }
       const library = existing.library_id ? await tx.objectStore('libraries').get(existing.library_id) : undefined;
       const days = library?.default_loan_days ?? DEFAULT_LOAN_DAYS;
+      // "Today" in the household's time zone (the device's if it has none).
+      const household = await tx.objectStore('households').get(existing.household_id);
+      const zone = isTimeZone(household?.time_zone) ? household.time_zone : deviceTimeZone();
       const next: Loan = {
         ...existing,
-        due_date: addDays(existing.due_date ?? toCalendarDate(new Date(now())), days),
+        due_date: addDays(existing.due_date ?? calendarDateIn(new Date(now()), zone), days),
         renew_count: existing.renew_count + 1,
       };
       await tx.objectStore('loans').put(next);
@@ -1463,6 +1482,9 @@ export async function createStoreWith<Extra extends object>(
     broadcast: (tables) => channel?.postMessage({ tables }),
     now,
     revokeAllCoverUrls,
+    onMissingCover: (listener) => {
+      missingCover = listener;
+    },
   });
   return Object.assign(store, extra);
 }

@@ -4,10 +4,12 @@ How Library Card keeps one household's data the same on several devices. The eng
 relay are adapted from Peek Budget (MIT); [VENDORED.md](../VENDORED.md) lists every copied file,
 its upstream hash and what changed.
 
-Status: the record layer (6c), the engine and its service (6d-1), the relay (6b) and the
-"Sync devices" screens (6d-2) exist; cover photos come in 6e. The sync UI appears only in a build
-with the sync adapter **and** a relay (`VITE_DATA_ADAPTER=sync` and `VITE_SYNC_RELAY_URL`); the
-Pages build keeps `VITE_DATA_ADAPTER=local` until 6e, so it shows no sync UI.
+Status: the record layer (6c), the engine and its service (6d-1), the relay (6b), the
+"Sync devices" screens (6d-2), and cover photos, the household time zone and celebrations under
+sync (6e) exist. The sync UI appears only in a build with the sync adapter **and** a relay
+(`VITE_DATA_ADAPTER=sync` and `VITE_SYNC_RELAY_URL`); the Pages build stays on
+`VITE_DATA_ADAPTER=local` until that repository variable is switched (README, "Switching Pages to
+sync").
 
 ## Goals
 
@@ -87,7 +89,7 @@ a newer one sends. Known fields must have the right type and size or the op is s
 
 | Table | Local id | Fields (required in bold) |
 | --- | --- | --- |
-| `households` | `main` | **name** (text ≤ 200), parent_pin_hash (text ≤ 300 or null) |
+| `households` | `main` | **name** (text ≤ 200), parent_pin_hash (text ≤ 300 or null), time_zone (text ≤ 64; never sent while unset) |
 | `readers` | id | **display_name** (≤ 200), **avatar** (≤ 32), **card_token** (≤ 200), active_journey_id (id or null) |
 | `books` | ISBN-13 or `noisbn-<id>` | **title** (≤ 1000), **authors** (≤ 50 texts of ≤ 300), cover_url (≤ 4096 or null), **source** (≤ 32) |
 | `home_items` | book key | **isbn** (book key), **added_at** (timestamp) |
@@ -97,8 +99,9 @@ a newer one sends. Known fields must have the right type and size or the op is s
 | `reader_journeys` | id | **reader_id**, **journey_id** (≤ 64), **started_at**, completed_at, abandoned_at |
 
 Ids are 1–40 characters of letters, digits, `-` and `_`. `read_summaries` are derived from
-`read_events` on each device and never sent. Cover photo bytes, meta, the outbox and sync
-bookkeeping never sync.
+`read_events` on each device and never sent. Cover photo bytes travel separately, as encrypted
+blobs (Photos, below); meta, the outbox, the photo outbox, the celebrated list and sync bookkeeping
+never sync.
 
 ## Visibility
 
@@ -201,6 +204,10 @@ asking.
 - **Reset this device** with sync on (`stop(false)`): this device leaves the household (the others
   keep it and their data), then `resetDevice` clears everything here (data, records, outbox, key).
   `was_paired` is written again after the reset.
+- **Reset this device** and **Use the household's data only** (`replaceWithRemote`) also clear the
+  photo outbox; turning sync on (`enableSync`) clears it too, so every photo is checked again.
+- **Restoring a backup** keeps working as before (photos are in the file). Afterwards every
+  journey it holds is marked celebrated on this device.
 - **Deleting data** (a reader, a loan…) is a tombstone that syncs like any other change.
 - **Delete household** (`deleteHousehold()`): deletes the room on the relay (its log and photos).
   Local data stays on every device.
@@ -211,7 +218,8 @@ The relay keeps a marker for a deleted room and answers every request with 410, 
 recreate it. The engine treats 410 from any request, a `{"type":"deleted"}` message and close code
 4410 the same way: state `deleted`, the socket and timers stop, nothing is retried or re-queued,
 and later triggers (online, visible, Sync now) do nothing. A device that was offline finds out on
-its next request.
+its next request. Photo traffic stops too: a 410 on any photo request, or the engine's `deleted`,
+stops uploads, downloads and their retry timers, and no photo request is made after that.
 
 The service remembers it in meta (`sync_deleted`, with the time), so after a reload the screen
 shows "removed" at once and the engine isn't started (no request to the relay). Only two things
@@ -220,12 +228,94 @@ household" (`start()`: a new key and room, and this device's data is sent again)
 household is refused until one of those has happened. Other devices then join the new household
 with its words.
 
-## Photos (6e)
+## Photos
 
-Books may point at a cover photo as `cover:<sha256>`; the photo itself doesn't sync yet. In 6e
-photos will be encrypted on the device (keys from `deriveBlobKeys`) and stored on the relay under a
-keyed id (`blobId`, 43 base64url characters), up to 512 KB each, 2,000 per household and 200 MB
-in all.
+A book with a photo cover stores `cover_url = "cover:<sha256>"` and the photo in `cover_images`
+(keyed by the hash). Catalogue covers stay plain URLs and are never uploaded. Photos move only in
+the tab that runs sync (`src/sync/photoSync.ts`), only while sync is on.
+
+**Sealing** (`src/sync/photos.ts`). AES-GCM-256 with the household's blob key (`deriveBlobKeys`,
+HKDF info `library-card/v1/blob-encryption`), a random 12-byte IV, and the relay id as additional
+data, so a blob can't be moved to another id. The relay id is `blobId(blobIdKey, sha256)`: the
+same photo gets the same id in one household and an unrelated one anywhere else.
+
+```
+sealed    = iv (12) | AES-GCM(plaintext) incl. 16-byte tag
+plaintext = "LCP1" | type length (1) | type | photo length (4, big-endian) | photo | zero padding
+```
+
+The sealed size is rounded up to a multiple of 16 KB, so the relay sees size buckets rather than
+exact sizes, and is at most 512 KB (the relay's limit). New cover photos are re-encoded to at most
+480 KB (`COVER_TARGET_BYTES`), so every one fits once sealed. A photo saved before that, or
+restored from a backup, may be up to 512 KB; if it doesn't fit once sealed it fails as "too
+large" without being sent.
+
+**Upload.** The sync adapter keeps a photo outbox, `blob_outbox` in a separate IndexedDB database
+(`<db>:sync-blobs`), one entry per photo: `pending`, `uploaded` or `failed`, with attempts, next
+retry time and error. A photo with no entry is waiting. The photos to send are the ones a book
+points at, that are on this device and not uploaded or failed. After every good sync (the room
+exists), the running tab lists the room's photos once, marks those already there as uploaded,
+and seals and `PUT`s the rest:
+
+- 200: uploaded; the engine syncs again at once for the changes that were waiting.
+- 413 (too large) or 507 (the household's 200 MB / 2,000 photos are full): `failed`, never retried.
+  Sync devices shows "Some photos couldn't sync (n)"; those covers stay on this device only.
+- 410: the household was deleted (above).
+- Anything else, or offline: retried with backoff, 2 s doubling to at most 5 minutes, with jitter.
+
+**Photos before the changes that use them.** `pendingOps` holds back a book's `cover_url` change
+while its photo is on this device and waiting, so another device never gets a cover it can't fetch
+yet. Every other field of the book goes at once, and a failed photo never holds anything: its
+cover change goes out (the other devices show no cover for it).
+
+**Download.** When a screen shows a book whose `cover:<hash>` isn't on this device, the store
+reports it (`onMissingPhoto`; other tabs pass it to the running tab). The running tab `GET`s the
+blob (photo reads have their own rate bucket on the relay), opens it, checks its SHA-256 against
+the hash, stores it in `cover_images` (marked uploaded, so it is never sent back) and the cover
+appears. Until then the book shows no cover. A 404 (not uploaded yet) or a failed check is retried
+on its own with backoff, 5 s doubling to at most an hour; showing the cover again doesn't fetch
+sooner.
+
+Saving a book whose photo hasn't arrived yet (the book sheet sends no cover, because none was
+shown) keeps the household's `cover:<hash>`, so an edit on one device can't remove the photo on
+the others.
+
+**What's left on the relay.** Photos stay on the relay when a book stops using them; they go when
+the household is deleted.
+
+## Household time zone
+
+`households.time_zone` is an IANA name (`Asia/Taipei`), synced like the household's name. Every
+"today" in the app counts in it: due-soon and overdue chips, the hub badge, the default due date
+when borrowing, renewing, the loan editor's "not in the future" checks and the developer page's
+pretend date. Borrowed and returned dates in the loan editor convert in it too (a changed date is
+stored as noon there). Due dates stay plain `YYYY-MM-DD`. So a book due today shows the same chip
+on every device, wherever each device is.
+
+- Unset (`null`) means this device's zone. An unset zone is never sent, so a device joining with
+  Combine can't wipe out the household's.
+- Starting sync sets it to the first device's zone if it isn't set, before the first push. After a
+  device joins (or on the first good sync of an older household), a household still without one
+  gets that device's zone.
+- Grown-ups → Settings → Time zone changes it (a searchable list; "Use this device's").
+- `src/lib/timezone.ts` does the arithmetic with `Intl` (no library); `HouseholdTimeZone` keeps the
+  current zone for `todayLocal()` and `useToday()`.
+
+## Celebrations
+
+A finished journey is celebrated once per device. Each device keeps a list of the
+`reader_journeys` ids it has celebrated (`library-card:celebrated` in localStorage): local only,
+never synced, never in a backup, cleared by Reset this device. A completed journey that isn't on
+the list celebrates the next time its reader is active on this device, wherever it was finished
+(here, another tab, or another device through sync), oldest first.
+
+So nothing replays, every completion that already exists is added to the list first when this
+version first runs, when a device starts syncing or joins, after "Use the household's data only",
+and after restoring a backup. While a join or replace runs, celebrations are paused in every tab
+(a localStorage flag that expires after two minutes if a tab dies).
+
+The previous version's per-reader "celebrate" flag is migrated on first run: a celebration that
+was still waiting stays due.
 
 ## The accepted pairing risk
 

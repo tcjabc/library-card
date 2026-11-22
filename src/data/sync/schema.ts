@@ -73,7 +73,7 @@ export const SCHEMA: Record<SyncedTable, TableSpec> = {
     key: 'id',
     household: false,
     localId: 'household',
-    fields: { name: text(200, REQUIRED), parent_pin_hash: nullableText(300) },
+    fields: { name: text(200, REQUIRED), parent_pin_hash: nullableText(300), time_zone: nullableText(64) },
   },
   readers: {
     key: 'id',
@@ -285,6 +285,9 @@ export function rowToRecord(table: SyncedTable, row: Row): { rec: string; fields
   const fields: Record<string, JsonValue> = {};
   for (const [name, value] of Object.entries(row)) {
     if (name === spec.key || name === 'household_id' || value === undefined) continue;
+    // A household's time zone of null means "not set": never sent, so a device joining with
+    // "Combine" can't wipe out the zone the household already has.
+    if (table === 'households' && name === 'time_zone' && value === null) continue;
     fields[name] = value as JsonValue;
   }
   return { rec: wireId(table, localId), fields };

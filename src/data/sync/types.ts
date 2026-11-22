@@ -1,4 +1,5 @@
 import type { LocalDataStore } from '../adapters/local';
+import type { BlobOutboxEntry } from './photoStore';
 import type { Op } from '../../sync/vendor/sync-core.js';
 
 /** Types for the sync adapter (adapter.ts), kept apart so importing them costs nothing at runtime. */
@@ -69,7 +70,29 @@ export interface SyncEngineStore {
   setSyncFlags(patch: Partial<SyncFlags>): Promise<SyncFlags>;
 }
 
-export type SyncDataStore = LocalDataStore & SyncEngineStore;
+/** Photos waiting to upload, and photos that couldn't (too large, room full). */
+export interface PhotoCounts {
+  waiting: number;
+  failed: number;
+}
+
+/** What the photo sync (src/sync/photoSync.ts) needs from storage. */
+export interface SyncPhotoStore {
+  /** Photos to upload now: on a book, on this device, not uploaded or failed, and not waiting for a retry. */
+  photosToUpload(now: number): Promise<{ hash: string; blob: Blob }[]>;
+  /** The earliest time a pending photo may be retried, or null if none is waiting for a retry. */
+  nextPhotoRetryAt(): Promise<number | null>;
+  getPhotoState(hash: string): Promise<BlobOutboxEntry | null>;
+  setPhotoState(hash: string, entry: Omit<BlobOutboxEntry, 'hash'>): Promise<void>;
+  photoCounts(): Promise<PhotoCounts>;
+  /** A photo fetched from the relay (checked against its hash): stored like a local one, marked uploaded. */
+  saveRemotePhoto(hash: string, blob: Blob): Promise<void>;
+  hasLocalPhoto(hash: string): Promise<boolean>;
+  /** Hear about covers a book points at that aren't on this device. Returns an unsubscribe function. */
+  onMissingPhoto(listener: (hash: string) => void): () => void;
+}
+
+export type SyncDataStore = LocalDataStore & SyncEngineStore & SyncPhotoStore;
 
 export function isSyncStore(store: unknown): store is SyncDataStore {
   return typeof (store as Partial<SyncEngineStore> | null)?.applyRemote === 'function';
