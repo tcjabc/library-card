@@ -70,9 +70,10 @@ describe('signing in', () => {
   });
 
   it('uses the same PIN prompt (and so the same wrong-try counter and waits) as the guarded Settings actions', () => {
-    const signIn = read('screens/GrownUpSignIn.tsx');
-    expect(signIn).toContain('<PinPrompt');
-    expect(signIn).toContain('<ParentGate');
+    expect(read('screens/GrownUpSignIn.tsx')).toContain('<GrownUpCheck');
+    const check = read('screens/GrownUpCheck.tsx');
+    expect(check).toContain('<PinPrompt');
+    expect(check).toContain('<ParentGate');
     expect(read('grownups/pin/PinGuardProvider.tsx')).toContain('<PinPrompt');
     const prompt = read('grownups/pin/PinPrompt.tsx');
     expect(prompt).toContain('readPinAttempts()');
@@ -85,7 +86,7 @@ describe('signing in', () => {
     expect(readGrownUpReaderSession()).toEqual({ readerId: 'mum', lastActive: T0 });
     expect(isGrownUpUnlocked()).toBe(false);
     expect(isPinUnlocked(PIN_HASH)).toBe(false);
-    for (const file of ['screens/GrownUpSignIn.tsx', 'screens/Splash.tsx', 'screens/CardLink.tsx', 'session/grownUpReader.ts']) {
+    for (const file of ['screens/GrownUpSignIn.tsx', 'screens/GrownUpCheck.tsx', 'screens/Splash.tsx', 'screens/CardLink.tsx', 'session/grownUpReader.ts']) {
       const source = read(file);
       for (const opener of ['unlockPinActions', 'unlockGrownUp', 'requireGrownUp', 'runAsGrownUp']) expect(source, `${file}: ${opener}`).not.toContain(opener);
     }

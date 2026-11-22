@@ -504,6 +504,57 @@ img {
   overflow-wrap: anywhere;
 }
 
+/* "3 to check" on a grown-up's tile. */
+.reader-tile__to-check {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-badge);
+  color: var(--color-on-badge);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+/* Reads waiting for a grown-up (a grown-up's space, Grown-ups → Readers). */
+.hub__to-check {
+  width: 100%;
+}
+
+.to-check {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.to-check__item {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+  font-size: var(--text-md);
+}
+
+.to-check__cover {
+  flex: 0 0 var(--grownups-cover);
+}
+
+.to-check__body {
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.to-check__who,
+.to-check__title {
+  margin: 0;
+  font-weight: var(--weight-bold);
+  overflow-wrap: anywhere;
+}
+
 /* Hub */
 .hub__header {
   display: flex;
@@ -674,6 +725,34 @@ img {
 .read-toggle--on {
   background: var(--color-read);
   color: var(--color-on-read);
+}
+
+/* A read waiting for a grown-up's check: no more reads of this book until then. */
+.read-toggle--waiting,
+.read-toggle--waiting:disabled {
+  border-style: dashed;
+  border-color: var(--color-border);
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  white-space: normal;
+  opacity: 1;
+}
+
+/* "How did you read it?": two big choices side by side, stacked on narrow screens. */
+.read-sheet__book {
+  font-weight: var(--weight-bold);
+  text-align: center;
+}
+
+.read-sheet__how {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--read-choice-min), 1fr));
+  gap: var(--space-3);
+}
+
+.read-sheet__choice {
+  width: 100%;
 }
 
 /* Sheet ------------------------------------------------------------------- */

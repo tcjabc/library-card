@@ -56,7 +56,7 @@ export function LibraryBooks({ reader }: { reader: Reader }) {
 
   const query = useCallback((s: DataStore) => loadLibrary(s, reader), [reader]);
   const { data, store, loading } = useDataQuery(query, TABLES);
-  const { read, pending, withPending } = useReadAction(store, reader);
+  const { read, pending, withPending, sheet: readSheet, waiting } = useReadAction(store, reader);
 
   const titleOf = (loan: Loan) => data?.books.get(loan.isbn)?.title ?? strings.shelf.thisBook;
 
@@ -95,6 +95,7 @@ export function LibraryBooks({ reader }: { reader: Reader }) {
         loan={loan}
         book={data?.books.get(loan.isbn) ?? null}
         readCount={count}
+        waiting={waiting.has(loan.isbn)}
         today={today}
         busy={pending.has(loan.isbn)}
         borrower={house ? (data?.readers.get(loan.reader_id) ?? null) : null}
@@ -156,6 +157,7 @@ export function LibraryBooks({ reader }: { reader: Reader }) {
 
       {store && sheet === 'borrow' && <BorrowSheet store={store} reader={reader} today={today} onClose={() => setSheet(null)} />}
       {store && sheet === 'return' && <ReturnSheet store={store} reader={reader} onClose={() => setSheet(null)} />}
+      {readSheet}
     </main>
   );
 }

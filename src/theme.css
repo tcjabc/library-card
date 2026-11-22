@@ -161,6 +161,8 @@
   /* Reader tiles on the splash: at least this wide, wrapping to fit. */
   --reader-tile-min: 7rem;
   --reader-tile-avatar: 4rem;
+  /* "By myself" / "With help": side by side while each gets at least this. */
+  --read-choice-min: 10rem;
   --qr-size: 10rem;
   /* The "Add a device" pairing code, scanned from another device's camera. */
   --qr-size-pairing: 15rem;

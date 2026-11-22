@@ -43,7 +43,7 @@ export function Shelf({ reader }: { reader: Reader }) {
 
   const query = useCallback((s: DataStore) => loadShelf(s, reader), [reader]);
   const { data: entries, store, loading } = useDataQuery(query, SHELF_TABLES);
-  const { read, pending } = useReadAction(store, reader);
+  const { read, pending, sheet, waiting } = useReadAction(store, reader);
 
   const all = entries ?? [];
   const readCount = all.filter((e) => e.summary).length;
@@ -109,6 +109,7 @@ export function Shelf({ reader }: { reader: Reader }) {
                       title={title}
                       count={count}
                       disabled={pending.has(entry.item.isbn)}
+                      waiting={waiting.has(entry.item.isbn)}
                       onRead={(e) => read(entry.item.isbn, title, count > 0, e)}
                     />
                   </li>
@@ -118,6 +119,7 @@ export function Shelf({ reader }: { reader: Reader }) {
           )}
         </>
       )}
+      {sheet}
     </main>
   );
 }

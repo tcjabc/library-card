@@ -10,6 +10,8 @@ interface LoanCardProps {
   book: Book | null;
   /** The active reader's reads of this book (the read button records for them). */
   readCount: number;
+  /** A read of this book waits for a grown-up's check. */
+  waiting?: boolean;
   today: string;
   busy: boolean;
   /** Shown as an avatar on the cover ("My house"). */
@@ -24,7 +26,7 @@ interface LoanCardProps {
  * One library book: cover (with the borrower's avatar in "My house"), title, due chip, read button,
  * and Renewed / Returned when it's the active reader's own current loan.
  */
-export function LoanCard({ loan, book, readCount, today, busy, borrower, onRead, onRenew, onReturn }: LoanCardProps) {
+export function LoanCard({ loan, book, readCount, waiting = false, today, busy, borrower, onRead, onRenew, onReturn }: LoanCardProps) {
   const t = strings.library;
   const title = book?.title ?? strings.shelf.thisBook;
   const active = loan.returned_at === null;
@@ -41,7 +43,7 @@ export function LoanCard({ loan, book, readCount, today, busy, borrower, onRead,
       </div>
       <p className="shelf-book__title">{title}</p>
       {active && <DueChip due={loan.due_date} today={today} />}
-      <ReadButton title={title} count={readCount} disabled={busy} onRead={onRead} />
+      <ReadButton title={title} count={readCount} disabled={busy} waiting={waiting} onRead={onRead} />
       {active && (onRenew || onReturn) && (
         <div className="loan-card__actions">
           {onRenew && (

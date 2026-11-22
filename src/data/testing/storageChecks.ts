@@ -256,6 +256,97 @@ export const storageChecks: StorageCheck[] = [
     equal((await target.listReaders(HOUSEHOLD_ID)).map((r) => r.kind), ['child', 'child', 'child'], 'no kind: children');
   }),
 
+  check('checked reads', 'a pending read never counts; confirming it counts from when the child read it', async (ctx) => {
+    const { store, h, a } = await withReaders(ctx);
+    const mum = await store.createReader({ household_id: h.id, display_name: 'Mum', avatar: '🦉', kind: 'grown_up' });
+    const pending = await store.markRead(a.id, ISBN_A, '2026-01-05T10:00:00Z', { how: 'help', status: 'pending' });
+    equal([pending?.status, pending?.how, pending?.confirmed_at, pending?.confirmed_by], ['pending', 'help', null, null], 'saved as pending');
+    equal(await store.getReadSummary(a.id, ISBN_A), null, 'not read yet');
+    equal(await store.countReadsSince(a.id, '2026-01-01T00:00:00Z'), 0, 'no journey step');
+    equal([await store.countHouseholdReads(h.id), (await store.listHouseholdReadSummaries(h.id)).length], [0, 0], 'no household total');
+    equal((await store.listPendingReads(h.id)).map((e) => e.id), [pending?.id], 'waiting for a grown-up');
+    equal((await store.listPendingReads(h.id, mum.id)).length, 0, "another reader's list is empty");
+    equal((await store.listReadEvents(a.id, ISBN_A)).map((e) => e.status), ['pending'], 'the event is there');
+
+    const confirmed = await store.confirmRead(pending!.id, mum.id);
+    equal([confirmed.status, confirmed.confirmed_by, confirmed.read_at], ['confirmed', mum.id, '2026-01-05T10:00:00.000Z'], 'confirmed by the grown-up');
+    ok(confirmed.confirmed_at !== null && confirmed.confirmed_at > confirmed.read_at, 'confirmed later', confirmed);
+    const summary = await store.getReadSummary(a.id, ISBN_A);
+    equal([summary?.count, summary?.first_read_at], [1, '2026-01-05T10:00:00.000Z'], 'counts from read_at, not the confirmation');
+    equal(await store.countReadsSince(a.id, '2026-01-05T00:00:00Z'), 1, 'a journey step since that day');
+    equal(await store.countReadsSince(a.id, '2026-01-06T00:00:00Z'), 0, 'but not since the confirmation day');
+    equal(await store.countHouseholdReads(h.id), 1, 'household total');
+    equal(await store.listPendingReads(h.id), [], 'nothing left to check');
+    equal((await store.confirmRead(pending!.id, 'pin')).confirmed_by, mum.id, 'confirming again changes nothing');
+  }),
+  check('checked reads', 'who can confirm, "Not yet", and the other read actions with pending reads', async (ctx) => {
+    const { store, h, a, b } = await withReaders(ctx, { now: tick() });
+    const mum = await store.createReader({ household_id: h.id, display_name: 'Mum', avatar: '🦉', kind: 'grown_up' });
+    const p1 = await store.markRead(a.id, ISBN_A, undefined, { how: 'self', status: 'pending' });
+    await rejectsWithCode(store.confirmRead(p1!.id, b.id), 'invalid', 'a child cannot confirm');
+    await rejectsWithCode(store.confirmRead(p1!.id, 'nobody'), 'not_found', 'an unknown grown-up');
+    await rejectsWithCode(store.confirmRead('nope', 'pin'), 'not_found', 'an unknown read');
+    equal(await store.markRead(a.id, ISBN_A), null, 'the 10-second guard counts a pending read');
+    equal((await store.rejectRead(p1!.id)).id, p1!.id, '"Not yet" deletes it');
+    equal(await store.listReadEvents(a.id, ISBN_A), [], 'gone');
+    await rejectsWithCode(store.rejectRead(p1!.id), 'not_found', 'already gone');
+    const c1 = await store.markRead(a.id, ISBN_B, '2026-01-02T00:00:00Z', { how: 'self', confirmedBy: 'pin' });
+    equal([c1?.status, c1?.confirmed_by], ['confirmed', 'pin'], 'confirmed now with the PIN');
+    await rejectsWithCode(store.rejectRead(c1!.id), 'blocked', 'a confirmed read is not sent back');
+    const self = await store.markRead(a.id, ISBN_C, '2026-01-03T00:00:00Z', { how: 'self' });
+    equal([self?.status, self?.confirmed_by, self?.confirmed_at], ['confirmed', null, '2026-01-03T00:00:00.000Z'], 'no check needed');
+    await rejectsWithCode(store.markRead(a.id, ISBN_C, undefined, { how: 'alone' as 'self' }), 'invalid', 'unknown how');
+    await rejectsWithCode(store.markRead(a.id, ISBN_C, undefined, { status: 'maybe' as 'pending' }), 'invalid', 'unknown status');
+    // Undo takes back the latest read, pending or not; restoring keeps its fields.
+    const p2 = await store.markRead(a.id, ISBN_D, '2026-01-04T00:00:00Z', { how: 'help', status: 'pending' });
+    const undone = await store.undoLatestRead(a.id, ISBN_D);
+    equal([undone?.id, undone?.status], [p2?.id, 'pending'], 'undo a pending read');
+    const restored = await store.restoreReadEvent(undone!);
+    equal([restored.status, restored.how], ['pending', 'help'], 'restored as it was');
+    equal(await store.getReadSummary(a.id, ISBN_D), null, 'still not counted');
+    await store.confirmRead(restored.id, mum.id);
+    equal((await store.getReadSummary(a.id, ISBN_D))?.count, 1, 'counted once confirmed');
+    // Clearing a book and deleting a reader take pending reads with them.
+    await store.markRead(a.id, ISBN_D, '2026-01-06T00:00:00Z', { status: 'pending' });
+    equal(await store.clearReads(a.id, ISBN_D), 2, 'clear: the confirmed and the pending read');
+    await store.markRead(b.id, ISBN_A, '2026-01-07T00:00:00Z', { status: 'pending' });
+    await store.deleteReader(b.id);
+    equal(await store.listPendingReads(h.id), [], "a deleted reader's pending read is gone");
+  }),
+  check('checked reads', 'needs_check: on for a child unless turned off, never for a grown-up; older rows are on', async (ctx) => {
+    const { store, dbName, h, a } = await withReaders(ctx);
+    equal(a.needs_check, true, 'a new child needs the check');
+    const free = await store.createReader({ household_id: h.id, display_name: 'Free', avatar: '🐸', needs_check: false });
+    equal(free.needs_check, false, 'unless set off');
+    const mum = await store.createReader({ household_id: h.id, display_name: 'Mum', avatar: '🦉', kind: 'grown_up', needs_check: true });
+    equal(mum.needs_check, false, 'never for a grown-up');
+    equal((await store.updateReader(a.id, { needs_check: false })).needs_check, false, 'turned off');
+    equal((await store.getReader(a.id))?.needs_check, false, 'saved');
+    equal((await store.updateReader(a.id, { kind: 'grown_up' })).needs_check, false, 'a grown-up now');
+    equal((await store.updateReader(a.id, { kind: 'child', needs_check: true })).needs_check, true, 'a child again, checked');
+    await rejectsWithCode(store.updateReader(a.id, { needs_check: 'yes' as unknown as boolean }), 'invalid', 'not true or false');
+    await rawPut(dbName, 'readers', { id: 'old', household_id: h.id, display_name: 'Old', avatar: '🐢', card_token: 'old-token-0123456789', active_journey_id: null });
+    equal((await store.getReader('old'))?.needs_check, true, 'an older child gets the check');
+  }),
+  check('checked reads', 'backups keep pending reads and needs_check; older reads restore as confirmed and count', async (ctx) => {
+    const { store, h, a } = await withReaders(ctx);
+    await store.updateReader(a.id, { needs_check: false });
+    const pending = await store.markRead(a.id, ISBN_A, '2026-01-02T00:00:00Z', { how: 'help', status: 'pending' });
+    await store.markRead(a.id, ISBN_B, '2026-01-03T00:00:00Z', { how: 'self', confirmedBy: 'pin' });
+    const backup = JSON.parse(JSON.stringify(await store.exportBackup()));
+    const { store: target } = await ctx.open();
+    await target.importBackup(backup);
+    equal((await target.listPendingReads(h.id)).map((e) => [e.id, e.how]), [[pending!.id, 'help']], 'pending kept, and not counted');
+    equal(await target.getReadSummary(a.id, ISBN_A), null, 'still waiting');
+    equal((await target.getReadSummary(a.id, ISBN_B))?.count, 1, 'confirmed counts');
+    equal((await target.getReader(a.id))?.needs_check, false, 'needs_check kept');
+    for (const event of backup.tables.read_events) for (const f of ['how', 'status', 'confirmed_at', 'confirmed_by']) delete event[f];
+    for (const reader of backup.tables.readers) delete reader.needs_check;
+    await target.importBackup(backup);
+    equal([await target.listPendingReads(h.id), (await target.getReadSummary(a.id, ISBN_A))?.count], [[], 1], 'an older backup: every read counts');
+    equal((await target.getReader(a.id))?.needs_check, true, 'and children get the check');
+  }),
+
   // Subscribe -------------------------------------------------------------------
   check('subscribe', 'listeners hear local writes; unsubscribe stops them', async (ctx) => {
     const { store } = await ctx.open();
@@ -899,11 +990,11 @@ export const storageChecks: StorageCheck[] = [
   }),
 
   // Migrations ------------------------------------------------------------------------
-  check('migration', 'a fresh database is created at v6 with no legacy reads store', async (ctx) => {
+  check('migration', 'a fresh database is created at v7 with no legacy reads store', async (ctx) => {
     const { store, dbName } = await ctx.open();
     await store.coverStep;
     const { version, stores } = await rawStoreNames(dbName);
-    equal(version, 6, 'version');
+    equal(version, 7, 'version');
     equal((await rawIndexNames(dbName, 'library_cards')).sort(), ['by_household_created', 'by_library', 'by_reader'], 'library card indexes');
     ok(stores.includes('records') && stores.includes('outbox'), 'sync stores', stores);
     equal(await rawIndexNames(dbName, 'records'), ['by_parent'], 'records index');
@@ -987,12 +1078,12 @@ export const storageChecks: StorageCheck[] = [
     const third = await ctx.attach(name);
     equal((await third.coverStep).moved, 0, 'a finished step is a no-op');
   }),
-  check('migration', 'v4 -> v6: records, outbox and library_cards stores added, every row kept, nothing recorded', async (ctx) => {
+  check('migration', 'v4 -> v7: records, outbox and library_cards stores and the read status index added, every row kept, nothing recorded', async (ctx) => {
     const name = ctx.name();
     const fixture = await createV3Database(name); // upgrades through v4 and v5 to v6
     const store = await ctx.attach(name);
     const { version, stores } = await rawStoreNames(name);
-    equal(version, 6, 'version');
+    equal(version, 7, 'version');
     ok(stores.includes('records') && stores.includes('outbox') && stores.includes('library_cards'), 'new stores', stores);
     equal(await store.listHouseholdLibraryCards(HOUSEHOLD_ID), [], 'no library cards yet');
     equal((await rawAll(name, 'records')).length, 0, 'migrated rows have no records until sync is turned on');
@@ -1004,7 +1095,7 @@ export const storageChecks: StorageCheck[] = [
     const name = ctx.name();
     const fixture = await createV3Database(name);
     const store = await ctx.attach(name);
-    equal((await rawStoreNames(name)).version, 6, 'version');
+    equal((await rawStoreNames(name)).version, 7, 'version');
     const indexes = await rawIndexNames(name, 'loans');
     ok(!indexes.includes('by_household_sticker') && indexes.includes('by_library_sticker') && indexes.includes('by_sticker'), 'indexes', indexes);
     const loans = await rawAll<Record<string, unknown>>(name, 'loans');
@@ -1067,7 +1158,7 @@ export const storageChecks: StorageCheck[] = [
     const journey = await store.startJourney(a.id, 'ocean_deep', '2026-01-01T00:00:00Z');
 
     const backup = await store.exportBackup();
-    equal([backup.format, backup.version, backup.schema], [BACKUP_FORMAT, 1, 6], 'format, version, schema');
+    equal([backup.format, backup.version, backup.schema], [BACKUP_FORMAT, 1, 7], 'format, version, schema');
     ok(!('records' in backup.tables) && !('outbox' in backup.tables), 'sync bookkeeping is never exported');
     ok(!('read_summaries' in backup.tables), 'summaries are not exported');
     equal(Object.keys(backup.covers), [photoRef], 'the one photo, under its cover: key');

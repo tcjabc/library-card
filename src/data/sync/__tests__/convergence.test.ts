@@ -163,6 +163,40 @@ describe('sync adapter: two devices converge', () => {
     expect(await views(a)).toBe(await views(b));
   });
 
+  it('checked reads: pending on A, confirmed on B, the counts agree; "Not yet" on B removes it on A', async () => {
+    const { a, b, reader } = await household();
+    a.at = T0 + 5_000;
+    const grown = await a.store.createReader({ household_id: HOUSEHOLD_ID, display_name: 'Grown', avatar: '🦉', kind: 'grown_up' });
+    const p1 = await a.store.markRead(reader.id, ISBN_A, '2026-06-01T10:00:00.000Z', { how: 'self', status: 'pending' });
+    const p2 = await a.store.markRead(reader.id, ISBN_B, '2026-06-01T11:00:00.000Z', { how: 'help', status: 'pending' });
+    await send(a, b);
+    for (const d of [a, b]) {
+      expect((await d.store.listPendingReads(HOUSEHOLD_ID)).map((e) => e.id).sort()).toEqual([p1!.id, p2!.id].sort());
+      expect(await d.store.countHouseholdReads(HOUSEHOLD_ID)).toBe(0);
+    }
+    b.at = T0 + 20_000;
+    await b.store.confirmRead(p1!.id, grown.id);
+    await b.store.rejectRead(p2!.id);
+    await send(b, a);
+    for (const d of [a, b]) {
+      expect(await d.store.listPendingReads(HOUSEHOLD_ID)).toEqual([]);
+      expect((await d.store.getReadSummary(reader.id, ISBN_A))?.first_read_at).toBe('2026-06-01T10:00:00.000Z');
+      expect(await d.store.countHouseholdReads(HOUSEHOLD_ID)).toBe(1);
+      expect(await d.store.listReadEvents(reader.id, ISBN_B)).toEqual([]);
+      expect((await d.store.listReadEvents(reader.id, ISBN_A))[0]?.confirmed_by).toBe(grown.id);
+    }
+    expect(await views(a)).toBe(await views(b));
+
+    // needs_check syncs too; an older device's read (no status) counts.
+    a.at = T0 + 30_000;
+    await a.store.updateReader(reader.id, { needs_check: false });
+    const older = await a.store.markRead(reader.id, ISBN_B, '2026-06-02T10:00:00.000Z');
+    const withoutStatus = (await ops(a)).filter((o) => !(o.rec === `read_events:${older!.id}` && ['status', 'how', 'confirmed_at', 'confirmed_by'].includes(o.f)));
+    await send(a, b, withoutStatus);
+    expect((await b.store.getReader(reader.id))?.needs_check).toBe(false);
+    expect((await b.store.getReadSummary(reader.id, ISBN_B))?.count).toBe(1);
+  });
+
   it('reader kind: a grown-up made on A is one on B; a reader whose records have no kind is a child', async () => {
     const { a, b, reader } = await household();
     expect((await b.store.getReader(reader.id))?.kind).toBe('child');

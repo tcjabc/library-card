@@ -4,6 +4,7 @@ import { GrownUpProvider } from './grownups/GrownUpProvider';
 import { endGrownUpSession, isGrownUpPath } from './grownups/session';
 import { matchPath, navigate, useHashPath } from './router';
 import { CardLink } from './screens/CardLink';
+import { CheckReads } from './screens/CheckReads';
 import { Hub } from './screens/Hub';
 import { CelebrationHost } from './screens/journeys/CelebrationHost';
 import { FamilyStaircase } from './screens/journeys/FamilyStaircase';
@@ -78,6 +79,8 @@ function Routes() {
       return <RequireReader>{(reader) => <JourneyGallery reader={reader} />}</RequireReader>;
     case '/journey':
       return <RequireReader>{(reader) => <JourneyScreen reader={reader} />}</RequireReader>;
+    case '/check':
+      return <RequireReader>{(reader) => <CheckReads reader={reader} />}</RequireReader>;
     case '/staircase':
       return <RequireReader>{(reader) => <FamilyStaircase reader={reader} />}</RequireReader>;
     case '/dev':

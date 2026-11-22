@@ -27,6 +27,9 @@ function ReaderPicker() {
   const query = useCallback((s: DataStore) => s.listReaders(HOUSEHOLD_ID), []);
   const { data: readers } = useDataQuery(query, ['readers']);
   const tiles = splashTiles(readers ?? []);
+  // Children's reads waiting for a grown-up: shown on the grown-ups' tiles.
+  const toCheckQuery = useCallback((s: DataStore) => s.listPendingReads(HOUSEHOLD_ID).then((list) => list.length), []);
+  const { data: toCheck = 0 } = useDataQuery(toCheckQuery, ['read_events']);
   /** A grown-up's tile was tapped: the household PIN (or the gate) first. */
   const [signingIn, setSigningIn] = useState<SplashTile['reader'] | null>(null);
 
@@ -57,7 +60,11 @@ function ReaderPicker() {
                 <button
                   type="button"
                   className="reader-tile"
-                  aria-label={fmt(tile.signIn === 'card' ? t.tileCard : t.tileOpen, { name: tile.reader.display_name })}
+                  aria-label={
+                    tile.signIn === 'card'
+                      ? fmt(t.tileCard, { name: tile.reader.display_name })
+                      : fmt(toCheck > 0 ? t.tileOpenWithCount : t.tileOpen, { name: tile.reader.display_name, count: toCheck })
+                  }
                   onClick={() => open(tile)}
                 >
                   <span className="reader-tile__avatar" aria-hidden="true">
@@ -67,6 +74,11 @@ function ReaderPicker() {
                   <span className="reader-tile__name" aria-hidden="true">
                     {tile.reader.display_name}
                   </span>
+                  {tile.signIn === 'tap' && toCheck > 0 && (
+                    <span className="reader-tile__to-check" aria-hidden="true">
+                      📝 {fmt(t.tileCount, { count: toCheck })}
+                    </span>
+                  )}
                 </button>
               </li>
             ))}

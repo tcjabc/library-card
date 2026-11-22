@@ -1,6 +1,7 @@
 import { useCallback, useId, useState, type FormEvent } from 'react';
 import { useCardQr } from '../../cards/useCardQr';
 import {
+  CONFIRMED_BY_PIN,
   READER_KINDS,
   isDataStoreError,
   useDataQuery,
@@ -12,6 +13,7 @@ import {
 } from '../../data';
 import { getJourney } from '../../journeys/journeys';
 import { journeyProgress } from '../../journeys/progress';
+import { ToCheckList } from '../../reads/ToCheckList';
 import { AvatarPicker } from '../../readers/AvatarPicker';
 import { DEFAULT_AVATAR } from '../../readers/avatars';
 import { href } from '../../router';
@@ -70,14 +72,40 @@ export function ReadersTab({ store, household }: TabProps) {
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const query = useCallback((s: DataStore) => loadReaders(s, household.id), [household.id]);
   const { data: rows } = useDataQuery(query, ['readers', 'read_events', 'reader_journeys', 'loans']);
+  const pendingQuery = useCallback((s: DataStore) => s.listPendingReads(household.id), [household.id]);
+  const { data: pendingReads = [] } = useDataQuery(pendingQuery, ['read_events']);
+  const toCheck = new Map<string, number>();
+  for (const event of pendingReads) toCheck.set(event.reader_id, (toCheck.get(event.reader_id) ?? 0) + 1);
+  const [checkFilter, setCheckFilter] = useState<string | null>(null);
 
   const askDelete = async (reader: Reader) => {
     const preview = await store.previewDeleteReader(reader.id);
     setDialog({ kind: 'delete', reader, preview });
   };
 
+  const childrenWaiting = (rows ?? []).map((r) => r.reader).filter((r) => toCheck.has(r.id));
+
   return (
     <>
+      {pendingReads.length > 0 && (
+        <section className="stack card" aria-labelledby="readers-to-check">
+          <h2 id="readers-to-check">
+            <span aria-hidden="true">📝</span> {strings.reads.toCheckHeading} ({pendingReads.length})
+          </h2>
+          <p className="small muted">{strings.reads.toCheckIntro}</p>
+          <div className="chip-row chip-row--dense" role="group" aria-labelledby="readers-to-check">
+            <button type="button" className="chip" aria-pressed={checkFilter === null} onClick={() => setCheckFilter(null)}>
+              {strings.reads.all}
+            </button>
+            {childrenWaiting.map((r) => (
+              <button key={r.id} type="button" className="chip" aria-pressed={checkFilter === r.id} onClick={() => setCheckFilter(r.id)}>
+                <span aria-hidden="true">{r.avatar}</span> {r.display_name} ({toCheck.get(r.id)})
+              </button>
+            ))}
+          </div>
+          <ToCheckList householdId={household.id} readerId={checkFilter} confirmedBy={CONFIRMED_BY_PIN} />
+        </section>
+      )}
       <section className="stack card">
         <div className="row grownups__section-head">
           <h2>{fmt(t.heading, { count: rows?.length ?? 0 })}</h2>
@@ -97,6 +125,11 @@ export function ReadersTab({ store, household }: TabProps) {
                   <p className="grownups__item-title">
                     {reader.display_name}
                     {reader.kind === 'grown_up' && <span className="small muted"> · {t.grownUpTag}</span>}
+                    {(toCheck.get(reader.id) ?? 0) > 0 && (
+                      <button type="button" className="btn btn--small grownups__to-check" onClick={() => setCheckFilter(reader.id)}>
+                        📝 {fmt(t.toCheck, { count: toCheck.get(reader.id) ?? 0 })}
+                      </button>
+                    )}
                   </p>
                   <p className="small">
                     {booksRead === 1 ? t.booksReadOne : fmt(t.booksRead, { count: booksRead })} ·{' '}
@@ -207,6 +240,7 @@ function ReaderForm({ store, household, reader, onClose }: { store: DataStore; h
   const [name, setName] = useState(reader?.display_name ?? '');
   const [avatar, setAvatar] = useState<string>(reader?.avatar ?? DEFAULT_AVATAR);
   const [kind, setKind] = useState<ReaderKind>(reader?.kind ?? 'child');
+  const [needsCheck, setNeedsCheck] = useState<boolean>(reader?.kind === 'child' ? reader.needs_check : true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const nameId = useId();
@@ -218,8 +252,10 @@ function ReaderForm({ store, household, reader, onClose }: { store: DataStore; h
     if (!displayName) return setError(t.nameRequired);
     setBusy(true);
     try {
-      if (reader) await store.updateReader(reader.id, { display_name: displayName, avatar, kind });
-      else await store.createReader({ household_id: household.id, display_name: displayName, avatar, kind });
+      // Turning the check off leaves reads already waiting as they are: they still wait.
+      const fields = { display_name: displayName, avatar, kind, needs_check: kind === 'child' && needsCheck };
+      if (reader) await store.updateReader(reader.id, fields);
+      else await store.createReader({ household_id: household.id, ...fields });
       toast({ message: fmt(reader ? t.saved : t.created, { name: displayName }) });
       onClose();
     } catch (err) {
@@ -259,6 +295,17 @@ function ReaderForm({ store, household, reader, onClose }: { store: DataStore; h
             {t.kindHelp}
           </p>
         </div>
+        {kind === 'child' && (
+          <div className="stack">
+            <label className="grownups__check">
+              <input type="checkbox" role="switch" checked={needsCheck} onChange={(e) => setNeedsCheck(e.target.checked)} aria-describedby={`${kindId}-check-help`} />
+              {t.needsCheck}
+            </label>
+            <p id={`${kindId}-check-help`} className="small muted">
+              {t.needsCheckHelp}
+            </p>
+          </div>
+        )}
         {error && (
           <p className="alert alert--danger" role="alert">
             {error}

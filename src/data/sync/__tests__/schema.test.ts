@@ -137,12 +137,12 @@ describe('rows and records', () => {
   it('recordToRow needs a live record with every required field, and fills optional ones with null', () => {
     const fields = { display_name: 'A', avatar: '🦊', card_token: 'tok-1', del: false };
     // A record from before reader kinds: kind null (the store reads it as a child).
-    expect(recordToRow('readers', UUID, fields)).toEqual({ ...reader, kind: null });
-    expect(recordToRow('readers', UUID, { ...fields, kind: 'grown_up' })).toEqual({ ...reader, kind: 'grown_up' });
+    expect(recordToRow('readers', UUID, fields)).toEqual({ ...reader, kind: null, needs_check: null });
+    expect(recordToRow('readers', UUID, { ...fields, kind: 'grown_up' })).toEqual({ ...reader, kind: 'grown_up', needs_check: null });
     expect(recordToRow('readers', UUID, { ...fields, del: true })).toBeNull();
     expect(recordToRow('readers', UUID, { display_name: 'A', avatar: '🦊', card_token: 't' })).toBeNull(); // never created
     expect(recordToRow('readers', UUID, { ...fields, card_token: undefined })).toBeNull();
-    expect(recordToRow('readers', UUID, { ...fields, favourite: 'x' })).toEqual({ ...reader, kind: null }); // unknown fields ignored
+    expect(recordToRow('readers', UUID, { ...fields, favourite: 'x' })).toEqual({ ...reader, kind: null, needs_check: null }); // unknown fields ignored
   });
 
   it('every table lists its required fields', () => {

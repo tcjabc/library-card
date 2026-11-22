@@ -32,6 +32,10 @@ import {
   type Reader,
   type ReaderJourney,
   type ReaderKind,
+  type ReadHow,
+  type MarkReadOptions,
+  CONFIRMED_BY_PIN,
+  READ_HOWS,
   READER_KINDS,
 } from '../DataStore';
 import {
@@ -44,6 +48,7 @@ import {
   summariseBackup,
   validateBackup,
   type Backup,
+  type BackupReadEvent,
   type BackupTables,
 } from '../backup';
 import { newCardToken, newId, toIso } from '../ids';
@@ -71,10 +76,12 @@ import { addToSummary, isRepeatTap, latestEvent, summarize } from '../readRules'
  *       only; no data changes. Present for every adapter, used by "sync".
  *   v6  `library_cards` (a reader's library card numbers, for printed cards), indexed by reader,
  *       library and [household, created_at]. New store only.
+ *   v7  read_events: [household_id, status] index, for reads waiting for a grown-up (older events
+ *       have no status: they are confirmed and stay out of it). Index only.
  */
 
 const DB_NAME = 'library-card';
-export const DB_VERSION = 6;
+export const DB_VERSION = 7;
 
 // Highest possible string suffix for compound-key range upper bounds.
 const MAX_STRING = '￿';
@@ -187,6 +194,8 @@ interface LibraryCardDB extends DBSchema {
       by_reader_isbn_read_at: [Id, BookKey, string];
       by_reader_read_at: [Id, string];
       by_household: Id;
+      /** Only events with a status (older ones are confirmed and have none). */
+      by_household_status: [Id, string];
     };
   };
   read_summaries: {
@@ -303,6 +312,10 @@ function openLibraryDb(name: string): Promise<DB> {
         cards.createIndex('by_reader', 'reader_id');
         cards.createIndex('by_library', 'library_id');
         cards.createIndex('by_household_created', ['household_id', 'created_at']);
+      }
+
+      if (oldVersion < 7) {
+        tx.objectStore('read_events').createIndex('by_household_status', ['household_id', 'status']);
       }
     },
     blocking(_currentVersion, blockedVersion, event) {
@@ -427,6 +440,10 @@ async function migrateV2Data(tx: AnyTx<'versionchange'>): Promise<void> {
       reader_id: read.reader_id,
       isbn: read.isbn,
       read_at: read.read_at,
+      how: null,
+      status: 'confirmed',
+      confirmed_at: null,
+      confirmed_by: null,
     };
     await events.put(event);
     const key = `${event.reader_id}\u0000${event.isbn}`;
@@ -465,12 +482,52 @@ function checkCardFields(input: { value: string; format: string; label?: string 
   return { value: check.value, label };
 }
 
-/** A stored reader as callers see it: no kind (older rows, records, backups) means a child. */
+/**
+ * A stored reader as callers see it: no kind (older rows, records, backups) means a child, and a
+ * child without needs_check gets the check. Grown-ups never need one.
+ */
 function readerOut(row: Reader): Reader;
 function readerOut(row: Reader | undefined): Reader | null;
 function readerOut(row: Reader | undefined): Reader | null {
   if (!row) return null;
-  return row.kind === 'grown_up' || row.kind === 'child' ? row : { ...row, kind: 'child' };
+  const kind: ReaderKind = row.kind === 'grown_up' ? 'grown_up' : 'child';
+  const needs_check = kind === 'child' && (row.needs_check as unknown) !== false;
+  return row.kind === kind && row.needs_check === needs_check ? row : { ...row, kind, needs_check };
+}
+
+/** A stored read as callers see it: no status means confirmed; missing fields are null. */
+function eventOut(row: ReadEvent): ReadEvent;
+function eventOut(row: ReadEvent | undefined): ReadEvent | null;
+function eventOut(row: ReadEvent | undefined): ReadEvent | null {
+  if (!row) return null;
+  return {
+    ...row,
+    how: row.how === 'self' || row.how === 'help' ? row.how : null,
+    status: row.status === 'pending' ? 'pending' : 'confirmed',
+    confirmed_at: row.confirmed_at ?? null,
+    confirmed_by: row.confirmed_by ?? null,
+  };
+}
+
+function checkReadHow(how: unknown): ReadHow | null {
+  if (how === undefined || how === null) return null;
+  if ((READ_HOWS as readonly unknown[]).includes(how)) return how as ReadHow;
+  throw new DataStoreError('invalid', 'A read was "self" or "help".');
+}
+
+/** "pin", or a grown-up reader in this database. */
+async function checkConfirmedBy(tx: ReadTx, confirmedBy: unknown): Promise<string> {
+  if (confirmedBy === CONFIRMED_BY_PIN) return CONFIRMED_BY_PIN;
+  if (typeof confirmedBy !== 'string' || !confirmedBy) throw new DataStoreError('invalid', 'A read is confirmed with the PIN or by a grown-up.');
+  const reader = await tx.objectStore('readers').get(confirmedBy);
+  if (!reader) throw notFound('Reader', confirmedBy);
+  if (reader.kind !== 'grown_up') throw new DataStoreError('invalid', 'Only a grown-up can confirm a read.');
+  return confirmedBy;
+}
+
+function checkNeedsCheck(value: unknown): boolean {
+  if (typeof value !== 'boolean') throw new DataStoreError('invalid', 'needs_check is true or false.');
+  return value;
 }
 
 function checkReaderKind(kind: unknown): ReaderKind {
@@ -531,8 +588,10 @@ export async function recomputeSummary(tx: ReadTx, readerId: Id, isbn: BookKey):
     await summaries.delete([readerId, isbn]);
     return null;
   }
-  const summary = summarize(events)!;
-  await summaries.put(summary);
+  // Only confirmed reads make a summary: a book with pending reads alone isn't "read" yet.
+  const summary = summarize(events);
+  if (summary) await summaries.put(summary);
+  else await summaries.delete([readerId, isbn]);
   return summary;
 }
 
@@ -862,10 +921,12 @@ export async function createStoreWith<Extra extends object>(
         household_id: input.household_id,
         display_name: input.display_name,
         kind: checkReaderKind(input.kind ?? 'child'),
+        needs_check: false,
         avatar: input.avatar,
         card_token: input.card_token ?? newCardToken(),
         active_journey_id: null,
       };
+      reader.needs_check = reader.kind === 'child' && checkNeedsCheck(input.needs_check ?? true);
       try {
         await d.add('readers', reader);
       } catch (error) {
@@ -900,6 +961,9 @@ export async function createStoreWith<Extra extends object>(
         avatar: patch.avatar ?? existing.avatar,
       };
       if (patch.kind !== undefined) next.kind = checkReaderKind(patch.kind);
+      if (patch.needs_check !== undefined) next.needs_check = checkNeedsCheck(patch.needs_check);
+      // A child keeps their setting; a grown-up never needs a check.
+      next.needs_check = next.kind === 'child' && next.needs_check;
       await tx.store.put(next);
       await tx.done;
       changed('readers');
@@ -1374,10 +1438,14 @@ export async function createStoreWith<Extra extends object>(
     },
 
     // Reads -----------------------------------------------------------------
-    async markRead(readerId, isbn, readAt) {
+    async markRead(readerId, isbn, readAt, options: MarkReadOptions = {}) {
+      const how = checkReadHow(options.how);
+      const status = options.status ?? 'confirmed';
+      if (status !== 'pending' && status !== 'confirmed') throw new DataStoreError('invalid', 'A read is "pending" or "confirmed".');
       const tx = (await getDb()).transaction(['readers', 'read_events', 'read_summaries'], 'readwrite');
       const reader = await tx.objectStore('readers').get(readerId);
       if (!reader) throw notFound('Reader', readerId);
+      const confirmedBy = status === 'confirmed' && options.confirmedBy ? await checkConfirmedBy(tx, options.confirmedBy) : null;
 
       const events = tx.objectStore('read_events');
       const summaries = tx.objectStore('read_summaries');
@@ -1389,18 +1457,59 @@ export async function createStoreWith<Extra extends object>(
           return null;
         }
       }
+      const readTime = readAt ? toIso(readAt) : nowIso();
       const event: ReadEvent = {
         id: newId(),
         household_id: reader.household_id,
         reader_id: readerId,
         isbn,
-        read_at: readAt ? toIso(readAt) : nowIso(),
+        read_at: readTime,
+        how,
+        status,
+        confirmed_at: status === 'confirmed' ? (confirmedBy ? nowIso() : readTime) : null,
+        confirmed_by: confirmedBy,
       };
       await events.add(event);
-      await summaries.put(addToSummary((await summaries.get([readerId, isbn])) ?? null, event));
+      // A pending read doesn't count until a grown-up confirms it.
+      if (status === 'confirmed') await summaries.put(addToSummary((await summaries.get([readerId, isbn])) ?? null, event));
       await tx.done;
       changed('read_events');
       return event;
+    },
+
+    async confirmRead(eventId, confirmedBy) {
+      const tx = (await getDb()).transaction(['readers', 'read_events', 'read_summaries'], 'readwrite');
+      const existing = eventOut(await tx.objectStore('read_events').get(eventId));
+      if (!existing) throw notFound('Read', eventId);
+      if (existing.status === 'confirmed') {
+        await tx.done;
+        return existing;
+      }
+      const next: ReadEvent = { ...existing, status: 'confirmed', confirmed_at: nowIso(), confirmed_by: await checkConfirmedBy(tx, confirmedBy) };
+      await tx.objectStore('read_events').put(next);
+      await recomputeSummary(tx, next.reader_id, next.isbn);
+      await tx.done;
+      changed('read_events');
+      return next;
+    },
+
+    async rejectRead(eventId) {
+      const tx = (await getDb()).transaction(['read_events', 'read_summaries'], 'readwrite');
+      const existing = eventOut(await tx.objectStore('read_events').get(eventId));
+      if (!existing) throw notFound('Read', eventId);
+      if (existing.status !== 'pending') throw new DataStoreError('blocked', 'Only a read waiting for a grown-up can be sent back.');
+      await tx.objectStore('read_events').delete(eventId);
+      await tx.done;
+      changed('read_events');
+      return existing;
+    },
+
+    async listPendingReads(householdId, readerId) {
+      const rows = await (await getDb()).getAllFromIndex('read_events', 'by_household_status', [householdId, 'pending']);
+      return rows
+        .map((row) => eventOut(row))
+        .filter((event) => readerId === undefined || event.reader_id === readerId)
+        .sort((a, b) => b.read_at.localeCompare(a.read_at) || b.id.localeCompare(a.id));
     },
 
     async undoLatestRead(readerId, isbn) {
@@ -1416,7 +1525,7 @@ export async function createStoreWith<Extra extends object>(
       await recomputeSummary(tx, readerId, isbn);
       await tx.done;
       changed('read_events');
-      return latest;
+      return eventOut(latest);
     },
 
     async clearReads(readerId, isbn) {
@@ -1442,6 +1551,10 @@ export async function createStoreWith<Extra extends object>(
         reader_id: event.reader_id,
         isbn: event.isbn,
         read_at: toIso(event.read_at),
+        how: event.how === 'self' || event.how === 'help' ? event.how : null,
+        status: event.status === 'pending' ? 'pending' : 'confirmed',
+        confirmed_at: event.status === 'pending' ? null : (event.confirmed_at ?? null),
+        confirmed_by: event.status === 'pending' ? null : (event.confirmed_by ?? null),
       };
       await tx.objectStore('read_events').put(restored);
       await recomputeSummary(tx, restored.reader_id, restored.isbn);
@@ -1465,7 +1578,7 @@ export async function createStoreWith<Extra extends object>(
         isbn === undefined
           ? await d.getAllFromIndex('read_events', 'by_reader_read_at', prefixRange(readerId))
           : await d.getAllFromIndex('read_events', 'by_reader_isbn_read_at', bookRange(readerId, isbn));
-      return events.reverse();
+      return events.reverse().map((event) => eventOut(event));
     },
 
     async countReadsSince(readerId, since) {
@@ -1618,7 +1731,7 @@ export async function createStoreWith<Extra extends object>(
         images.push({ hash, blob, saved_at: backup.exported_at });
       }
       // Summaries are rebuilt from the events.
-      const byBook = new Map<string, ReadEvent[]>();
+      const byBook = new Map<string, BackupReadEvent[]>();
       for (const event of backup.tables.read_events) {
         const key = `${event.reader_id}\u0000${event.isbn}`;
         byBook.set(key, [...(byBook.get(key) ?? []), event]);
@@ -1633,7 +1746,10 @@ export async function createStoreWith<Extra extends object>(
         for (const row of backup.tables[table] as unknown[]) await target.put(row);
       }
       for (const image of images) await tx.objectStore('cover_images').put(image);
-      for (const events of byBook.values()) await tx.objectStore('read_summaries').put(summarize(events)!);
+      for (const events of byBook.values()) {
+        const summary = summarize(events);
+        if (summary) await tx.objectStore('read_summaries').put(summary);
+      }
       await tx.objectStore('meta').put({ key: CURRENT_HOUSEHOLD_KEY, value: HOUSEHOLD_ID });
       await tx.objectStore('meta').put({ key: COVERS_REKEYED_KEY, value: true });
       await tx.done;

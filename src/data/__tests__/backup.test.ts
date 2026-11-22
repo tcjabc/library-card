@@ -24,8 +24,8 @@ function sample(): Backup {
     tables: {
       households: [{ id: 'main', name: 'Home', parent_pin_hash: null, time_zone: null }],
       readers: [
-        { id: 'r1', household_id: 'main', display_name: 'A', kind: 'grown_up', avatar: '🦊', card_token: 'tok-1', active_journey_id: 'j1' },
-        { id: 'r2', household_id: 'main', display_name: 'B', kind: 'child', avatar: '🐢', card_token: 'tok-2', active_journey_id: null },
+        { id: 'r1', household_id: 'main', display_name: 'A', kind: 'grown_up', needs_check: false, avatar: '🦊', card_token: 'tok-1', active_journey_id: 'j1' },
+        { id: 'r2', household_id: 'main', display_name: 'B', kind: 'child', needs_check: true, avatar: '🐢', card_token: 'tok-2', active_journey_id: null },
       ],
       books: [
         { isbn: '9780000000002', title: 'Photo', authors: [], cover_url: `cover:${HASH}`, source: 'manual' },
@@ -73,9 +73,9 @@ function sample(): Backup {
         },
       ],
       read_events: [
-        { id: 'e1', household_id: 'main', reader_id: 'r1', isbn: '9780000000002', read_at: '2026-01-02T00:00:00.000Z' },
-        { id: 'e2', household_id: 'main', reader_id: 'r1', isbn: '9780000000002', read_at: '2026-01-03T00:00:00.000Z' },
-        { id: 'e3', household_id: 'main', reader_id: 'r2', isbn: 'noisbn-1', read_at: '2026-01-04T00:00:00.000Z' },
+        { id: 'e1', household_id: 'main', reader_id: 'r1', isbn: '9780000000002', read_at: '2026-01-02T00:00:00.000Z', how: null, status: 'confirmed', confirmed_at: null, confirmed_by: null },
+        { id: 'e2', household_id: 'main', reader_id: 'r1', isbn: '9780000000002', read_at: '2026-01-03T00:00:00.000Z', how: 'self', status: 'confirmed', confirmed_at: '2026-01-03T01:00:00.000Z', confirmed_by: 'pin' },
+        { id: 'e3', household_id: 'main', reader_id: 'r2', isbn: 'noisbn-1', read_at: '2026-01-04T00:00:00.000Z', how: 'help', status: 'pending', confirmed_at: null, confirmed_by: null },
       ],
       reader_journeys: [
         { id: 'j1', reader_id: 'r1', journey_id: 'ocean_deep', started_at: '2026-01-01T00:00:00.000Z', completed_at: null, abandoned_at: null },
@@ -112,6 +112,19 @@ describe('validateBackup', () => {
 
   it('accepts a library card whose library is not in the file (it shows the saved name)', () => {
     expect(validateBackup(broken((d) => (d.tables.library_cards[0].library_id = 'gone'))).ok).toBe(true);
+  });
+
+  it('accepts reads from before checked reads (no status: confirmed) and readers without needs_check', () => {
+    const result = validateBackup(
+      broken((d) => {
+        for (const field of ['how', 'status', 'confirmed_at', 'confirmed_by']) delete d.tables.read_events[0][field];
+        delete d.tables.readers[1].needs_check;
+      }),
+    );
+    expect(result.ok && [result.backup.tables.read_events[0].status, result.backup.tables.readers[1].needs_check]).toEqual([null, null]);
+    expect(validateBackup(broken((d) => (d.tables.read_events[0].status = 'maybe'))).ok).toBe(false);
+    expect(validateBackup(broken((d) => (d.tables.read_events[0].how = 'alone'))).ok).toBe(false);
+    expect(validateBackup(broken((d) => (d.tables.readers[0].needs_check = 'yes'))).ok).toBe(false);
   });
 
   it('accepts readers from before reader kinds (no kind: a child), and refuses an unknown kind', () => {

@@ -51,8 +51,11 @@ export const BACKUP_TABLES = [
 const OPTIONAL_TABLES: readonly BackupTable[] = ['library_cards'];
 export type BackupTable = (typeof BACKUP_TABLES)[number];
 
-/** A reader as stored: files from before reader kinds have none (read as a child). */
-export type BackupReader = Omit<Reader, 'kind'> & { kind?: ReaderKind | null };
+/** A reader as stored: files from before reader kinds and checks have neither (a child who needs the check). */
+export type BackupReader = Omit<Reader, 'kind' | 'needs_check'> & { kind?: ReaderKind | null; needs_check?: boolean | null };
+/** A read as stored: files from before checked reads have no status (confirmed). */
+export type BackupReadEvent = Omit<ReadEvent, 'how' | 'status' | 'confirmed_at' | 'confirmed_by'> &
+  Partial<Pick<ReadEvent, 'how' | 'status' | 'confirmed_at' | 'confirmed_by'>>;
 
 export interface BackupTables {
   households: Household[];
@@ -62,7 +65,7 @@ export interface BackupTables {
   libraries: Library[];
   library_cards: LibraryCard[];
   loans: Loan[];
-  read_events: ReadEvent[];
+  read_events: BackupReadEvent[];
   reader_journeys: ReaderJourney[];
 }
 
@@ -102,7 +105,7 @@ export type BackupCheck = { ok: true; backup: Backup } | { ok: false; problem: B
 
 // --- Validation ---------------------------------------------------------------
 
-type FieldKind = 'string' | 'string?' | 'number' | 'strings';
+type FieldKind = 'string' | 'string?' | 'number' | 'strings' | 'boolean?';
 
 /** Required fields per table; nullable ("string?") fields may also be missing and become null. */
 const FIELDS: Record<BackupTable, Record<string, FieldKind>> = {
@@ -112,6 +115,7 @@ const FIELDS: Record<BackupTable, Record<string, FieldKind>> = {
     household_id: 'string',
     display_name: 'string',
     kind: 'string?',
+    needs_check: 'boolean?',
     avatar: 'string',
     card_token: 'string',
     active_journey_id: 'string?',
@@ -151,7 +155,17 @@ const FIELDS: Record<BackupTable, Record<string, FieldKind>> = {
     returned_at: 'string?',
     renew_count: 'number',
   },
-  read_events: { id: 'string', household_id: 'string', reader_id: 'string', isbn: 'string', read_at: 'string' },
+  read_events: {
+    id: 'string',
+    household_id: 'string',
+    reader_id: 'string',
+    isbn: 'string',
+    read_at: 'string',
+    how: 'string?',
+    status: 'string?',
+    confirmed_at: 'string?',
+    confirmed_by: 'string?',
+  },
   reader_journeys: {
     id: 'string',
     reader_id: 'string',
@@ -201,11 +215,13 @@ function checkRow(table: BackupTable, row: unknown, index: number): Record<strin
         ? typeof value === 'string' && value !== ''
         : kind === 'string?'
           ? value === undefined || value === null || typeof value === 'string'
-          : kind === 'number'
-            ? typeof value === 'number' && Number.isFinite(value)
-            : Array.isArray(value) && value.every((v) => typeof v === 'string');
+          : kind === 'boolean?'
+            ? value === undefined || value === null || typeof value === 'boolean'
+            : kind === 'number'
+              ? typeof value === 'number' && Number.isFinite(value)
+              : Array.isArray(value) && value.every((v) => typeof v === 'string');
     if (!fine) throw new Problem('bad_row', `${where}.${field}`);
-    if (kind === 'string?' && value === undefined) out[field] = null;
+    if ((kind === 'string?' || kind === 'boolean?') && value === undefined) out[field] = null;
   }
   return out;
 }
@@ -261,6 +277,11 @@ function validate(data: unknown, maxSchema: number): Backup {
     if (tokens.has(reader.card_token)) throw new Problem('duplicate', 'card_token');
     tokens.add(reader.card_token);
   }
+  // Reads from before checked reads have no status (null: confirmed).
+  tables.read_events.forEach((event, i) => {
+    if (![null, 'self', 'help'].includes(event.how as string | null)) throw new Problem('bad_row', `read_events[${i}].how`);
+    if (![null, 'pending', 'confirmed'].includes(event.status as string | null)) throw new Problem('bad_row', `read_events[${i}].status`);
+  });
   // Backups from before reader kinds have none (null: a child).
   tables.readers.forEach((reader, i) => {
     if (reader.kind !== null && reader.kind !== 'child' && reader.kind !== 'grown_up') throw new Problem('bad_row', `readers[${i}].kind`);

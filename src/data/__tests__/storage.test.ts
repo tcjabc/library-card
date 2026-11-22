@@ -69,7 +69,7 @@ describe('coverage', () => {
       'addLibraryCard', 'getLibraryCard', 'listLibraryCards', 'listHouseholdLibraryCards', 'updateLibraryCard',
       'deleteLibraryCard', 'copyLibraryCardToReaders',
       // reads
-      'markRead', 'undoLatestRead', 'clearReads', 'restoreReadEvent', 'getReadSummary', 'listReadSummaries', 'listReadEvents',
+      'markRead', 'undoLatestRead', 'clearReads', 'restoreReadEvent', 'confirmRead', 'rejectRead', 'listPendingReads', 'getReadSummary', 'listReadSummaries', 'listReadEvents',
       'countReadsSince', 'countHouseholdReads', 'listHouseholdReadSummaries',
       // journeys
       'startJourney', 'getActiveJourney', 'listJourneyHistory', 'countCompletedJourneys', 'completeJourney', 'deleteReaderJourney',

@@ -90,17 +90,19 @@ a newer one sends. Known fields must have the right type and size or the op is s
 | Table | Local id | Fields (required in bold) |
 | --- | --- | --- |
 | `households` | `main` | **name** (text ≤ 200), parent_pin_hash (text ≤ 300; never sent while unset), time_zone (text ≤ 64; never sent while unset) |
-| `readers` | id | **display_name** (≤ 200), kind (`child` or `grown_up`; missing or null = child), **avatar** (≤ 32), **card_token** (≤ 200), active_journey_id (id or null) |
+| `readers` | id | **display_name** (≤ 200), kind (`child` or `grown_up`; missing or null = child), needs_check (true/false; missing = true for a child), **avatar** (≤ 32), **card_token** (≤ 200), active_journey_id (id or null) |
 | `books` | ISBN-13 or `noisbn-<id>` | **title** (≤ 1000), **authors** (≤ 50 texts of ≤ 300), cover_url (≤ 4096 or null), **source** (≤ 32) |
 | `home_items` | book key | **isbn** (book key), **added_at** (timestamp) |
 | `libraries` | id | **name** (≤ 200), search_url_template, homepage_url (≤ 4096 or null), **default_loan_days** (1–3650), sticker_prefix (≤ 64 or null) |
 | `library_cards` | id | **reader_id**, library_id (id or null), library_name (≤ 300 or null), **value** (≤ 200), **format** (`code_128`, `code_39`, `codabar`, `itf` or `ean_13`), label (≤ 100 or null), **created_at** |
 | `loans` | id | **reader_id**, **isbn**, library_id, library_name (≤ 300), sticker_barcode (≤ 200), **borrowed_at**, due_date (YYYY-MM-DD or null), returned_at, **renew_count** (0–100,000) |
-| `read_events` | id | **reader_id**, **isbn**, **read_at** |
+| `read_events` | id | **reader_id**, **isbn**, **read_at**, how (`self` or `help`), status (`pending` or `confirmed`; missing = confirmed), confirmed_at, confirmed_by (a grown-up reader's id or `pin`) |
 | `reader_journeys` | id | **reader_id**, **journey_id** (≤ 64), **started_at**, completed_at, abandoned_at |
 
 Ids are 1–40 characters of letters, digits, `-` and `_`. `read_summaries` are derived from
-`read_events` on each device and never sent. Cover photo bytes travel separately, as encrypted
+`read_events` on each device and never sent; they count confirmed reads only (a pending read waits
+for a grown-up and counts, from its read_at, once confirmed). Confirming is an ordinary field op
+(status, confirmed_at, confirmed_by); "Not yet" deletes the read (a tombstone). Cover photo bytes travel separately, as encrypted
 blobs (Photos, below); meta, the outbox, the photo outbox, the celebrated list and sync bookkeeping
 never sync.
 

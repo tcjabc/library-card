@@ -3,7 +3,17 @@ import { READ_TAP_GUARD_MS, type ReadEvent } from '../DataStore';
 import { addToSummary, isRepeatTap, latestEvent, summarize } from '../readRules';
 
 const at = (iso: string) => Date.parse(iso);
-const event = (id: string, read_at: string): ReadEvent => ({ id, household_id: 'main', reader_id: 'r', isbn: 'b', read_at });
+const event = (id: string, read_at: string, status: ReadEvent['status'] = 'confirmed'): ReadEvent => ({
+  id,
+  household_id: 'main',
+  reader_id: 'r',
+  isbn: 'b',
+  read_at,
+  how: null,
+  status,
+  confirmed_at: null,
+  confirmed_by: null,
+});
 
 describe('isRepeatTap (double-tap guard)', () => {
   const last = '2026-05-01T10:00:00.000Z';

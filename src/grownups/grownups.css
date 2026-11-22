@@ -200,6 +200,10 @@
   font-weight: var(--weight-bold);
 }
 
+.grownups__to-check {
+  margin-left: var(--space-2);
+}
+
 .grownups__check {
   display: inline-flex;
   align-items: center;

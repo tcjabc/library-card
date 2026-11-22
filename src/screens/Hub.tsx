@@ -13,6 +13,13 @@ export function Hub({ reader }: { reader: Reader }) {
   const countQuery = useCallback((s: DataStore) => s.countHouseholdReads(reader.household_id), [reader.household_id]);
   const { data: familyReads } = useDataQuery(countQuery, ['read_events']);
   const loansQuery = useCallback((s: DataStore) => s.listActiveLoans(reader.id), [reader.id]);
+  // A grown-up's space: children's reads waiting for a grown-up.
+  const grownUp = reader.kind === 'grown_up';
+  const toCheckQuery = useCallback(
+    (s: DataStore) => (grownUp ? s.listPendingReads(reader.household_id).then((list) => list.length) : Promise.resolve(0)),
+    [grownUp, reader.household_id],
+  );
+  const { data: toCheck = 0 } = useDataQuery(toCheckQuery, ['read_events']);
   const { data: loans } = useDataQuery(loansQuery, ['loans']);
   const today = useToday();
   const dueCount = (loans ?? []).filter((loan) => needsAttention(dueStatus(loan.due_date, today))).length;
@@ -33,6 +40,11 @@ export function Hub({ reader }: { reader: Reader }) {
         <h1 className="kid-title">{fmt(t.greeting, { name: reader.display_name })}</h1>
       </header>
 
+      {toCheck > 0 && (
+        <a className="btn btn--primary btn--big hub__to-check" href={href('/check')}>
+          <span aria-hidden="true">📝</span> {toCheck === 1 ? strings.reads.hubBannerOne : fmt(strings.reads.hubBanner, { count: toCheck })}
+        </a>
+      )}
       <nav className="tile-grid" aria-label={t.navLabel}>
         <a className="tile tile--shelf" href={href('/shelf')}>
           <span className="tile__emoji" aria-hidden="true">📚</span>

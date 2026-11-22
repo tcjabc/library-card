@@ -1,5 +1,13 @@
 import { READ_TAP_GUARD_MS, type ReadEvent, type ReadSummary } from './DataStore';
 
+/** Only confirmed reads count. Events from before the check (no status) are confirmed. */
+export function isConfirmedRead(event: { status?: unknown }): boolean {
+  return event.status !== 'pending';
+}
+
+/** What a summary is built from: a read event, possibly from before reads had a status. */
+export type SummarySource = Pick<ReadEvent, 'household_id' | 'reader_id' | 'isbn' | 'read_at'> & { status?: string | null };
+
 /**
  * Pure rules for read events, shared by every adapter (and unit tested on
  * their own): the double-tap guard, which event is "latest", and how a
@@ -27,7 +35,7 @@ export function latestEvent(events: readonly ReadEvent[]): ReadEvent | null {
 }
 
 /** A summary after adding one event (a new summary when there was none). */
-export function addToSummary(summary: ReadSummary | null, event: ReadEvent): ReadSummary {
+export function addToSummary(summary: ReadSummary | null, event: SummarySource): ReadSummary {
   if (!summary) {
     return {
       reader_id: event.reader_id,
@@ -46,9 +54,9 @@ export function addToSummary(summary: ReadSummary | null, event: ReadEvent): Rea
   };
 }
 
-/** The summary for one reader+book from all its events, or null when there are none. */
-export function summarize(events: readonly ReadEvent[]): ReadSummary | null {
+/** The summary for one reader+book from its CONFIRMED events, or null when there are none. */
+export function summarize(events: readonly SummarySource[]): ReadSummary | null {
   let summary: ReadSummary | null = null;
-  for (const event of events) summary = addToSummary(summary, event);
+  for (const event of events) if (isConfirmedRead(event)) summary = addToSummary(summary, event);
   return summary;
 }

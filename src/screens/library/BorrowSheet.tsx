@@ -47,7 +47,8 @@ export function BorrowSheet({ store, reader, today, onClose }: BorrowSheetProps)
   const librariesQuery = useCallback((s: DataStore) => s.listLibraries(reader.household_id), [reader.household_id]);
   const { data: libraries = [] } = useDataQuery(librariesQuery, ['libraries']);
 
-  const { read } = useReadAction(store, reader);
+  // The read sheet (how, and who checks it) closes this sheet once the read is recorded.
+  const { read, sheet, waiting } = useReadAction(store, reader, { onRecorded: onClose });
 
   const onBook = useCallback(
     async (book: Book) => {
@@ -114,12 +115,13 @@ export function BorrowSheet({ store, reader, today, onClose }: BorrowSheetProps)
           <ReadButton
             title={step.book.title}
             count={step.readCount}
+            waiting={waiting.has(step.book.isbn)}
             onRead={(e) => {
               // The read is for the reader using the app, whoever borrowed the book.
               read(step.book.isbn, step.book.title, step.readCount > 0, e);
-              onClose();
             }}
           />
+          {sheet}
           <button type="button" className="btn btn--big" onClick={() => setStep({ kind: 'sticker', book: step.book })}>
             <span aria-hidden="true">📚</span> {t.borrowToo}
           </button>

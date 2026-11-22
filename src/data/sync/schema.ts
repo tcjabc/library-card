@@ -35,7 +35,8 @@ type Kind =
   | { type: 'timestamp' }
   | { type: 'date' }
   | { type: 'int'; min: number; max: number }
-  | { type: 'texts'; maxItems: number; max: number };
+  | { type: 'texts'; maxItems: number; max: number }
+  | { type: 'bool' };
 
 interface FieldSpec {
   kind: Kind;
@@ -84,6 +85,8 @@ export const SCHEMA: Record<SyncedTable, TableSpec> = {
       display_name: text(200, REQUIRED),
       // "child" or "grown_up"; missing (older devices and records) reads as a child.
       kind: text(16, NULLABLE, /^(?:child|grown_up)$/),
+      // A child's reads wait for a grown-up; missing reads as true for a child.
+      needs_check: { kind: { type: 'bool' }, nullable: true },
       avatar: text(32, REQUIRED),
       // Any non-empty text: older data and tests have short tokens, and the local adapter accepts them.
       card_token: text(200, REQUIRED),
@@ -159,7 +162,17 @@ export const SCHEMA: Record<SyncedTable, TableSpec> = {
     household: true,
     localId: 'id',
     parentReader: 'reader_id',
-    fields: { reader_id: id(REQUIRED), isbn: bookKey(REQUIRED), read_at: timestamp(REQUIRED) },
+    fields: {
+      reader_id: id(REQUIRED),
+      isbn: bookKey(REQUIRED),
+      read_at: timestamp(REQUIRED),
+      how: text(8, NULLABLE, /^(?:self|help)$/),
+      // Missing (older devices and records) reads as "confirmed": only "pending" waits.
+      status: text(16, NULLABLE, /^(?:pending|confirmed)$/),
+      confirmed_at: timestamp(NULLABLE),
+      // A grown-up reader's id, or "pin".
+      confirmed_by: text(64, NULLABLE, /^[A-Za-z0-9_-]{1,40}$/),
+    },
   },
   reader_journeys: {
     key: 'id',
@@ -239,6 +252,8 @@ function fits(kind: Kind, v: unknown): boolean {
       return typeof v === 'number' && Number.isInteger(v) && v >= kind.min && v <= kind.max;
     case 'texts':
       return Array.isArray(v) && v.length <= kind.maxItems && v.every((x) => typeof x === 'string' && x.length <= kind.max);
+    case 'bool':
+      return typeof v === 'boolean';
   }
 }
 
