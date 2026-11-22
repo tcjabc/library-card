@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useId, useRef, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { earnedTrophies, ensureTrophyList, markTrophyCelebrated, useTrophyList } from '../../collections/trophies';
-import { useDataQuery, type DataStore } from '../../data';
+import { noteViewId, useDataQuery, type DataStore, type ParentNote, type Reader } from '../../data';
+import { dueNote, firstReadMoments, journeyMoments } from '../../notes/due';
+import { isGuarded, markShown, pruneGuard } from '../../notes/guard';
 import { isGrownUpPath } from '../../grownups/session';
 import { ensureCelebrationList, markCelebrated, nextCelebration, useCelebrationList } from '../../journeys/celebration';
 import { getJourney } from '../../journeys/journeys';
@@ -21,8 +23,20 @@ const BURST_EVERY_MS = 450;
  * this device. Not shown in the grown-up area.
  *
  * With no journey to celebrate, a collection trophy ("Whole set read!") the reader holds and this
- * device hasn't celebrated (src/collections/trophies.ts) shows the same way, once.
+ * device hasn't celebrated (src/collections/trophies.ts) shows the same way, once. After those, a
+ * child's due parent note (src/notes/due.ts), one at a time.
  */
+
+/** A child's due note, with its author; and the notes they have seen (for the guard). */
+async function loadDueNote(store: DataStore, readerId: string) {
+  const reader = await store.getReader(readerId);
+  if (!reader || reader.kind !== 'child') return null;
+  const [notes, events, history] = await Promise.all([store.listNotesForReader(readerId), store.listReadEvents(readerId), store.listJourneyHistory(readerId)]);
+  const recorded = notes.filter((n) => n.seen_at).map((n) => noteViewId(n.note.id, readerId));
+  const due = dueNote(notes, { after_book: firstReadMoments(events), journey_done: journeyMoments(history) });
+  const author = due?.note.author_id ? await store.getReader(due.note.author_id) : null;
+  return { note: due?.note ?? null, author, recorded };
+}
 export function CelebrationHost() {
   const readerId = useActiveReaderId();
   const path = useHashPath();
@@ -42,12 +56,106 @@ export function CelebrationHost() {
     if (store && trophies === null) void ensureTrophyList(store).catch((error: unknown) => console.error('[celebration] trophies', error));
   }, [store, trophies]);
 
+  const noteQuery = useCallback((s: DataStore) => (readerId ? loadDueNote(s, readerId) : Promise.resolve(null)), [readerId]);
+  const { data: noteData } = useDataQuery(noteQuery, ['parent_notes', 'note_views', 'read_events', 'reader_journeys', 'readers']);
+  // Thanked here just now: hidden at once, before its record is written.
+  const [thanked, setThanked] = useState<string | null>(null);
+  const recorded = noteData?.recorded.join('|');
+  useEffect(() => {
+    if (recorded !== undefined) pruneGuard(new Set(recorded ? recorded.split('|') : []));
+  }, [recorded]);
+
   if (!readerId || path === '/' || isGrownUpPath(path) || paused) return null;
   const due = celebrated && history ? nextCelebration(history, celebrated) : null;
   if (due) return <Celebration key={due.id} readerJourneyId={due.id} journeyId={due.journey_id} />;
   const trophy = trophies && earned ? earned.find((t) => !trophies.has(t.key)) : undefined;
   if (trophy) return <TrophyCelebration key={trophy.key} trophyKey={trophy.key} title={trophy.title} />;
+  const note = noteData?.note;
+  const key = note ? noteViewId(note.id, readerId) : null;
+  if (note && key && key !== thanked && !isGuarded(key)) {
+    return (
+      <NoteCard
+        key={key}
+        note={note}
+        author={noteData.author}
+        onDone={() => {
+          markShown(key);
+          setThanked(key);
+          if (store) void store.markNoteSeen(note.id, readerId).catch((error: unknown) => console.error('[notes] seen', error));
+        }}
+      />
+    );
+  }
   return null;
+}
+
+const canSpeak = () => typeof window !== 'undefined' && 'speechSynthesis' in window && typeof SpeechSynthesisUtterance === 'function';
+
+/**
+ * A parent note, full screen: the sticker, the note in large type, who it's from, "Read it to me"
+ * (the browser's speech, an English voice; hidden where there is none) and "Thank you!", which
+ * closes it and records that the child saw it.
+ */
+function NoteCard({ note, author, onDone }: { note: ParentNote; author: Reader | null; onDone: () => void }) {
+  const t = strings.notes;
+  const titleId = useId();
+  const button = useRef<HTMLButtonElement>(null);
+  const [speech] = useState(canSpeak);
+
+  useEffect(() => {
+    button.current?.focus();
+    return () => {
+      if (canSpeak()) window.speechSynthesis.cancel();
+    };
+  }, []);
+
+  const readAloud = () => {
+    const synth = window.speechSynthesis;
+    synth.cancel();
+    const utterance = new SpeechSynthesisUtterance(note.text);
+    utterance.lang = 'en';
+    const voice = synth.getVoices().find((v) => v.lang.toLowerCase().startsWith('en'));
+    if (voice) utterance.voice = voice;
+    synth.speak(utterance);
+  };
+
+  return (
+    <CelebrationDialog labelledBy={titleId} onDone={onDone} className="note-card">
+      <div className="celebration__body note-card__body">
+        <h2 id={titleId} className="visually-hidden">
+          {t.cardLabel}
+        </h2>
+        {note.sticker && (
+          <span className="note-card__sticker" aria-hidden="true">
+            {note.sticker}
+          </span>
+        )}
+        <p className="note-card__text">{note.text}</p>
+        <p className="note-card__from">
+          {author ? (
+            <>
+              <span className="avatar" aria-hidden="true">
+                {author.avatar}
+              </span>{' '}
+              {fmt(t.from, { name: author.display_name })}
+            </>
+          ) : (
+            t.fromGrownUps
+          )}
+        </p>
+        <div className="note-card__actions">
+          {speech && (
+            <button type="button" className="btn btn--big" onClick={readAloud}>
+              <span aria-hidden="true">🔊</span> {t.readToMe}
+            </button>
+          )}
+          <button ref={button} type="button" className="btn btn--big btn--accent" onClick={onDone}>
+            {t.thankYou}
+          </button>
+        </div>
+      </div>
+    </CelebrationDialog>
+  );
 }
 
 /** "🏆 Whole set read!": confetti (a message only with reduced motion), once per reader and set. */
@@ -139,7 +247,19 @@ function Celebration({ readerJourneyId, journeyId }: { readerJourneyId: string; 
  * sheet stays open while the last book's read is confirmed) and the page behind stays still.
  * Escape counts as "done".
  */
-function CelebrationDialog({ labelledBy, style, onDone, children }: { labelledBy: string; style?: CSSProperties; onDone: () => void; children: ReactNode }) {
+function CelebrationDialog({
+  labelledBy,
+  style,
+  onDone,
+  className,
+  children,
+}: {
+  labelledBy: string;
+  style?: CSSProperties;
+  onDone: () => void;
+  className?: string;
+  children: ReactNode;
+}) {
   const ref = useRef<HTMLDialogElement>(null);
   const onDoneRef = useRef(onDone);
   useEffect(() => {
@@ -163,7 +283,7 @@ function CelebrationDialog({ labelledBy, style, onDone, children }: { labelledBy
     };
   }, []);
   return (
-    <dialog ref={ref} className="celebration" aria-labelledby={labelledBy} style={style}>
+    <dialog ref={ref} className={`celebration${className ? ` ${className}` : ''}`} aria-labelledby={labelledBy} style={style}>
       {children}
     </dialog>
   );

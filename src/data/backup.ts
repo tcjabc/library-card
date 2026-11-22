@@ -2,7 +2,12 @@ import {
   HOUSEHOLD_ID,
   MAX_COLLECTION_TITLE,
   MAX_EXPECTED_COUNT,
+  MAX_NOTE_STICKER,
+  MAX_NOTE_TEXT,
   MAX_VOLUME,
+  NOTE_EVERYONE,
+  NOTE_TRIGGERS,
+  noteViewId,
   type Book,
   type CalendarDate,
   type Collection,
@@ -11,6 +16,8 @@ import {
   type Library,
   type LibraryCard,
   type Loan,
+  type NoteView,
+  type ParentNote,
   type ReadEvent,
   type Reader,
   type ReaderJourney,
@@ -26,14 +33,15 @@ import { checkLibraryCardBarcode } from './libraryCardRules';
  *   {
  *     format: "library-card-backup", version: 1,
  *     schema: <the IndexedDB version that wrote it>, exported_at,
- *     tables: { households, readers, books, home_items, libraries, library_cards, collections, loans,
- *               read_events, reader_journeys },
+ *     tables: { households, readers, books, home_items, libraries, library_cards, collections,
+ *               parent_notes, note_views, loans, read_events, reader_journeys },
  *     covers: { "cover:<sha256>": "<base64>" }
  *   }
  *
  * read_summaries are derived from read_events, so they are rebuilt on import
- * rather than exported. library_cards came later (schema 6) and collections later still (schema 8):
- * a backup without one restores with none (and books without collection_id / volume are in none).
+ * rather than exported. library_cards came later (schema 6), collections (schema 8) and parent notes
+ * with their views (schema 9) later still: a backup without one restores with none (and books
+ * without collection_id / volume are in none).
  */
 
 export const BACKUP_FORMAT = 'library-card-backup';
@@ -47,13 +55,15 @@ export const BACKUP_TABLES = [
   'libraries',
   'library_cards',
   'collections',
+  'parent_notes',
+  'note_views',
   'loans',
   'read_events',
   'reader_journeys',
 ] as const;
 
 /** Tables added after the first backups: a file without one restores it empty. */
-const OPTIONAL_TABLES: readonly BackupTable[] = ['library_cards', 'collections'];
+const OPTIONAL_TABLES: readonly BackupTable[] = ['library_cards', 'collections', 'parent_notes', 'note_views'];
 export type BackupTable = (typeof BACKUP_TABLES)[number];
 
 /** A reader as stored: files from before reader kinds and checks have neither (a child who needs the check). */
@@ -70,6 +80,8 @@ export interface BackupTables {
   libraries: Library[];
   library_cards: LibraryCard[];
   collections: Collection[];
+  parent_notes: ParentNote[];
+  note_views: NoteView[];
   loans: Loan[];
   read_events: BackupReadEvent[];
   reader_journeys: ReaderJourney[];
@@ -90,6 +102,7 @@ export interface BackupSummary {
   books: number;
   homeBooks: number;
   collections: number;
+  notes: number;
   loans: number;
   reads: number;
   covers: number;
@@ -144,6 +157,18 @@ const FIELDS: Record<BackupTable, Record<string, FieldKind>> = {
     isbn: 'string?',
     expected_count: 'number?',
   },
+  parent_notes: {
+    id: 'string',
+    household_id: 'string',
+    author_id: 'string?',
+    target: 'string',
+    trigger: 'string',
+    text: 'string',
+    sticker: 'string?',
+    position: 'number',
+    created_at: 'string',
+  },
+  note_views: { id: 'string', household_id: 'string', note_id: 'string', reader_id: 'string', seen_at: 'string' },
   home_items: { id: 'string', household_id: 'string', isbn: 'string', added_at: 'string' },
   libraries: {
     id: 'string',
@@ -208,6 +233,8 @@ const KEY_FIELD: Record<BackupTable, string> = {
   libraries: 'id',
   library_cards: 'id',
   collections: 'id',
+  parent_notes: 'id',
+  note_views: 'id',
   loans: 'id',
   read_events: 'id',
   reader_journeys: 'id',
@@ -337,6 +364,21 @@ function validate(data: unknown, maxSchema: number): Backup {
   tables.books.forEach((row, i) => {
     if (!wholeIn(row.volume, MAX_VOLUME)) throw new Problem('bad_row', `books[${i}].volume`);
   });
+  // Notes: a known trigger, 1–500 characters, a sticker of at most 32; for everyone or a reader in
+  // the file. A note's grown-up may be gone (it then reads "From your grown-ups").
+  tables.parent_notes.forEach((row, i) => {
+    if (!(NOTE_TRIGGERS as readonly unknown[]).includes(row.trigger)) throw new Problem('bad_row', `parent_notes[${i}].trigger`);
+    if ((row.text as string).trim().length > MAX_NOTE_TEXT) throw new Problem('bad_row', `parent_notes[${i}].text`);
+    if (row.sticker !== null && (row.sticker as string).length > MAX_NOTE_STICKER) throw new Problem('bad_row', `parent_notes[${i}].sticker`);
+    if (row.target !== NOTE_EVERYONE && !readerIds.has(row.target)) throw new Problem('bad_reference', `parent_notes[${i}].target`);
+  });
+  // A note view belongs to a reader and a note in the file, and its id is noteViewId(note, reader).
+  const noteIds = new Set(tables.parent_notes.map((n) => n.id));
+  tables.note_views.forEach((row, i) => {
+    if (!readerIds.has(row.reader_id)) throw new Problem('bad_reference', `note_views[${i}].reader_id`);
+    if (!noteIds.has(row.note_id)) throw new Problem('bad_reference', `note_views[${i}].note_id`);
+    if (row.id !== noteViewId(row.note_id as string, row.reader_id as string)) throw new Problem('bad_row', `note_views[${i}].id`);
+  });
 
   const covers: Record<string, string> = {};
   for (const [ref, value] of Object.entries(data.covers)) {
@@ -383,6 +425,7 @@ export function summariseBackup(backup: Backup): BackupSummary {
     books: tables.books.length,
     homeBooks: tables.home_items.length,
     collections: tables.collections.length,
+    notes: tables.parent_notes.length,
     loans: tables.loans.length,
     reads: tables.read_events.length,
     covers: Object.keys(backup.covers).length,

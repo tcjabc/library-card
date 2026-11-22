@@ -33,6 +33,11 @@ function sample(): Backup {
         { isbn: 'noisbn-1', title: 'None', authors: [], cover_url: null, source: 'manual', collection_id: 'box-9780000000026', volume: 2 },
       ],
       collections: [{ id: 'box-9780000000026', household_id: 'main', title: 'The Box', cover_url: `cover:${HASH}`, isbn: '9780000000026', expected_count: 6 }],
+      parent_notes: [
+        { id: 'n1', household_id: 'main', author_id: 'r1', target: 'everyone', trigger: 'after_book', text: 'Well done!', sticker: '🦊', position: 1, created_at: '2026-01-01T00:00:00.000Z' },
+        { id: 'n2', household_id: 'main', author_id: null, target: 'r2', trigger: 'journey_done', text: 'You did it', sticker: null, position: 2, created_at: '2026-01-02T00:00:00.000Z' },
+      ],
+      note_views: [{ id: 'n1:r2', household_id: 'main', note_id: 'n1', reader_id: 'r2', seen_at: '2026-01-05T00:00:00.000Z' }],
       home_items: [{ id: '9780000000002', household_id: 'main', isbn: '9780000000002', added_at: '2026-01-01T00:00:00.000Z' }],
       libraries: [
         {
@@ -201,7 +206,36 @@ describe('parseBackupText', () => {
 
 describe('summariseBackup', () => {
   it('counts readers, books, home books, loans, reads and covers', () => {
-    expect(summariseBackup(sample())).toEqual({ readers: 2, books: 3, homeBooks: 1, collections: 1, loans: 1, reads: 3, covers: 1 });
+    expect(summariseBackup(sample())).toEqual({ readers: 2, books: 3, homeBooks: 1, collections: 1, notes: 2, loans: 1, reads: 3, covers: 1 });
+  });
+});
+
+describe('parent notes in backups', () => {
+  it('an older backup (no parent_notes / note_views tables) restores with none', () => {
+    const result = validateBackup(
+      broken((d) => {
+        delete d.tables.parent_notes;
+        delete d.tables.note_views;
+      }),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect([result.backup.tables.parent_notes, result.backup.tables.note_views]).toEqual([[], []]);
+  });
+
+  it('refuses a bad trigger, text, sticker, target or view', () => {
+    const problem = (edit: Parameters<typeof broken>[0]) => {
+      const r = validateBackup(broken(edit));
+      return r.ok ? 'ok' : `${r.problem} ${r.detail ?? ''}`.trim();
+    };
+    expect(problem((d) => (d.tables.parent_notes[0].trigger = 'sometimes'))).toBe('bad_row parent_notes[0].trigger');
+    expect(problem((d) => (d.tables.parent_notes[0].text = 'x'.repeat(501)))).toBe('bad_row parent_notes[0].text');
+    expect(problem((d) => (d.tables.parent_notes[0].sticker = 'x'.repeat(33)))).toBe('bad_row parent_notes[0].sticker');
+    expect(problem((d) => (d.tables.parent_notes[1].target = 'ghost'))).toBe('bad_reference parent_notes[1].target');
+    expect(problem((d) => (d.tables.note_views[0].reader_id = 'ghost'))).toBe('bad_reference note_views[0].reader_id');
+    expect(problem((d) => (d.tables.note_views[0].note_id = 'gone'))).toBe('bad_reference note_views[0].note_id');
+    expect(problem((d) => (d.tables.note_views[0].id = 'n1:r1'))).toBe('bad_row note_views[0].id');
+    // A note's grown-up may be gone: it reads "From your grown-ups".
+    expect(problem((d) => (d.tables.parent_notes[0].author_id = 'gone'))).toBe('ok');
   });
 });
 

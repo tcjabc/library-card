@@ -83,9 +83,9 @@ describe('the remembered Grid / List choice', () => {
   };
 
   it('each grown-up tab has its own default: Books Grid, the others List', () => {
-    expect(GROWN_UP_VIEW_DEFAULTS).toEqual({ books: 'grid', readers: 'list', libraries: 'list', loans: 'list', cards: 'list' });
+    expect(GROWN_UP_VIEW_DEFAULTS).toEqual({ books: 'grid', readers: 'list', libraries: 'list', loans: 'list', cards: 'list', notes: 'list' });
     const keys = Object.keys(GROWN_UP_VIEW_DEFAULTS).map((tab) => grownUpViewKey(tab as keyof typeof GROWN_UP_VIEW_DEFAULTS));
-    expect(new Set(keys).size).toBe(5);
+    expect(new Set(keys).size).toBe(6);
     // Under the library-card: prefix, so "Reset this device" clears them.
     expect(keys.every(isAppStorageKey)).toBe(true);
   });

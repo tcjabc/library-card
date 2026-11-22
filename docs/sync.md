@@ -96,6 +96,8 @@ a newer one sends. Known fields must have the right type and size or the op is s
 | `libraries` | id | **name** (≤ 200), search_url_template, homepage_url (≤ 4096 or null), **default_loan_days** (1–3650), sticker_prefix (≤ 64 or null) |
 | `library_cards` | id | **reader_id**, library_id (id or null), library_name (≤ 300 or null), **value** (≤ 200), **format** (`code_128`, `code_39`, `codabar`, `itf` or `ean_13`), label (≤ 100 or null), **created_at** |
 | `collections` | `box-<ISBN-13>` or id | **title** (≤ 200), cover_url (≤ 4096 or null), isbn (13 digits or null), expected_count (1–500 or null) |
+| `parent_notes` | id | author_id (a grown-up reader's id or null), **target** (`everyone` or a reader id), **trigger** (`after_book` or `journey_done`), **text** (≤ 500), sticker (≤ 32 or null), **position** (whole number), **created_at** |
+| `note_views` | `<note>:<reader>` | **note_id**, **reader_id**, **seen_at** |
 | `loans` | id | **reader_id**, **isbn**, library_id, library_name (≤ 300), sticker_barcode (≤ 200), **borrowed_at**, due_date (YYYY-MM-DD or null), returned_at, **renew_count** (0–100,000) |
 | `read_events` | id | **reader_id**, **isbn**, **read_at**, how (`self` or `help`), status (`pending` or `confirmed`; missing = confirmed), confirmed_at, confirmed_by (a grown-up reader's id or `pin`) |
 | `reader_journeys` | id | **reader_id**, **journey_id** (≤ 64), **started_at**, completed_at, abandoned_at |
@@ -115,6 +117,15 @@ later title wins). Deleting a collection is a tombstone plus a field op on each 
 `collection_id` no collection answers to, and the screens show it as a loose book. Progress and the
 trophy are worked out from read summaries on each device, never sent. Versions before collections
 skip `collections` ops as an unknown table and keep the books' new fields as unknown fields.
+
+**Parent notes** are ordinary records. A child seeing one is a `note_views` record whose id is
+derived from the note and the reader (`noteViewId`: each UUID written in 22 base64url characters,
+so `note_views:<id>` stays within sync's 64-character record ids): two devices that both show the
+note write the same record, never a count. "Show again" deletes it. A note view is a reader's
+child (hidden while its reader is, gone with them); deleting a reader also deletes the notes
+written only for them and every view of those. Which note is due is worked out on each device from
+read events, journeys and the views (src/notes/due.ts); a per-device guard only covers the moment
+between "Thank you!" and the view being written.
 
 ## Visibility
 

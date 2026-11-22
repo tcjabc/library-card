@@ -13,6 +13,7 @@ import {
 } from '../../data';
 import { getJourney } from '../../journeys/journeys';
 import { journeyProgress } from '../../journeys/progress';
+import { NotesSection } from '../../notes/NotesSection';
 import { ToCheckList } from '../../reads/ToCheckList';
 import { AvatarPicker } from '../../readers/AvatarPicker';
 import { DEFAULT_AVATAR } from '../../readers/avatars';
@@ -212,6 +213,8 @@ export function ReadersTab({ store, household }: TabProps) {
         )}
       </section>
 
+      <NotesSection store={store} household={household} />
+
       {dialog?.kind === 'edit' && (
         <ReaderForm key={dialog.reader?.id ?? 'new'} store={store} household={household} reader={dialog.reader} onClose={() => setDialog(null)} />
       )}
@@ -279,6 +282,7 @@ export function ReadersTab({ store, household }: TabProps) {
           <p>{fmt(t.deleteBody, { name: dialog.reader.display_name })}</p>
           <ul className="grownups__counts">
             <li>{fmt(t.deleteReads, { reads: dialog.preview.readEvents, books: dialog.preview.booksRead })}</li>
+            {dialog.preview.notes > 0 && <li>{fmt(t.deleteNotes, { count: dialog.preview.notes })}</li>}
             <li>{fmt(t.deleteJourneys, { count: dialog.preview.journeys })}</li>
             <li>{fmt(t.deleteLoans, { count: dialog.preview.returnedLoans })}</li>
             {dialog.preview.libraryCards > 0 && <li>{fmt(t.deleteLibraryCards, { count: dialog.preview.libraryCards })}</li>}

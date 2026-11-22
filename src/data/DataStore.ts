@@ -288,6 +288,63 @@ export type LoanPatch = Partial<
   >
 >;
 
+/** When a parent note shows: after the reader's next new book, or when they finish a journey. */
+export const NOTE_TRIGGERS = ['after_book', 'journey_done'] as const;
+export type NoteTrigger = (typeof NOTE_TRIGGERS)[number];
+/** A note's target for every child. */
+export const NOTE_EVERYONE = 'everyone';
+export const MAX_NOTE_TEXT = 500;
+export const MAX_NOTE_STICKER = 32;
+
+/** A short note from a grown-up that a child sees at a moment (src/notes). */
+export interface ParentNote {
+  id: Id;
+  household_id: Id;
+  /** The grown-up reader who wrote it, or null when written in Grown-ups ("From your grown-ups"). */
+  author_id: Id | null;
+  /** A child's reader id, or NOTE_EVERYONE. */
+  target: Id;
+  trigger: NoteTrigger;
+  /** 1–500 characters. */
+  text: string;
+  /** One emoji, or null. */
+  sticker: string | null;
+  /** Order among the notes (lowest first). */
+  position: number;
+  created_at: Timestamp;
+}
+
+/** A child saw a note ("Thank you!"). One per note and reader, never a counter; deleting it shows the note again. */
+export interface NoteView {
+  /** noteViewId(note_id, reader_id): the same on every device. */
+  id: string;
+  household_id: Id;
+  note_id: Id;
+  reader_id: Id;
+  seen_at: Timestamp;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A UUID in 22 characters (its 16 bytes as base64url); any other id as it is. */
+function compactId(id: Id): string {
+  if (!UUID.test(id)) return id;
+  const hex = id.replace(/-/g, '');
+  let binary = '';
+  for (let i = 0; i < 32; i += 2) binary += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16));
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/**
+ * A note view's id, the same on every device: "<note>:<reader>", each UUID written in 22
+ * characters so the synced record id ("note_views:<id>") stays within sync's 64-character limit.
+ */
+export const noteViewId = (noteId: Id, readerId: Id) => `${compactId(noteId)}:${compactId(readerId)}`;
+
+export type NewParentNote = Pick<ParentNote, 'household_id' | 'target' | 'trigger' | 'text'> &
+  Partial<Pick<ParentNote, 'author_id' | 'sticker' | 'position'>>;
+export type ParentNotePatch = Partial<Pick<ParentNote, 'target' | 'trigger' | 'text' | 'sticker' | 'author_id'>>;
+
 export type NewCollection = Pick<Collection, 'household_id' | 'title'> & Partial<Pick<Collection, 'cover_url' | 'isbn' | 'expected_count'>>;
 export type CollectionPatch = Partial<Pick<Collection, 'title' | 'cover_url' | 'isbn' | 'expected_count'>>;
 
@@ -313,6 +370,8 @@ export interface DeleteReaderPreview {
   activeLoans: number;
   /** Library card barcodes (deleted with the reader). */
   libraryCards: number;
+  /** Parent notes written only for this reader (deleted with them; their seen notes go too). */
+  notes: number;
 }
 
 /** Loan length when a library sets none, or a loan has no library. */
@@ -344,6 +403,8 @@ export type DataTable =
   | 'loans'
   | 'library_cards'
   | 'collections'
+  | 'parent_notes'
+  | 'note_views'
   /** Read events; read summaries change with them. */
   | 'read_events'
   | 'reader_journeys';
@@ -422,9 +483,9 @@ export interface DataStore {
   /** Issues a new card token. The old card stops working immediately. */
   rotateCardToken(readerId: Id): Promise<Reader>;
   /**
-   * Deletes the reader with their read events, read summaries, journeys and
-   * returned loans (one delete per row, one transaction). Rejects with
-   * "blocked" while the reader has loans not yet returned.
+   * Deletes the reader with their read events, read summaries, journeys, returned loans, library
+   * cards, the notes written only for them and every record of them seeing a note (one delete per
+   * row, one transaction). Rejects with "blocked" while the reader has loans not yet returned.
    */
   deleteReader(id: Id): Promise<void>;
   /** Counts what deleteReader() would remove, without deleting. "not_found" for an unknown reader. */
@@ -471,6 +532,30 @@ export interface DataStore {
   clearBookCollection(isbn: BookKey): Promise<Book>;
   /** The collection's books, by number (unnumbered last), then key. */
   listCollectionBooks(collectionId: Id): Promise<Book[]>;
+
+  // Parent notes --------------------------------------------------------------
+  /** Every note in the household, by position (then oldest first). */
+  listNotes(householdId: Id): Promise<ParentNote[]>;
+  /**
+   * Text trimmed (1–500), sticker one emoji (≤ 32 characters) or null, trigger one of
+   * NOTE_TRIGGERS, target NOTE_EVERYONE or a child ("invalid" / "not_found"), author_id null or a
+   * grown-up reader. position defaults to after the last note.
+   */
+  createNote(input: NewParentNote): Promise<ParentNote>;
+  /** Same checks as createNote. */
+  updateNote(id: Id, patch: ParentNotePatch): Promise<ParentNote>;
+  /** Deletes the note and every record of it being seen. */
+  deleteNote(id: Id): Promise<void>;
+  /** Puts these notes first, in this order (positions 1, 2, …); the rest keep their order after them. */
+  reorderNotes(householdId: Id, ids: Id[]): Promise<ParentNote[]>;
+  /** The notes a reader can get (for them or everyone), by position, with when they saw each (null: not yet). */
+  listNotesForReader(readerId: Id): Promise<{ note: ParentNote; seen_at: Timestamp | null }[]>;
+  /** Every "seen" record in the household. */
+  listNoteViews(householdId: Id): Promise<NoteView[]>;
+  /** The reader saw the note. Seen already: the first time is kept. "not_found" for an unknown note or reader. */
+  markNoteSeen(noteId: Id, readerId: Id, seenAt?: Timestamp): Promise<NoteView>;
+  /** "Show again": forgets that the reader saw the note. */
+  showAgain(noteId: Id, readerId: Id): Promise<void>;
 
   // Home library (one row per household + ISBN) ------------------------------
   /** Idempotent: adding an ISBN already in the household returns the existing item. */

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { HOUSEHOLD_ID } from '../../DataStore';
+import { HOUSEHOLD_ID, noteViewId } from '../../DataStore';
 import { rawAll } from '../../testing/fixtures';
 import { createSyncStore } from '../adapter';
 import type { SyncDataStore } from '../types';
@@ -15,7 +15,7 @@ import { formatStamp, type Op } from '../../../sync/vendor/sync-core.js';
 const ISBN_A = '9780000000002';
 const ISBN_B = '9780000000019';
 const T0 = Date.parse('2026-06-01T00:00:00.000Z');
-const VIEWS = ['households', 'readers', 'books', 'home_items', 'libraries', 'library_cards', 'collections', 'loans', 'read_events', 'reader_journeys', 'read_summaries'];
+const VIEWS = ['households', 'readers', 'books', 'home_items', 'libraries', 'library_cards', 'collections', 'parent_notes', 'note_views', 'loans', 'read_events', 'reader_journeys', 'read_summaries'];
 
 interface Device {
   store: SyncDataStore;
@@ -330,6 +330,43 @@ describe('sync adapter: two devices converge', () => {
     for (const d of [a, b]) {
       expect(await d.store.getCollection('box-9780000000033')).toBeNull();
       expect((await d.store.getBook(ISBN_A))?.title).toBe('Late member');
+    }
+    expect(await views(a)).toBe(await views(b));
+  });
+
+  it('parent notes: written on A shows on B; seen on B is seen on A (once, the same id); show again and deleting a reader reach both', async () => {
+    const { a, b, reader } = await household();
+    a.at = T0 + 5_000;
+    const note = await a.store.createNote({ household_id: HOUSEHOLD_ID, target: 'everyone', trigger: 'after_book', text: 'Well done!', sticker: '🦊' });
+    const forReader = await a.store.createNote({ household_id: HOUSEHOLD_ID, target: reader.id, trigger: 'journey_done', text: 'Just for you' });
+    await send(a, b);
+    expect((await b.store.listNotes(HOUSEHOLD_ID)).map((n) => n.text)).toEqual(['Well done!', 'Just for you']);
+
+    b.at = T0 + 10_000;
+    await b.store.markNoteSeen(note.id, reader.id);
+    // Seen on both at once (before either heard): still one record, the same id.
+    a.at = T0 + 11_000;
+    await a.store.markNoteSeen(note.id, reader.id);
+    await send(b, a);
+    await send(a, b);
+    for (const d of [a, b]) {
+      expect((await d.store.listNoteViews(HOUSEHOLD_ID)).map((v) => v.id)).toEqual([noteViewId(note.id, reader.id)]);
+      expect((await d.store.listNotesForReader(reader.id))[0].seen_at).not.toBeNull();
+    }
+    expect(await views(a)).toBe(await views(b));
+
+    a.at = T0 + 20_000;
+    await a.store.showAgain(note.id, reader.id);
+    await send(a, b);
+    expect((await b.store.listNotesForReader(reader.id))[0].seen_at).toBeNull();
+
+    b.at = T0 + 30_000;
+    await b.store.markNoteSeen(forReader.id, reader.id);
+    await b.store.deleteReader(reader.id);
+    await send(b, a);
+    for (const d of [a, b]) {
+      expect((await d.store.listNotes(HOUSEHOLD_ID)).map((n) => n.id)).toEqual([note.id]);
+      expect(await d.store.listNoteViews(HOUSEHOLD_ID)).toEqual([]);
     }
     expect(await views(a)).toBe(await views(b));
   });

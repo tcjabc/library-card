@@ -8,7 +8,8 @@ export const GROWN_UP_VIEW_DEFAULTS = {
   libraries: 'list',
   loans: 'list',
   cards: 'list',
-} as const satisfies Partial<Record<GrownUpTab, ViewChoice>>;
+  notes: 'list',
+} as const satisfies Partial<Record<GrownUpTab | 'notes', ViewChoice>>;
 
 export type GrownUpViewTab = keyof typeof GROWN_UP_VIEW_DEFAULTS;
 

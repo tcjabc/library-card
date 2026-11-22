@@ -62,6 +62,8 @@ describe('coverage', () => {
       // collections
       'createCollection', 'getCollection', 'listCollections', 'updateCollection', 'deleteCollection', 'setBookCollection',
       'clearBookCollection', 'listCollectionBooks',
+      // parent notes
+      'listNotes', 'createNote', 'updateNote', 'deleteNote', 'reorderNotes', 'listNotesForReader', 'listNoteViews', 'markNoteSeen', 'showAgain',
       // home
       'addHomeItem', 'getHomeItem', 'listHomeItems', 'removeHomeItem',
       // libraries and loans

@@ -1,4 +1,5 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
+import { NoteEditor } from '../notes/NoteEditor';
 import { useDataQuery, type DataStore, type Reader } from '../data';
 import { useToday } from '../lib/clock';
 import { dueStatus, needsAttention } from '../library/due';
@@ -24,6 +25,7 @@ export function Hub({ reader }: { reader: Reader }) {
   const today = useToday();
   const dueCount = (loans ?? []).filter((loan) => needsAttention(dueStatus(loan.due_date, today))).length;
   const { status, loading: journeyLoading, store } = useJourneyStatus(reader.id);
+  const [writing, setWriting] = useState(false);
   useCompletionCheckOnOpen(store, reader.id);
 
   const notMe = () => {
@@ -89,9 +91,15 @@ export function Hub({ reader }: { reader: Reader }) {
         </a>
       </nav>
 
+      {grownUp && (
+        <button type="button" className="btn btn--big" onClick={() => setWriting(true)}>
+          <span aria-hidden="true">✏️</span> {strings.notes.write}
+        </button>
+      )}
       <button type="button" className="btn btn--big btn--quiet hub__not-me" onClick={notMe}>
         {t.notMe}
       </button>
+      {writing && store && <NoteEditor store={store} householdId={reader.household_id} note={null} authorId={reader.id} onClose={() => setWriting(false)} />}
     </main>
   );
 }

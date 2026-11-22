@@ -171,6 +171,14 @@ img {
   min-width: 0;
 }
 
+/* Several lines (a note, quick-add titles). */
+.textarea {
+  min-height: calc(var(--tap-target) * 2);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  resize: vertical;
+}
+
 /* Grow to fill a row; in a column (.stack) the input keeps its own height. */
 .row > .input {
   flex: 1 1 10rem;
@@ -1232,6 +1240,15 @@ img {
 .updating-notice__icon {
   font-size: var(--text-emoji);
   line-height: 1;
+}
+
+/* Parent notes: the "no sticker" choice, the text counter. */
+.avatar--none {
+  color: var(--color-text-muted);
+}
+
+.note-editor__count {
+  text-align: right;
 }
 
 /* Sheet ------------------------------------------------------------------- */

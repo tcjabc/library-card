@@ -508,11 +508,38 @@
   text-align: center;
 }
 
-.textarea {
-  min-height: calc(var(--tap-target) * 2);
-  padding: var(--space-2) var(--space-4);
-  border-radius: var(--radius-md);
-  resize: vertical;
+/* Parent notes (Readers): each note with, per child, "Waiting" or "Seen <date>". */
+.note-row__body {
+  flex: 1 1 16rem;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.note-row__text {
+  font-weight: var(--weight-bold);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.note-status {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+}
+
+.note-status__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
 }
 
 /* Books ----------------------------------------------------------------------- */

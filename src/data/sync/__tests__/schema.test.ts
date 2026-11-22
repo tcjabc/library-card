@@ -20,8 +20,12 @@ const problem = (o: unknown) => {
 };
 
 describe('wire ids', () => {
-  it('are "<table>:<local id>" for the ten synced tables', () => {
-    expect(SYNCED_TABLES).toEqual(['households', 'readers', 'books', 'home_items', 'libraries', 'library_cards', 'collections', 'loans', 'read_events', 'reader_journeys']);
+  it('are "<table>:<local id>" for the twelve synced tables', () => {
+    expect(SYNCED_TABLES).toEqual(['households', 'readers', 'books', 'home_items', 'libraries', 'library_cards', 'collections', 'parent_notes', 'note_views', 'loans', 'read_events', 'reader_journeys']);
+    // A note view's local id is "<note id>:<reader id>": the wire id splits at the first colon.
+    expect(parseWireId(`note_views:n1:${UUID}`)).toEqual({ table: 'note_views', localId: `n1:${UUID}` });
+    expect(parseWireId('note_views:n1')).toBeNull();
+    expect(parseWireId('parent_notes:n1:x')).toBeNull();
     expect(parseWireId('collections:box-9780000000002')).toEqual({ table: 'collections', localId: 'box-9780000000002' });
     expect(parseWireId(`library_cards:${UUID}`)).toEqual({ table: 'library_cards', localId: UUID });
     expect(wireId('readers', UUID)).toBe(`readers:${UUID}`);
@@ -158,6 +162,8 @@ describe('rows and records', () => {
       libraries: ['name', 'default_loan_days'],
       library_cards: ['reader_id', 'value', 'format', 'created_at'],
       collections: ['title'],
+      parent_notes: ['target', 'trigger', 'text', 'position', 'created_at'],
+      note_views: ['note_id', 'reader_id', 'seen_at'],
       loans: ['reader_id', 'isbn', 'borrowed_at', 'renew_count'],
       read_events: ['reader_id', 'isbn', 'read_at'],
       reader_journeys: ['reader_id', 'journey_id', 'started_at'],

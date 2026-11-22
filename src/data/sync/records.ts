@@ -286,7 +286,7 @@ export function wrapForSync(db: DB, state: RecorderState): DB {
 
 /** Parents before children, so a child sees its reader's new state. */
 const REBUILD_ORDER: readonly SyncedTable[] = SYNCED_TABLES;
-const READER_CHILDREN: readonly SyncedTable[] = ['loans', 'read_events', 'reader_journeys', 'library_cards'];
+const READER_CHILDREN: readonly SyncedTable[] = ['loans', 'read_events', 'reader_journeys', 'library_cards', 'note_views'];
 
 export interface RebuildResult {
   /** Tables whose rows changed. */

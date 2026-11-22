@@ -264,6 +264,81 @@
   background: transparent;
 }
 
+/* A parent note: the same full-screen layer, on the page's own colours, with a gentle entrance. */
+.note-card {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.note-card__body {
+  animation: note-in var(--duration-confetti) ease-out both;
+}
+
+.note-card__sticker {
+  font-size: var(--text-emoji);
+  line-height: 1;
+}
+
+.note-card__text {
+  margin: 0;
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-bold);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+.note-card__from {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-lg);
+  color: var(--color-text-muted);
+}
+
+.note-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-3);
+}
+
+@keyframes note-in {
+  from {
+    transform: translateY(var(--space-5)) scale(0.96);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .note-card__body {
+    animation: none;
+  }
+}
+
+/* A phone on its side: smaller sticker and type, so the buttons fit without scrolling. */
+@media (orientation: landscape) and (max-height: 30rem) {
+  .note-card {
+    padding-block: var(--space-3);
+  }
+
+  .note-card__body {
+    gap: var(--space-2);
+  }
+
+  .note-card__sticker {
+    font-size: var(--text-2xl);
+  }
+
+  .note-card__text {
+    font-size: var(--text-lg);
+  }
+
+  .note-card__from {
+    font-size: var(--text-md);
+  }
+}
+
 .celebration__body {
   display: flex;
   flex-direction: column;

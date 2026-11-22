@@ -16,8 +16,16 @@ import {
   MAX_COLLECTION_TITLE,
   MAX_COVER_BYTES,
   MAX_EXPECTED_COUNT,
+  MAX_NOTE_STICKER,
+  MAX_NOTE_TEXT,
   MAX_VOLUME,
+  NOTE_EVERYONE,
+  NOTE_TRIGGERS,
   collectionIdForIsbn,
+  noteViewId,
+  type NoteView,
+  type ParentNote,
+  type ParentNotePatch,
   type Book,
   type BookKey,
   type Collection,
@@ -87,10 +95,12 @@ import { setDatabaseUpgradeBlocked } from '../upgradeStatus';
  *       have no status: they are confirmed and stay out of it). Index only.
  *   v8  `collections` (box sets and series), indexed by household and cover; books.collection_id
  *       and books.volume (missing on older rows: none), with a books index by collection.
+ *   v9  `parent_notes` (indexed by household and target) and `note_views` (keyed
+ *       "<note id>:<reader id>", indexed by note, reader and household). New stores only.
  */
 
 const DB_NAME = 'library-card';
-export const DB_VERSION = 8;
+export const DB_VERSION = 9;
 
 // Highest possible string suffix for compound-key range upper bounds.
 const MAX_STRING = '￿';
@@ -164,6 +174,8 @@ interface LibraryCardDB extends DBSchema {
     indexes: { by_cover: string; by_collection: Id };
   };
   collections: { key: Id; value: Collection; indexes: { by_household: Id; by_cover: string } };
+  parent_notes: { key: Id; value: ParentNote; indexes: { by_household: Id; by_target: Id } };
+  note_views: { key: string; value: NoteView; indexes: { by_note: Id; by_reader: Id; by_household: Id } };
   cover_images: { key: string; value: CoverImageRecord };
   /** Legacy, emptied by the cover re-key step. Deleted at the next schema version. */
   covers: { key: BookKey; value: LegacyCoverRecord };
@@ -340,6 +352,16 @@ async function openLibraryDb(name: string): Promise<DB> {
           collections.createIndex('by_household', 'household_id');
           collections.createIndex('by_cover', 'cover_url');
           tx.objectStore('books').createIndex('by_collection', 'collection_id');
+        }
+
+        if (oldVersion < 9) {
+          const notes = db.createObjectStore('parent_notes', { keyPath: 'id' });
+          notes.createIndex('by_household', 'household_id');
+          notes.createIndex('by_target', 'target');
+          const views = db.createObjectStore('note_views', { keyPath: 'id' });
+          views.createIndex('by_note', 'note_id');
+          views.createIndex('by_reader', 'reader_id');
+          views.createIndex('by_household', 'household_id');
         }
       },
       blocking(_currentVersion, blockedVersion, event) {
@@ -620,9 +642,58 @@ function checkedCount(value: unknown, max: number, field: string): number | null
   return value;
 }
 
+/** A note's text: trimmed, 1–500 characters. */
+function checkedNoteText(value: unknown): string {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (!text || text.length > MAX_NOTE_TEXT) throw new DataStoreError('invalid', `A note is 1–${MAX_NOTE_TEXT} characters.`);
+  return text;
+}
+
+/** A note's sticker: one emoji (at most 32 characters), or null. */
+function checkedNoteSticker(value: unknown): string | null {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value !== 'string' || value.length > MAX_NOTE_STICKER || /\s/.test(value)) throw new DataStoreError('invalid', 'A sticker is one emoji.');
+  return value;
+}
+
+function checkedTrigger(value: unknown): ParentNote['trigger'] {
+  if (!(NOTE_TRIGGERS as readonly unknown[]).includes(value)) throw new DataStoreError('invalid', `A note shows ${NOTE_TRIGGERS.join(' or ')}.`);
+  return value as ParentNote['trigger'];
+}
+
+const byPosition = (a: ParentNote, b: ParentNote) => a.position - b.position || a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id);
+
 /** Book rows from before collections have neither field. */
 function withMembership(book: Book): Book {
   return { ...book, collection_id: book.collection_id ?? null, volume: book.volume ?? null };
+}
+
+/** A note's fields as given (create or patch), checked; the target and author against the readers. */
+async function checkedNoteFields(
+  tx: IDBPTransaction<LibraryCardDB, ('parent_notes' | 'readers')[], 'readwrite'>,
+  input: ParentNotePatch,
+): Promise<ParentNotePatch> {
+  const out: ParentNotePatch = {};
+  if (input.text !== undefined) out.text = checkedNoteText(input.text);
+  if (input.sticker !== undefined) out.sticker = checkedNoteSticker(input.sticker);
+  if (input.trigger !== undefined) out.trigger = checkedTrigger(input.trigger);
+  if (input.target !== undefined) {
+    if (input.target !== NOTE_EVERYONE) {
+      const reader = await tx.objectStore('readers').get(input.target);
+      if (!reader) throw notFound('Reader', input.target);
+      if (reader.kind === 'grown_up') throw new DataStoreError('invalid', 'Notes are for children (or everyone).');
+    }
+    out.target = input.target;
+  }
+  if (input.author_id !== undefined) {
+    if (input.author_id !== null) {
+      const author = await tx.objectStore('readers').get(input.author_id);
+      if (!author) throw notFound('Reader', input.author_id);
+      if (author.kind !== 'grown_up') throw new DataStoreError('invalid', 'A note is written by a grown-up.');
+    }
+    out.author_id = input.author_id;
+  }
+  return out;
 }
 
 function checkLoanDays(value: number): void {
@@ -1059,7 +1130,7 @@ export async function createStoreWith<Extra extends object>(
 
     async deleteReader(id) {
       const tx = (await getDb()).transaction(
-        ['readers', 'loans', 'read_events', 'read_summaries', 'reader_journeys', 'library_cards'],
+        ['readers', 'loans', 'read_events', 'read_summaries', 'reader_journeys', 'library_cards', 'parent_notes', 'note_views'],
         'readwrite',
       );
       if (!(await tx.objectStore('readers').get(id))) throw notFound('Reader', id);
@@ -1082,13 +1153,21 @@ export async function createStoreWith<Extra extends object>(
       for (const key of await tx.objectStore('library_cards').index('by_reader').getAllKeys(id)) {
         await tx.objectStore('library_cards').delete(key);
       }
+      // The notes written only for them, everyone's records of seeing those, and their own.
+      for (const noteId of await tx.objectStore('parent_notes').index('by_target').getAllKeys(id)) {
+        for (const key of await tx.objectStore('note_views').index('by_note').getAllKeys(noteId)) await tx.objectStore('note_views').delete(key);
+        await tx.objectStore('parent_notes').delete(noteId);
+      }
+      for (const key of await tx.objectStore('note_views').index('by_reader').getAllKeys(id)) {
+        await tx.objectStore('note_views').delete(key);
+      }
       await tx.objectStore('readers').delete(id);
       await tx.done;
-      changed('readers', 'loans', 'read_events', 'reader_journeys', 'library_cards');
+      changed('readers', 'loans', 'read_events', 'reader_journeys', 'library_cards', 'parent_notes', 'note_views');
     },
 
     async previewDeleteReader(id) {
-      const tx = (await getDb()).transaction(['readers', 'loans', 'read_events', 'read_summaries', 'reader_journeys', 'library_cards']);
+      const tx = (await getDb()).transaction(['readers', 'loans', 'read_events', 'read_summaries', 'reader_journeys', 'library_cards', 'parent_notes']);
       if (!(await tx.objectStore('readers').getKey(id))) throw notFound('Reader', id);
       const loans = await tx.objectStore('loans').index('by_reader').getAll(id);
       const preview = {
@@ -1098,6 +1177,7 @@ export async function createStoreWith<Extra extends object>(
         returnedLoans: loans.filter((loan) => loan.returned_at !== null).length,
         activeLoans: loans.filter((loan) => loan.returned_at === null).length,
         libraryCards: await tx.objectStore('library_cards').index('by_reader').count(id),
+        notes: await tx.objectStore('parent_notes').index('by_target').count(id),
       };
       await tx.done;
       return preview;
@@ -1296,6 +1376,117 @@ export async function createStoreWith<Extra extends object>(
       for (const row of rows) out.push(await resolveCover(tx as unknown as CoverTx, row));
       await tx.done;
       return out.sort((a, b) => (a.volume ?? Infinity) - (b.volume ?? Infinity) || a.isbn.localeCompare(b.isbn));
+    },
+
+    // Parent notes ----------------------------------------------------------
+    async listNotes(householdId) {
+      const notes = await (await getDb()).getAllFromIndex('parent_notes', 'by_household', householdId);
+      return notes.sort(byPosition);
+    },
+
+    async createNote(input) {
+      const tx = (await getDb()).transaction(['parent_notes', 'readers'], 'readwrite');
+      const fields = await checkedNoteFields(tx, input);
+      let position = input.position;
+      if (position === undefined) {
+        const notes = await tx.objectStore('parent_notes').index('by_household').getAll(input.household_id);
+        position = notes.reduce((max, n) => Math.max(max, n.position), 0) + 1;
+      } else if (!Number.isFinite(position)) {
+        throw new DataStoreError('invalid', 'A note’s position is a number.');
+      }
+      const note: ParentNote = {
+        id: newId(),
+        household_id: input.household_id,
+        author_id: fields.author_id ?? null,
+        target: fields.target!,
+        trigger: fields.trigger!,
+        text: fields.text!,
+        sticker: fields.sticker ?? null,
+        position,
+        created_at: nowIso(),
+      };
+      await tx.objectStore('parent_notes').add(note);
+      await tx.done;
+      changed('parent_notes');
+      return note;
+    },
+
+    async updateNote(id, patch: ParentNotePatch) {
+      const tx = (await getDb()).transaction(['parent_notes', 'readers'], 'readwrite');
+      const existing = await tx.objectStore('parent_notes').get(id);
+      if (!existing) throw notFound('Note', id);
+      const fields = await checkedNoteFields(tx, patch);
+      const next: ParentNote = { ...existing, ...fields, id, household_id: existing.household_id };
+      await tx.objectStore('parent_notes').put(next);
+      await tx.done;
+      changed('parent_notes');
+      return next;
+    },
+
+    async deleteNote(id) {
+      const tx = (await getDb()).transaction(['parent_notes', 'note_views'], 'readwrite');
+      for (const key of await tx.objectStore('note_views').index('by_note').getAllKeys(id)) await tx.objectStore('note_views').delete(key);
+      await tx.objectStore('parent_notes').delete(id);
+      await tx.done;
+      changed('parent_notes', 'note_views');
+    },
+
+    async reorderNotes(householdId, ids) {
+      const tx = (await getDb()).transaction('parent_notes', 'readwrite');
+      const notes = (await tx.store.index('by_household').getAll(householdId)).sort(byPosition);
+      const first = ids.map((id) => notes.find((n) => n.id === id)).filter((n): n is ParentNote => !!n);
+      const ordered = [...first, ...notes.filter((n) => !first.includes(n))];
+      const out: ParentNote[] = [];
+      for (const [i, note] of ordered.entries()) {
+        const next = note.position === i + 1 ? note : { ...note, position: i + 1 };
+        if (next !== note) await tx.store.put(next); // only the moved ones are written
+        out.push(next);
+      }
+      await tx.done;
+      changed('parent_notes');
+      return out;
+    },
+
+    async listNotesForReader(readerId) {
+      const tx = (await getDb()).transaction(['readers', 'parent_notes', 'note_views']);
+      const reader = await tx.objectStore('readers').get(readerId);
+      if (!reader) {
+        await tx.done;
+        return [];
+      }
+      const notes = (await tx.objectStore('parent_notes').index('by_household').getAll(reader.household_id))
+        .filter((n) => n.target === readerId || n.target === NOTE_EVERYONE)
+        .sort(byPosition);
+      const views = new Map((await tx.objectStore('note_views').index('by_reader').getAll(readerId)).map((v) => [v.note_id, v.seen_at]));
+      await tx.done;
+      return notes.map((note) => ({ note, seen_at: views.get(note.id) ?? null }));
+    },
+
+    async listNoteViews(householdId) {
+      return (await getDb()).getAllFromIndex('note_views', 'by_household', householdId);
+    },
+
+    async markNoteSeen(noteId, readerId, seenAt) {
+      const tx = (await getDb()).transaction(['parent_notes', 'readers', 'note_views'], 'readwrite');
+      const note = await tx.objectStore('parent_notes').get(noteId);
+      if (!note) throw notFound('Note', noteId);
+      if (!(await tx.objectStore('readers').getKey(readerId))) throw notFound('Reader', readerId);
+      const id = noteViewId(noteId, readerId);
+      const existing = await tx.objectStore('note_views').get(id);
+      if (existing) {
+        await tx.done;
+        return existing;
+      }
+      const view: NoteView = { id, household_id: note.household_id, note_id: noteId, reader_id: readerId, seen_at: seenAt ? toIso(seenAt) : nowIso() };
+      await tx.objectStore('note_views').put(view);
+      await tx.done;
+      changed('note_views');
+      return view;
+    },
+
+    async showAgain(noteId, readerId) {
+      await (await getDb()).delete('note_views', noteViewId(noteId, readerId));
+      changed('note_views');
     },
 
     // Home library ----------------------------------------------------------
@@ -1989,6 +2180,8 @@ export const ALL_TABLES: DataTable[] = [
   'loans',
   'library_cards',
   'collections',
+  'parent_notes',
+  'note_views',
   'read_events',
   'reader_journeys',
 ];

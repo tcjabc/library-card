@@ -1,4 +1,4 @@
-import { HOUSEHOLD_ID, LIBRARY_CARD_FORMATS } from '../DataStore';
+import { HOUSEHOLD_ID, LIBRARY_CARD_FORMATS, noteViewId } from '../DataStore';
 import { DELETED, isFieldName, isOp, type JsonValue, type Op } from '../../sync/vendor/sync-core.js';
 
 /**
@@ -21,6 +21,8 @@ export const SYNCED_TABLES = [
   'libraries',
   'library_cards',
   'collections',
+  'parent_notes',
+  'note_views',
   'loans',
   'read_events',
   'reader_journeys',
@@ -52,14 +54,15 @@ interface TableSpec {
   key: 'id' | 'isbn';
   /** Whether rows carry household_id (implied "main"; never sent). */
   household: boolean;
-  /** Which local ids are allowed. */
-  localId: 'household' | 'id' | 'bookKey';
+  /** Which local ids are allowed ("pair": "<id>:<id>", e.g. a note view's "<note>:<reader>"). */
+  localId: 'household' | 'id' | 'bookKey' | 'pair';
   /** A field naming the parent reader: the row is hidden unless that reader is visible. */
   parentReader?: string;
   fields: Record<string, FieldSpec>;
 }
 
 const LOCAL_ID = /^[A-Za-z0-9_-]{1,40}$/;
+const PAIR_ID = /^[A-Za-z0-9_-]{1,40}:[A-Za-z0-9_-]{1,40}$/;
 const BOOK_KEY = /^(\d{13}|noisbn-[A-Za-z0-9_-]{1,40})$/;
 const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -156,6 +159,29 @@ export const SCHEMA: Record<SyncedTable, TableSpec> = {
       created_at: timestamp(REQUIRED),
     },
   },
+  parent_notes: {
+    key: 'id',
+    household: true,
+    localId: 'id',
+    fields: {
+      // A grown-up reader's id, or null ("From your grown-ups").
+      author_id: id(NULLABLE),
+      // A child's reader id, or "everyone".
+      target: text(40, REQUIRED, /^[A-Za-z0-9_-]{1,40}$/),
+      trigger: text(16, REQUIRED, /^(?:after_book|journey_done)$/),
+      text: text(500, REQUIRED),
+      sticker: nullableText(32),
+      position: { kind: { type: 'int', min: -1_000_000_000, max: 1_000_000_000 }, required: true },
+      created_at: timestamp(REQUIRED),
+    },
+  },
+  note_views: {
+    key: 'id',
+    household: true,
+    localId: 'pair',
+    parentReader: 'reader_id',
+    fields: { note_id: id(REQUIRED), reader_id: id(REQUIRED), seen_at: timestamp(REQUIRED) },
+  },
   loans: {
     key: 'id',
     household: true,
@@ -242,6 +268,8 @@ export function validLocalId(table: SyncedTable, localId: string): boolean {
       return localId === HOUSEHOLD_ID;
     case 'bookKey':
       return BOOK_KEY.test(localId);
+    case 'pair':
+      return PAIR_ID.test(localId);
     default:
       return LOCAL_ID.test(localId);
   }
@@ -359,8 +387,9 @@ export function recordToRow(table: SyncedTable, localId: string, fields: Record<
     if (value !== null && !validValue(field, value)) return null;
     row[name] = value;
   }
-  // A home book's id is its book key.
+  // A home book's id is its book key; a note view's is noteViewId(note, reader).
   if (table === 'home_items' && row.isbn !== localId) return null;
+  if (table === 'note_views' && noteViewId(row.note_id as string, row.reader_id as string) !== localId) return null;
   return row;
 }
 

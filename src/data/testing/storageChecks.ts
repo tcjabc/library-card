@@ -4,6 +4,7 @@ import {
   DEFAULT_LOAN_DAYS,
   HOUSEHOLD_ID,
   MAX_COVER_BYTES,
+  noteViewId,
   READ_TAP_GUARD_MS,
   type DataChange,
   type ReadEvent,
@@ -196,7 +197,7 @@ export const storageChecks: StorageCheck[] = [
     const journey = await store.startJourney(b.id, 'ocean_deep');
     equal(
       await store.previewDeleteReader(b.id),
-      { readEvents: 3, booksRead: 2, journeys: 1, returnedLoans: 1, activeLoans: 0, libraryCards: 0 },
+      { readEvents: 3, booksRead: 2, journeys: 1, returnedLoans: 1, activeLoans: 0, libraryCards: 0, notes: 0 },
       'dry run counts',
     );
     equal((await store.listReadEvents(b.id)).length, 3, 'the dry run deleted nothing');
@@ -546,6 +547,80 @@ export const storageChecks: StorageCheck[] = [
     equal([back?.title, back?.isbn, back?.expected_count], ['Box', '9780000000026', 4], 'restored');
     ok(await sameBytes(await blobAt(back?.cover_url), jpeg(7, 7)), 'with its photo');
     equal([(await store.getBook(ISBN_A))?.collection_id, (await store.getBook(ISBN_A))?.volume], [set.id, 3], 'member restored');
+  }),
+
+  // Parent notes ------------------------------------------------------------------
+  check('notes', 'write, edit, order and delete notes: checked fields, positions after the last', async (ctx) => {
+    const { store, h, a, b } = await withReaders(ctx);
+    const mum = await store.createReader({ household_id: h.id, display_name: 'Mum', avatar: '🦉', kind: 'grown_up' });
+    const n1 = await store.createNote({ household_id: h.id, target: 'everyone', trigger: 'after_book', text: '  Well done!  ', sticker: '🦊' });
+    const n2 = await store.createNote({ household_id: h.id, target: a.id, trigger: 'journey_done', text: 'You did it', author_id: mum.id });
+    const n3 = await store.createNote({ household_id: h.id, target: b.id, trigger: 'after_book', text: 'Keep going' });
+    equal([n1.text, n1.sticker, n1.author_id, n1.position], ['Well done!', '🦊', null, 1], 'trimmed, from the grown-ups, first');
+    equal([n2.author_id, n2.position, n3.position], [mum.id, 2, 3], 'author, then after the last');
+    ok(n1.created_at <= n2.created_at, 'created_at', [n1.created_at, n2.created_at]);
+    await rejectsWithCode(store.createNote({ household_id: h.id, target: 'everyone', trigger: 'after_book', text: '   ' }), 'invalid', 'empty text');
+    await rejectsWithCode(store.createNote({ household_id: h.id, target: 'everyone', trigger: 'after_book', text: 'x'.repeat(501) }), 'invalid', 'text too long');
+    await rejectsWithCode(store.createNote({ household_id: h.id, target: 'everyone', trigger: 'sometimes' as 'after_book', text: 'x' }), 'invalid', 'trigger');
+    await rejectsWithCode(store.createNote({ household_id: h.id, target: 'everyone', trigger: 'after_book', text: 'x', sticker: 'two words' }), 'invalid', 'sticker');
+    await rejectsWithCode(store.createNote({ household_id: h.id, target: 'nobody', trigger: 'after_book', text: 'x' }), 'not_found', 'unknown target');
+    await rejectsWithCode(store.createNote({ household_id: h.id, target: mum.id, trigger: 'after_book', text: 'x' }), 'invalid', 'a grown-up as target');
+    await rejectsWithCode(store.createNote({ household_id: h.id, target: 'everyone', trigger: 'after_book', text: 'x', author_id: a.id }), 'invalid', 'a child as author');
+    const edited = await store.updateNote(n3.id, { text: 'Keep reading', target: 'everyone', sticker: null });
+    equal([edited.text, edited.target, edited.sticker, edited.position], ['Keep reading', 'everyone', null, 3], 'edited, place kept');
+    await rejectsWithCode(store.updateNote('nope', { text: 'x' }), 'not_found', 'edit unknown');
+    const order = await store.reorderNotes(h.id, [n3.id, n1.id]);
+    equal(order.map((n) => [n.id, n.position]), [[n3.id, 1], [n1.id, 2], [n2.id, 3]], 'reordered');
+    equal((await store.listNotes(h.id)).map((n) => n.id), [n3.id, n1.id, n2.id], 'listed in order');
+    await store.markNoteSeen(n1.id, a.id);
+    await store.deleteNote(n1.id);
+    equal((await store.listNotes(h.id)).map((n) => n.id), [n3.id, n2.id], 'deleted');
+    equal(await store.listNoteViews(h.id), [], 'with its seen records');
+  }),
+  check('notes', 'seen once per reader ("<note>:<reader>"), the first time kept; show again forgets it', async (ctx) => {
+    const { store, h, a, b } = await withReaders(ctx);
+    const all = await store.createNote({ household_id: h.id, target: 'everyone', trigger: 'after_book', text: 'For all' });
+    const mine = await store.createNote({ household_id: h.id, target: a.id, trigger: 'journey_done', text: 'For A' });
+    const view = await store.markNoteSeen(all.id, a.id, '2026-03-01T10:00:00Z');
+    equal([view.id, view.seen_at], [noteViewId(all.id, a.id), '2026-03-01T10:00:00.000Z'], 'the id, the time');
+    ok(`note_views:${view.id}`.length <= 64, 'fits a sync record id', view.id);
+    equal((await store.markNoteSeen(all.id, a.id, '2026-03-05T10:00:00Z')).seen_at, '2026-03-01T10:00:00.000Z', 'seen again: the first time stays');
+    equal(
+      (await store.listNotesForReader(a.id)).map((x) => [x.note.id, x.seen_at]),
+      [[all.id, '2026-03-01T10:00:00.000Z'], [mine.id, null]],
+      'A: for everyone and for A',
+    );
+    equal((await store.listNotesForReader(b.id)).map((x) => [x.note.id, x.seen_at]), [[all.id, null]], 'B: only the one for everyone');
+    await store.showAgain(all.id, a.id);
+    equal((await store.listNotesForReader(a.id))[0].seen_at, null, 'shown again');
+    await store.showAgain(all.id, a.id); // nothing to forget: no error
+    await rejectsWithCode(store.markNoteSeen('nope', a.id), 'not_found', 'unknown note');
+    await rejectsWithCode(store.markNoteSeen(all.id, 'nobody'), 'not_found', 'unknown reader');
+    equal(await store.listNotesForReader('nobody'), [], 'unknown reader: none');
+  }),
+  check('notes', 'deleting a reader deletes the notes only for them, their seen records, and others\' records of those notes', async (ctx) => {
+    const { store, h, a, b } = await withReaders(ctx);
+    const all = await store.createNote({ household_id: h.id, target: 'everyone', trigger: 'after_book', text: 'For all' });
+    const forB = await store.createNote({ household_id: h.id, target: b.id, trigger: 'after_book', text: 'For B' });
+    const forA = await store.createNote({ household_id: h.id, target: a.id, trigger: 'after_book', text: 'For A' });
+    await store.markNoteSeen(all.id, a.id);
+    await store.markNoteSeen(all.id, b.id);
+    await store.markNoteSeen(forB.id, b.id);
+    equal((await store.previewDeleteReader(b.id)).notes, 1, 'counted in the preview');
+    await store.deleteReader(b.id);
+    equal((await store.listNotes(h.id)).map((n) => n.id).sort(), [all.id, forA.id].sort(), 'the note for B went; for everyone and for A stayed');
+    equal((await store.listNoteViews(h.id)).map((v) => v.id), [noteViewId(all.id, a.id)], 'only A’s record stays');
+  }),
+  check('notes', 'a backup keeps notes and who saw them', async (ctx) => {
+    const { store, h, a } = await withReaders(ctx);
+    const note = await store.createNote({ household_id: h.id, target: a.id, trigger: 'journey_done', text: 'Proud of you', sticker: '🐼' });
+    await store.markNoteSeen(note.id, a.id, '2026-04-01T08:00:00Z');
+    const backup = await store.exportBackup();
+    equal([backup.tables.parent_notes.length, backup.tables.note_views.length], [1, 1], 'exported');
+    await store.resetDevice();
+    const summary = await store.importBackup(JSON.parse(JSON.stringify(backup)));
+    equal(summary.notes, 1, 'counted');
+    equal((await store.listNotesForReader(a.id)).map((x) => [x.note.text, x.note.sticker, x.seen_at]), [['Proud of you', '🐼', '2026-04-01T08:00:00.000Z']], 'restored');
   }),
 
   // Home items --------------------------------------------------------------------
@@ -1110,12 +1185,14 @@ export const storageChecks: StorageCheck[] = [
   }),
 
   // Migrations ------------------------------------------------------------------------
-  check('migration', 'a fresh database is created at v8 with no legacy reads store', async (ctx) => {
+  check('migration', 'a fresh database is created at v9 with no legacy reads store', async (ctx) => {
     const { store, dbName } = await ctx.open();
     await store.coverStep;
     const { version, stores } = await rawStoreNames(dbName);
-    equal(version, 8, 'version');
+    equal(version, 9, 'version');
     equal((await rawIndexNames(dbName, 'collections')).sort(), ['by_cover', 'by_household'], 'collection indexes');
+    equal((await rawIndexNames(dbName, 'parent_notes')).sort(), ['by_household', 'by_target'], 'note indexes');
+    equal((await rawIndexNames(dbName, 'note_views')).sort(), ['by_household', 'by_note', 'by_reader'], 'note view indexes');
     equal((await rawIndexNames(dbName, 'books')).sort(), ['by_collection', 'by_cover'], 'book indexes');
     equal((await rawIndexNames(dbName, 'library_cards')).sort(), ['by_household_created', 'by_library', 'by_reader'], 'library card indexes');
     ok(stores.includes('records') && stores.includes('outbox'), 'sync stores', stores);
@@ -1200,12 +1277,14 @@ export const storageChecks: StorageCheck[] = [
     const third = await ctx.attach(name);
     equal((await third.coverStep).moved, 0, 'a finished step is a no-op');
   }),
-  check('migration', 'v4 -> v8: records, outbox, library_cards and collections stores and the read status index added, every row kept, nothing recorded', async (ctx) => {
+  check('migration', 'v4 -> v9: records, outbox, library_cards, collections and note stores and the read status index added, every row kept, nothing recorded', async (ctx) => {
     const name = ctx.name();
-    const fixture = await createV3Database(name); // upgrades through v4 … v7 to v8
+    const fixture = await createV3Database(name); // upgrades through v4 … v8 to v9
     const store = await ctx.attach(name);
     const { version, stores } = await rawStoreNames(name);
-    equal(version, 8, 'version');
+    equal(version, 9, 'version');
+    ok(stores.includes('parent_notes') && stores.includes('note_views'), 'note stores', stores);
+    equal(await store.listNotes(HOUSEHOLD_ID), [], 'no notes yet');
     ok(stores.includes('records') && stores.includes('outbox') && stores.includes('library_cards') && stores.includes('collections'), 'new stores', stores);
     equal(await store.listHouseholdLibraryCards(HOUSEHOLD_ID), [], 'no library cards yet');
     equal(await store.listCollections(HOUSEHOLD_ID), [], 'no collections yet');
@@ -1223,7 +1302,7 @@ export const storageChecks: StorageCheck[] = [
     const name = ctx.name();
     const fixture = await createV3Database(name);
     const store = await ctx.attach(name);
-    equal((await rawStoreNames(name)).version, 8, 'version');
+    equal((await rawStoreNames(name)).version, 9, 'version');
     const indexes = await rawIndexNames(name, 'loans');
     ok(!indexes.includes('by_household_sticker') && indexes.includes('by_library_sticker') && indexes.includes('by_sticker'), 'indexes', indexes);
     const loans = await rawAll<Record<string, unknown>>(name, 'loans');
@@ -1286,13 +1365,13 @@ export const storageChecks: StorageCheck[] = [
     const journey = await store.startJourney(a.id, 'ocean_deep', '2026-01-01T00:00:00Z');
 
     const backup = await store.exportBackup();
-    equal([backup.format, backup.version, backup.schema], [BACKUP_FORMAT, 1, 8], 'format, version, schema');
+    equal([backup.format, backup.version, backup.schema], [BACKUP_FORMAT, 1, 9], 'format, version, schema');
     ok(!('records' in backup.tables) && !('outbox' in backup.tables), 'sync bookkeeping is never exported');
     ok(!('read_summaries' in backup.tables), 'summaries are not exported');
     equal(Object.keys(backup.covers), [photoRef], 'the one photo, under its cover: key');
     equal((backup.tables.books.find((x) => x.isbn === ISBN_A))?.cover_url, photoRef, 'books keep the cover: reference, not a blob: URL');
     const before = summariseBackup(backup);
-    equal(before, { readers: 2, books: 2, homeBooks: 2, collections: 0, loans: 2, reads: 3, covers: 1 }, 'summary counts');
+    equal(before, { readers: 2, books: 2, homeBooks: 2, collections: 0, notes: 0, loans: 2, reads: 3, covers: 1 }, 'summary counts');
 
     // As if downloaded and picked on another device.
     const file = JSON.parse(JSON.stringify(backup));
