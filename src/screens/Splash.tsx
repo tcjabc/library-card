@@ -3,9 +3,11 @@ import { parseCardToken } from '../cards/cardUrl';
 import { HOUSEHOLD_ID, useDataQuery, type DataStore } from '../data';
 import { href, navigate, useHashQuery } from '../router';
 import { Scanner, type ScanResult } from '../scan/Scanner';
-import { setActiveReaderId } from '../session/activeReader';
+import { signInGrownUpReader } from '../session/grownUpReader';
 import { looksLikePairingCode } from '../sync/pairingCode';
 import { fmt, strings } from '../strings';
+import { Sheet } from '../ui/Sheet';
+import { GrownUpSignIn } from './GrownUpSignIn';
 import { splashTiles, type SplashTile } from './splashTiles';
 
 const NOTICE_MS = 3500;
@@ -25,15 +27,12 @@ function ReaderPicker() {
   const query = useCallback((s: DataStore) => s.listReaders(HOUSEHOLD_ID), []);
   const { data: readers } = useDataQuery(query, ['readers']);
   const tiles = splashTiles(readers ?? []);
+  /** A grown-up's tile was tapped: the household PIN (or the gate) first. */
+  const [signingIn, setSigningIn] = useState<SplashTile['reader'] | null>(null);
 
   const open = (tile: SplashTile) => {
-    if (tile.signIn === 'tap') {
-      // A grown-up: no card, no gate.
-      setActiveReaderId(tile.reader.id);
-      navigate('/hub');
-    } else {
-      navigate(`/scan?reader=${encodeURIComponent(tile.reader.id)}`);
-    }
+    if (tile.signIn === 'tap') setSigningIn(tile.reader);
+    else navigate(`/scan?reader=${encodeURIComponent(tile.reader.id)}`);
   };
 
   return (
@@ -79,6 +78,19 @@ function ReaderPicker() {
           {t.grownUps}
         </a>
       </footer>
+      {signingIn && (
+        <Sheet title={fmt(strings.grownUpSignIn.title, { name: signingIn.display_name })} onClose={() => setSigningIn(null)}>
+          <GrownUpSignIn
+            reader={signingIn}
+            onPass={() => {
+              signInGrownUpReader(signingIn.id);
+              setSigningIn(null);
+              navigate('/hub');
+            }}
+            onCancel={() => setSigningIn(null)}
+          />
+        </Sheet>
+      )}
     </main>
   );
 }

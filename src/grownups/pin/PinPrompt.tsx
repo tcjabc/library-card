@@ -19,7 +19,8 @@ interface PinPromptProps {
   store: DataStore;
   reason: string;
   onPass: () => void;
-  onForgot: () => void;
+  /** Shows "Forgot the PIN?" (not offered when a grown-up reader signs in on the splash). */
+  onForgot?: () => void;
 }
 
 /**
@@ -93,11 +94,13 @@ export function PinPrompt({ store, reason, onPass, onForgot }: PinPromptProps) {
       ) : (
         <PinPad label={t.enter} reason={reason} message={message} busy={busy ? t.checking : null} onSubmit={(pin) => void submit(pin)} />
       )}
-      <div className="row row--center">
-        <button type="button" className="btn btn--quiet" onClick={onForgot}>
-          {t.forgot}
-        </button>
-      </div>
+      {onForgot && (
+        <div className="row row--center">
+          <button type="button" className="btn btn--quiet" onClick={onForgot}>
+            {t.forgot}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

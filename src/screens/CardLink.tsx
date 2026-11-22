@@ -3,20 +3,43 @@ import { useDataQuery, type DataStore } from '../data';
 import { isIosBrowserTab } from '../lib/platform';
 import { href, navigate } from '../router';
 import { setActiveReaderId } from '../session/activeReader';
-import { strings } from '../strings';
+import { signInGrownUpReader } from '../session/grownUpReader';
+import { fmt, strings } from '../strings';
+import { GrownUpSignIn } from './GrownUpSignIn';
 
-/** #/card/<token> — sign in with a library card, then go to the hub. */
+/**
+ * #/card/<token> — sign in with a library card, then go to the hub. A grown-up's card also
+ * needs the household PIN (or the gate); cancelling goes back to the splash.
+ */
 export function CardLink({ token }: { token: string }) {
   const t = strings.card;
   const query = useCallback((s: DataStore) => s.getReaderByCardToken(token), [token]);
   const { data: reader, loading, error } = useDataQuery(query, ['readers']);
 
+  const grownUp = reader?.kind === 'grown_up';
+
   useEffect(() => {
-    if (reader) {
+    if (reader && reader.kind !== 'grown_up') {
       setActiveReaderId(reader.id);
       navigate('/hub', { replace: true });
     }
   }, [reader]);
+
+  if (reader && grownUp) {
+    return (
+      <main className="page page--kid gate-page">
+        <h1 className="kid-title">{fmt(strings.grownUpSignIn.title, { name: reader.display_name })}</h1>
+        <GrownUpSignIn
+          reader={reader}
+          onPass={() => {
+            signInGrownUpReader(reader.id);
+            navigate('/hub', { replace: true });
+          }}
+          onCancel={() => navigate('/', { replace: true })}
+        />
+      </main>
+    );
+  }
 
   if (loading || reader) {
     return (

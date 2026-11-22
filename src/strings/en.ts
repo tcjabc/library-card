@@ -39,6 +39,13 @@ export const en = {
     grownUps: 'Grown-ups',
   },
 
+  grownUpSignIn: {
+    title: 'Hi, {name}!',
+    pinReason: 'Enter the household PIN to open your space.',
+    gateReason: 'Answer this to open your space.',
+    cancel: 'Cancel',
+  },
+
   card: {
     checking: 'Checking your card…',
     unknownTitle: 'We don’t know this card',
@@ -476,7 +483,7 @@ export const en = {
       avatar: 'Pick an avatar',
       kindLegend: 'Who is this?',
       kinds: { child: 'Child', grown_up: 'Grown-up' },
-      kindHelp: 'Grown-ups can open their space by tapping their picture. Children scan their library card.',
+      kindHelp: 'Grown-ups open their space with the household PIN. Children scan their library card.',
       grownUpTag: 'Grown-up',
       save: 'Save',
       created: 'Added {name}. Print their card from Cards.',
