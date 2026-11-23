@@ -300,3 +300,37 @@ export function fannedBook(
   const rise = centres[index] - heightAt(centres, s);
   return { step, top: -rise - shape.thickness / 2, shape: { ...shape, x: 0, z: 0, yaw: relativeYaw(index, s, twist) } };
 }
+
+/** How much a height in the pile, and a step towards the reader, move a point down the screen (px per px). */
+const FAN_RISE = Math.cos(ELEVATION_DEG * RAD);
+const FAN_DROP = Math.sin(ELEVATION_DEG * RAD);
+
+/**
+ * Where the camera's origin sits on screen (y, px). Normally the middle of the view; but when
+ * the rest of the pile under the camera is shorter than half the view (a small pile, or the
+ * bottom of a big one) the pile is lowered so its bottom rests `floorGap` above the view's
+ * bottom, rather than floating with empty space under it. `depth` is the deepest book (px).
+ */
+export function fanOriginY(viewHeight: number, centres: readonly number[], s: number, depth: number, floorGap: number): number {
+  const below = FAN_RISE * heightAt(centres, s) + (FAN_DROP * Math.max(0, depth)) / 2;
+  return Math.max(viewHeight / 2, viewHeight - Math.max(0, floorGap) - below);
+}
+
+/**
+ * Book `index`'s spine on screen (y, px), as the camera at `s` sees it: the middle of its front
+ * edge and its bottom edge (where it meets the book under it). Screen-aligned markers sit level
+ * with these: a flag with the middle, a month line with the bottom of the month's first book.
+ */
+export function spineLevels(
+  index: number,
+  shape: { thickness: number; depth: number },
+  centres: readonly number[],
+  s: number,
+  twist: number,
+  originY: number,
+): { middle: number; bottom: number } {
+  const rise = centres[index] - heightAt(centres, s);
+  const front = (Math.cos(relativeYaw(index, s, twist) * RAD) * Math.max(0, shape.depth) * FAN_DROP) / 2;
+  const middle = originY - FAN_RISE * rise + front;
+  return { middle, bottom: middle + (FAN_RISE * Math.max(0, shape.thickness)) / 2 };
+}

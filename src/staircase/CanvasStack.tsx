@@ -1,5 +1,14 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { SETTLE_IDLE_MS, clampPosition, positionToScroll, scrollHeight, scrollToPosition, settleTarget, stepCamera } from './camera';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import {
+  SETTLE_IDLE_MS,
+  clampPosition,
+  positionToScroll,
+  scrollHeight,
+  scrollToPosition,
+  settleTarget,
+  stepCamera,
+  stepTarget,
+} from './camera';
 import { LruCache, backingSize, canvasScale, cssLength, fitWithEllipsis, graphemes } from './canvasHelpers';
 import {
   DECIDE_AFTER_MS,
@@ -14,16 +23,19 @@ import {
   type InsetState,
   type StackOverrides,
 } from './drawBudget';
-import { BOOK_DEPTHS, BOOK_WIDTHS, bookShape, type StackEntry } from './stackModel';
+import { READER_COLOURS, firstMarkerFrom, followUpdate, markerTop, type LabelPart, type StackItem, type StackMarkers } from './stackItems';
+import { BOOK_DEPTHS, BOOK_WIDTHS, bookShape, spineHue } from './stackModel';
 import {
   FAN_CAMERA,
   TWIST_DEG,
   cameraYaw,
   faceTransform,
+  fanOriginY,
   fannedBook,
   pileCentres,
   projectBook,
   relativeYaw,
+  spineLevels,
   type ProjectedBook,
   type ProjectedFace,
   type View,
@@ -32,10 +44,11 @@ import './bookStack.css';
 import './canvasStack.css';
 
 /**
- * The book pile drawn on one canvas (developer tools only). Stage 2a, "books that face the
- * reader": the camera's position is a continuous book index; the book there faces the reader
- * square-on and its neighbours fan out by the twist per book (stackProjection.ts), so the books
- * near the middle of the screen are always readable.
+ * The Family Staircase's pile of books, drawn on one canvas (the Family Staircase screen, and the
+ * developer tools' pretend piles). "Books that face the reader": the camera's position is a
+ * continuous book index; the book there faces the reader square-on and its neighbours fan out by
+ * the twist per book (stackProjection.ts), so the books near the middle of the screen are always
+ * readable. A short pile (or the bottom of a long one) rests near the bottom of the view.
  *
  * A native scroll area with a sized spacer keeps the browser's own (inertia) scrolling, and sets
  * where the camera is going; the drawn position eases towards it (camera.ts). When scrolling
@@ -48,6 +61,16 @@ import './canvasStack.css';
  * to a small canvas and reused, and far or edge-on page edges are a flat fill. The canvas is
  * opaque (filled with the page's background), and if frames are slow it steps its resolution
  * down for the rest of the visit. The tag and the top-down inset only redraw when they change.
+ *
+ * Markers (stackItems.ts): a dashed line under the first book of each month with its label at
+ * the right, and flags at the left for book numbers (#1, 10, 50, 100, every 100). Only those by
+ * books in the draw window are drawn; their labels are drawn once and reused. A label that would
+ * cover the book in the middle (the one being looked at) moves just above or below it instead
+ * (markerTop in stackItems.ts).
+ *
+ * When the books change (a new read), the camera keeps the reader's book in front of them, or
+ * moves up to the new newest book if they were looking at the newest (stackItems.followUpdate).
+ * Arrow Up and Down step one book, with the same ease.
  */
 
 /** The centre book, for the overlay tag. */
@@ -111,9 +134,13 @@ export interface StackBench {
 
 export interface CanvasStackProps {
   /** Oldest first. */
-  entries: readonly StackEntry[];
-  /** Seeds each book's size (the household id, later). */
+  items: readonly StackItem[];
+  /** Seeds each book's size (the household id). */
   seed: string;
+  /** Month lines and book-number flags. */
+  markers?: StackMarkers;
+  /** The book in the middle changed (and on the first frame). */
+  onCentre?: (item: StackItem, index: number) => void;
   /** Degrees each book is turned more than the one under it. */
   twist?: number;
   /** Come to rest square-on to a book when scrolling stops. */
@@ -180,6 +207,28 @@ interface BookTheme {
   insetHighlight: string;
   /** The page behind the pile: the canvas is opaque and fills itself with this. */
   background: string;
+  /** The reader colours, --reader-1 first. */
+  readers: string[];
+  /** Markers: their labels' colours, text, padding and corners, the dashed line, and the gaps at the view's edges. */
+  surface: string;
+  text: string;
+  border: string;
+  milestone: string;
+  onMilestone: string;
+  markerFont: string;
+  markerSize: number;
+  yearFont: string;
+  yearSize: number;
+  markerEmojiFont: string;
+  lineHeight: number;
+  padX: number;
+  padY: number;
+  radius: number;
+  dash: number;
+  dashGap: number;
+  gutter: number;
+  /** Room left under a short pile (px). */
+  floorGap: number;
 }
 
 function readTheme(): BookTheme {
@@ -210,6 +259,25 @@ function readTheme(): BookTheme {
     insetLine: v('--color-text-muted'),
     insetHighlight: v('--color-text'),
     background: v('--color-bg'),
+    readers: Array.from({ length: READER_COLOURS }, (_, i) => v(`--reader-${i + 1}`)),
+    surface: v('--color-surface'),
+    text: v('--color-text'),
+    border: v('--color-border'),
+    milestone: v('--color-milestone'),
+    onMilestone: v('--color-on-milestone'),
+    markerFont: `${v('--weight-bold')} ${px('--text-sm')}px ${v('--font-body')}`,
+    markerSize: px('--text-sm'),
+    yearFont: `${v('--weight-bold')} ${px('--text-lg')}px ${v('--font-body')}`,
+    yearSize: px('--text-lg'),
+    markerEmojiFont: `${px('--text-sm')}px ${v('--font-emoji')}`,
+    lineHeight: Number(v('--line-height')) || 1.45,
+    padX: px('--space-2'),
+    padY: px('--space-1'),
+    radius: px('--radius-sm'),
+    dash: px('--space-2'),
+    dashGap: px('--space-1'),
+    gutter: px('--space-3'),
+    floorGap: px('--space-5'),
   };
 }
 
@@ -218,10 +286,11 @@ function hsl(hue: number, saturation: string, lightness: string): string {
 }
 
 interface BookPaint {
+  /** The spine label's cache key: the book and everything drawn on its spine. */
+  labelKey: string;
   title: string;
   avatar: string;
   spineHue: number;
-  readerHue: number;
   width: number;
   thickness: number;
   cover: string;
@@ -250,7 +319,7 @@ function renderSpine(book: BookPaint, theme: BookTheme, scale: number, plainAvat
   shade.addColorStop(1, theme.shade);
   ctx.fillStyle = shade;
   ctx.fillRect(0, 0, w, t);
-  ctx.fillStyle = hsl(book.readerHue, theme.bandSaturation, theme.bandLightness);
+  ctx.fillStyle = book.band;
   ctx.fillRect(0, 0, theme.bandWidth, t);
   ctx.textBaseline = 'middle';
   ctx.fillStyle = theme.onBook;
@@ -301,6 +370,83 @@ function renderPages(thickness: number, theme: BookTheme, scale: number): HTMLCa
   return canvas;
 }
 
+/** A marker's label, drawn once: its canvas and its size (px). */
+interface Sprite {
+  canvas: HTMLCanvasElement;
+  width: number;
+  height: number;
+}
+
+interface SpritePart {
+  text: string;
+  font: string;
+  size: number;
+}
+
+/** A rounded rectangle's path (arcTo, for browsers without roundRect). */
+function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  const radius = Math.max(0, Math.min(r, w / 2, h / 2));
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + w, y, x + w, y + h, radius);
+  ctx.arcTo(x + w, y + h, x, y + h, radius);
+  ctx.arcTo(x, y + h, x, y, radius);
+  ctx.arcTo(x, y, x + w, y, radius);
+  ctx.closePath();
+}
+
+/** A marker's label: the parts side by side on one baseline, on a rounded plate. */
+function renderSprite(parts: readonly SpritePart[], fill: string, ink: string, edge: string | null, theme: BookTheme, scale: number): Sprite {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return { canvas, width: 1, height: 1 };
+  const widths = parts.map((part) => {
+    ctx.font = part.font;
+    return ctx.measureText(part.text).width;
+  });
+  const size = Math.max(...parts.map((part) => part.size));
+  const width = Math.ceil(widths.reduce((a, b) => a + b, 0) + 2 * theme.padX);
+  const height = Math.ceil(size * theme.lineHeight + 2 * theme.padY);
+  canvas.width = backingSize(width, scale);
+  canvas.height = backingSize(height, scale);
+  ctx.scale(canvas.width / width, canvas.height / height);
+  const inset = edge ? theme.borderThin / 2 : 0;
+  roundedRect(ctx, inset, inset, width - 2 * inset, height - 2 * inset, theme.radius);
+  ctx.fillStyle = fill;
+  ctx.fill();
+  if (edge) {
+    ctx.strokeStyle = edge;
+    ctx.lineWidth = theme.borderThin;
+    ctx.stroke();
+  }
+  ctx.fillStyle = ink;
+  ctx.textBaseline = 'alphabetic';
+  // One baseline for every part, so a larger year sits on the same line as the month.
+  const baseline = height / 2 + size * 0.36;
+  let x = theme.padX;
+  parts.forEach((part, i) => {
+    ctx.font = part.font;
+    ctx.fillText(part.text, x, baseline);
+    x += widths[i];
+  });
+  return { canvas, width, height };
+}
+
+function monthParts(parts: readonly LabelPart[], big: boolean, theme: BookTheme): SpritePart[] {
+  return parts.map((part) =>
+    part.year && big
+      ? { text: part.text, font: theme.yearFont, size: theme.yearSize }
+      : { text: part.text, font: theme.markerFont, size: theme.markerSize },
+  );
+}
+
+/** A placed marker label this frame (px, the view's top left). */
+interface PlacedSprite {
+  sprite: Sprite;
+  x: number;
+  y: number;
+}
+
 interface Paint {
   /** Page-edge stripes, by book thickness. */
   pages: Map<number, HTMLCanvasElement>;
@@ -311,7 +457,7 @@ interface Paint {
 /** What drawing one face needs besides the face. */
 interface FaceKit {
   scale: number;
-  labels: LruCache<number, HTMLCanvasElement>;
+  labels: LruCache<string, HTMLCanvasElement>;
   theme: BookTheme;
   paint: Paint;
   plainAvatars: boolean;
@@ -320,12 +466,12 @@ interface FaceKit {
 }
 
 /** A spine label from the cache, prepared (and timed) if it isn't there. */
-function spineLabel(step: number, book: BookPaint, kit: FaceKit): HTMLCanvasElement {
-  let spine = kit.labels.get(step);
+function spineLabel(book: BookPaint, kit: FaceKit): HTMLCanvasElement {
+  let spine = kit.labels.get(book.labelKey);
   if (!spine) {
     const started = performance.now();
     spine = renderSpine(book, kit.theme, kit.scale, kit.plainAvatars);
-    kit.labels.set(step, spine);
+    kit.labels.set(book.labelKey, spine);
     kit.prep.ms += performance.now() - started;
     kit.prep.count += 1;
   }
@@ -344,10 +490,10 @@ function tracePath(ctx: CanvasRenderingContext2D, face: ProjectedFace) {
 }
 
 /** One face of one book, through the face's affine transform. `fromCamera` is the book's distance from the camera (books). */
-function drawFace(ctx: CanvasRenderingContext2D, face: ProjectedFace, step: number, book: BookPaint, fromCamera: number, kit: FaceKit) {
+function drawFace(ctx: CanvasRenderingContext2D, face: ProjectedFace, book: BookPaint, fromCamera: number, kit: FaceKit) {
   const { scale, theme, paint } = kit;
   if (face.side === 'front') {
-    const spine = spineLabel(step, book, kit);
+    const spine = spineLabel(book, kit);
     ctx.setTransform(...faceTransform(face, scale));
     ctx.drawImage(spine, 0, 0, face.width, face.height);
     ops += 1;
@@ -458,13 +604,59 @@ function drawInset(
   }
 }
 
+/** The bounding box of a book's faces on screen (px). */
+function faceBox(faces: readonly ProjectedFace[]): { left: number; right: number; top: number; bottom: number } {
+  let left = Infinity;
+  let right = -Infinity;
+  let top = Infinity;
+  let bottom = -Infinity;
+  for (const f of faces) {
+    for (const [x, y] of [
+      [f.origin.x, f.origin.y],
+      [f.origin.x + f.u.x, f.origin.y + f.u.y],
+      [f.origin.x + f.v.x, f.origin.y + f.v.y],
+      [f.origin.x + f.u.x + f.v.x, f.origin.y + f.u.y + f.v.y],
+    ]) {
+      if (x < left) left = x;
+      if (x > right) right = x;
+      if (y < top) top = y;
+      if (y > bottom) bottom = y;
+    }
+  }
+  return { left, right, top, bottom };
+}
+
+/** The deepest book (px): how far a short pile's front reaches below its axis. */
+const MAX_DEPTH = Math.max(...BOOK_DEPTHS);
+/** Marker labels kept ready to draw. */
+const SPRITE_CACHE_SIZE = 64;
+
+interface CameraState {
+  expected: number | null;
+  expectedTimer: number;
+  scrollTop: number;
+}
+
+/** Move the scroll offset ourselves, so the scroll event it fires isn't taken for the reader's. */
+function ownScroll(c: CameraState, el: HTMLDivElement, top: number) {
+  if (Math.abs(el.scrollTop - top) >= OWN_SCROLL_SLACK / 2) {
+    c.expected = top;
+    window.clearTimeout(c.expectedTimer);
+    c.expectedTimer = window.setTimeout(() => (c.expected = null), OWN_SCROLL_MS);
+    el.scrollTop = top;
+  }
+  c.scrollTop = top;
+}
+
 function prefersReducedMotion(): boolean {
   return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
 function CanvasStack({
-  entries,
+  items,
   seed,
+  markers,
+  onCentre,
   twist = TWIST_DEG,
   settle = true,
   inset = false,
@@ -476,26 +668,31 @@ function CanvasStack({
   onDraw,
   onBench,
 }: CanvasStackProps) {
-  const count = entries.length;
-  const shapes = useMemo(() => entries.map((e) => bookShape(seed, e.step)), [entries, seed]);
+  const count = items.length;
+  const shapes = useMemo(() => items.map((item) => bookShape(seed, item.key)), [items, seed]);
   const centres = useMemo(() => pileCentres(shapes.map((s) => s.thickness)), [shapes]);
   const [theme] = useState(readTheme);
-  // Oldest first, like `entries`.
+  // Oldest first, like `items`.
   const paints = useMemo<BookPaint[]>(
     () =>
-      entries.map((entry, i) => ({
-        title: entry.title,
-        avatar: entry.avatar,
-        spineHue: entry.spineHue,
-        readerHue: entry.readerHue,
-        width: shapes[i].width,
-        thickness: shapes[i].thickness,
-        cover: hsl(entry.spineHue, theme.spineSaturation, theme.coverLightness),
-        band: hsl(entry.readerHue, theme.bandSaturation, theme.bandLightness),
-      })),
-    [entries, shapes, theme],
+      items.map((item, i) => {
+        const hue = spineHue(item.isbn);
+        const band = theme.readers[(item.readerColour - 1 + READER_COLOURS) % READER_COLOURS] || theme.readers[0];
+        return {
+          labelKey: `${item.key}\u0000${item.title}\u0000${item.avatar}\u0000${item.readerColour}`,
+          title: item.title,
+          avatar: item.avatar,
+          spineHue: hue,
+          width: shapes[i].width,
+          thickness: shapes[i].thickness,
+          cover: hsl(hue, theme.spineSaturation, theme.coverLightness),
+          band,
+        };
+      }),
+    [items, shapes, theme],
   );
-  const labels = useMemo(() => new LruCache<number, HTMLCanvasElement>(LABEL_CACHE_SIZE), []);
+  const labels = useMemo(() => new LruCache<string, HTMLCanvasElement>(LABEL_CACHE_SIZE), []);
+  const sprites = useMemo(() => new LruCache<string, Sprite>(SPRITE_CACHE_SIZE), []);
 
   const scroller = useRef<HTMLDivElement | null>(null);
   const sizer = useRef<HTMLDivElement | null>(null);
@@ -532,6 +729,8 @@ function CanvasStack({
     scaleCap: Infinity,
     tag: null as { step: number; degrees: number } | null,
     inset: null as InsetState | null,
+    /** The book in the middle at the last frame (for onCentre), -1 before the first. */
+    centre: -1,
     /** Camera work (ease, scroll handling, resolution) since the last frame (ms). */
     cameraMs: 0,
     /** Label cache rebuilds this visit. */
@@ -542,10 +741,12 @@ function CanvasStack({
     listener: null as ((stats: DrawStats) => void) | null,
   });
   // What the next frame draws: kept in a ref so scrolling never waits on React.
-  const scene = useRef({ entries, shapes, centres, paints, twist, settle, describeCentre, measureRaster, onDraw });
+  const scene = useRef({ items, shapes, centres, paints, markers, onCentre, twist, settle, describeCentre, measureRaster, onDraw });
   useLayoutEffect(() => {
-    scene.current = { entries, shapes, centres, paints, twist, settle, describeCentre, measureRaster, onDraw };
+    scene.current = { items, shapes, centres, paints, markers, onCentre, twist, settle, describeCentre, measureRaster, onDraw };
   });
+  /** This frame's marker labels and month lines (reused every frame). */
+  const placed = useRef({ sprites: [] as PlacedSprite[], lines: [] as number[] });
 
   /** Size the canvases' backing stores for the scroll area at `scale` (no layout reads). */
   const applyScale = useCallback((scale: number) => {
@@ -572,13 +773,14 @@ function CanvasStack({
       ops = 0;
       const c = cam.current;
       const { width, height, scale } = size.current;
-      const { entries, shapes, centres, paints, describeCentre, measureRaster, onDraw } = scene.current;
+      const { items, shapes, centres, paints, markers, onCentre, describeCentre, measureRaster, onDraw } = scene.current;
       const o = c.overrides;
       const twist = o ? o.twist : scene.current.twist;
       const overlays = o ? o.overlays : true;
       if (paint.current.scale !== scale) {
         if (paint.current.scale !== 0) c.rebuilds += 1;
         labels.clear();
+        sprites.clear();
         // The cover's shade runs across a face's unit square, towards the spine.
         const coverShade = ctx.createLinearGradient(0, 0, 0, 1);
         coverShade.addColorStop(0.6, 'transparent');
@@ -591,7 +793,7 @@ function CanvasStack({
       ops += 1;
 
       const s = c.shown;
-      const total = entries.length;
+      const total = items.length;
       let faces = 0;
       let from = 0;
       let to = 0;
@@ -599,14 +801,15 @@ function CanvasStack({
       const booksStart = performance.now();
       const centre = total > 0 ? Math.round(clampPosition(s, total)) : -1;
       if (centre >= 0) {
-        const view: View = { camera: FAN_CAMERA, originX: width / 2, originY: height / 2 };
+        const originY = fanOriginY(height, centres, s, MAX_DEPTH, theme.floorGap);
+        const view: View = { camera: FAN_CAMERA, originX: width / 2, originY };
         const books = scratch.current;
         books.fill(null);
         const base = centre - FAN_CAP;
         const projectAt = (i: number): ProjectedBook => {
           let book = books[i - base];
           if (!book) {
-            book = projectBook(fannedBook(i, entries[i].step, shapes[i], centres, s, twist), view);
+            book = projectBook(fannedBook(i, items[i].step, shapes[i], centres, s, twist), view);
             books[i - base] = book;
           }
           return book;
@@ -618,14 +821,93 @@ function CanvasStack({
         from = range.start;
         to = range.end;
         const kit: FaceKit = { scale, labels, theme, paint: paint.current, plainAvatars: o?.plainAvatars ?? false, prep };
+        const marks = placed.current;
+        marks.sprites.length = 0;
+        marks.lines.length = 0;
+        if (markers) {
+          // Only markers by books in the window. One that would cover the middle book moves above or below it.
+          const middle = faceBox(projectAt(centre).faces);
+          const sprite = (key: string, make: () => Sprite) => {
+            let got = sprites.get(key);
+            if (!got) {
+              const started = performance.now();
+              got = make();
+              sprites.set(key, got);
+              prep.ms += performance.now() - started;
+              prep.count += 1;
+            }
+            return got;
+          };
+          const put = (sp: Sprite, x: number, y: number) => {
+            const top = markerTop({ x, y, width: sp.width, height: sp.height }, middle, height, theme.padY);
+            marks.sprites.push({ sprite: sp, x: Math.round(x * scale) / scale, y: Math.round(top * scale) / scale });
+          };
+          for (let k = firstMarkerFrom(markers.months, from); k < markers.months.length && markers.months[k].index < to; k++) {
+            const m = markers.months[k];
+            const y = spineLevels(m.index, shapes[m.index], centres, s, twist, originY).bottom;
+            if (y < 0 || y > height) continue;
+            marks.lines.push(y);
+            const key = `m\u0000${m.big ? 1 : 0}\u0000${m.parts.map((p) => p.text).join('')}`;
+            const sp = sprite(key, () => renderSprite(monthParts(m.parts, m.big, theme), theme.surface, theme.text, theme.border, theme, scale));
+            put(sp, width - theme.gutter - sp.width, y - theme.padY - sp.height);
+          }
+          for (let k = firstMarkerFrom(markers.flags, from); k < markers.flags.length && markers.flags[k].index < to; k++) {
+            const f = markers.flags[k];
+            const y = spineLevels(f.index, shapes[f.index], centres, s, twist, originY).middle;
+            const sp = sprite(`f\u0000${f.text}`, () =>
+              renderSprite(
+                [
+                  { text: '🚩 ', font: theme.markerEmojiFont, size: theme.markerSize },
+                  { text: f.text, font: theme.markerFont, size: theme.markerSize },
+                ],
+                theme.milestone,
+                theme.onMilestone,
+                null,
+                theme,
+                scale,
+              ),
+            );
+            if (y + sp.height / 2 < 0 || y - sp.height / 2 > height) continue;
+            put(sp, theme.gutter, y - sp.height / 2);
+          }
+        }
+        const drawSprites = (list: readonly PlacedSprite[]) => {
+          if (list.length === 0) return;
+          ctx.setTransform(scale, 0, 0, scale, 0, 0);
+          for (const { sprite: sp, x, y } of list) {
+            ctx.drawImage(sp.canvas, x, y, sp.width, sp.height);
+            ops += 1;
+          }
+        };
         // Bottom of the pile first: index order is painter's order (stackProjection's drawOrder).
         for (let i = from; i < to; i++) {
           const book = projectAt(i);
           // Ready each spine as its book comes into the window, even facing away, so a turn of
           // the fan never has many spines to draw in one frame.
-          spineLabel(book.step, paints[i], kit);
-          for (const face of book.faces) drawFace(ctx, face, book.step, paints[i], i - s, kit);
+          spineLabel(paints[i], kit);
+          for (const face of book.faces) drawFace(ctx, face, paints[i], i - s, kit);
           faces += book.faces.length;
+        }
+        if (marks.lines.length > 0) {
+          // Month lines across the pile, in one dashed stroke.
+          ctx.setTransform(scale, 0, 0, scale, 0, 0);
+          ctx.beginPath();
+          for (const y of marks.lines) {
+            const at = (Math.round(y * scale) + 0.5) / scale;
+            ctx.moveTo(theme.gutter, at);
+            ctx.lineTo(width - theme.gutter, at);
+          }
+          ctx.setLineDash([theme.dash, theme.dashGap]);
+          ctx.strokeStyle = theme.insetLine;
+          ctx.lineWidth = theme.borderThin;
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ops += 1;
+        }
+        drawSprites(marks.sprites);
+        if (centre !== c.centre) {
+          c.centre = centre;
+          onCentre?.(items[centre], centre);
         }
       }
 
@@ -659,11 +941,11 @@ function CanvasStack({
           c.inset = next;
         }
         if (tagBook.current && tagTurned.current && describeCentre) {
-          const entry = entries[centre];
+          const item = items[centre];
           const degrees = Math.round(Math.abs(relativeYaw(centre, s, twist)));
-          if (tagChanged(c.tag, entry.step, degrees)) {
-            c.tag = { step: entry.step, degrees };
-            const text = describeCentre({ title: entry.title, avatar: entry.avatar, degrees });
+          if (tagChanged(c.tag, item.step, degrees)) {
+            c.tag = { step: item.step, degrees };
+            const text = describeCentre({ title: item.title, avatar: item.avatar, degrees });
             tagBook.current.textContent = text.book;
             tagTurned.current.textContent = text.turned;
           }
@@ -689,7 +971,7 @@ function CanvasStack({
       onDraw?.(stats);
       c.listener?.(stats);
     },
-    [labels, theme],
+    [labels, sprites, theme],
   );
 
   /** Run the camera: one frame at a time (ease, draw) until it arrives, then stop. */
@@ -729,14 +1011,8 @@ function CanvasStack({
       if (c.settling) {
         c.settling = false;
         const el = scroller.current;
-        const top = positionToScroll(c.shown, scene.current.entries.length);
-        if (el && Math.abs(c.scrollTop - top) >= OWN_SCROLL_SLACK / 2) {
-          c.expected = top;
-          window.clearTimeout(c.expectedTimer);
-          c.expectedTimer = window.setTimeout(() => (cam.current.expected = null), OWN_SCROLL_MS);
-          el.scrollTop = top;
-          c.scrollTop = top;
-        }
+        const top = positionToScroll(c.shown, scene.current.items.length);
+        if (el && Math.abs(c.scrollTop - top) >= OWN_SCROLL_SLACK / 2) ownScroll(c, el, top);
       }
     };
     c.raf = requestAnimationFrame(tick);
@@ -746,7 +1022,7 @@ function CanvasStack({
   const settleNow = useCallback(() => {
     const c = cam.current;
     if (!(c.overrides ? c.overrides.settle : scene.current.settle)) return;
-    const total = scene.current.entries.length;
+    const total = scene.current.items.length;
     c.target = settleTarget(scrollToPosition(c.scrollTop, total), total);
     c.settling = true;
     run();
@@ -768,7 +1044,7 @@ function CanvasStack({
       c.style.width = `${width}px`;
       c.style.height = `${height}px`;
       applyScale(Math.min(canvasScale(window.devicePixelRatio), cam.current.scaleCap));
-      if (sizer.current) sizer.current.style.height = `${scrollHeight(scene.current.entries.length, height)}px`;
+      if (sizer.current) sizer.current.style.height = `${scrollHeight(scene.current.items.length, height)}px`;
       draw(true);
     };
     const watchScale = () => {
@@ -782,7 +1058,7 @@ function CanvasStack({
     };
     const camState = cam.current;
     camState.scrollTop = el.scrollTop;
-    camState.target = camState.shown = scrollToPosition(camState.scrollTop, scene.current.entries.length);
+    camState.target = camState.shown = scrollToPosition(camState.scrollTop, scene.current.items.length);
     fit();
     watchScale();
     const resize = new ResizeObserver(fit);
@@ -825,7 +1101,7 @@ function CanvasStack({
       return;
     }
     c.expected = null;
-    c.target = scrollToPosition(c.scrollTop, scene.current.entries.length);
+    c.target = scrollToPosition(c.scrollTop, scene.current.items.length);
     c.settling = false;
     window.clearTimeout(c.settleTimer);
     if (c.overrides ? c.overrides.settle : scene.current.settle) c.settleTimer = window.setTimeout(settleNow, SETTLE_IDLE_MS);
@@ -847,18 +1123,58 @@ function CanvasStack({
       c.last = 0;
       c.settling = false;
       window.clearTimeout(c.settleTimer);
-      if (Math.abs(el.scrollTop - top) >= OWN_SCROLL_SLACK / 2) {
-        c.expected = top;
-        window.clearTimeout(c.expectedTimer);
-        c.expectedTimer = window.setTimeout(() => (cam.current.expected = null), OWN_SCROLL_MS);
-        el.scrollTop = top;
-      }
-      c.scrollTop = top;
-      c.target = c.shown = scrollToPosition(top, scene.current.entries.length);
+      ownScroll(c, el, top);
+      c.target = c.shown = scrollToPosition(top, scene.current.items.length);
       draw(true);
     },
     [draw],
   );
+
+  // New books (or fewer): keep the reader's book in front of them, or follow the newest book up
+  // if that's where they were (stackItems.followUpdate), without a jump.
+  const keys = useRef<string[] | null>(null);
+  useLayoutEffect(() => {
+    const next = items.map((item) => item.key);
+    const prev = keys.current;
+    keys.current = next;
+    const c = cam.current;
+    if (!prev) return;
+    // Titles or colours may have changed even when the books haven't: tell onCentre again.
+    c.centre = -1;
+    c.tag = null;
+    const el = scroller.current;
+    const same = prev.length === next.length && prev.every((key, i) => key === next[i]);
+    if (same || !el) {
+      if (!c.raf) draw(true);
+      return;
+    }
+    const moved = followUpdate(prev, next, c.target, c.shown);
+    if (sizer.current) sizer.current.style.height = `${scrollHeight(next.length, size.current.height)}px`;
+    window.clearTimeout(c.settleTimer);
+    c.settling = false;
+    c.target = moved.target;
+    c.shown = moved.shown;
+    ownScroll(c, el, positionToScroll(moved.target, next.length));
+    if (c.raf) return;
+    if (moved.target === moved.shown) draw(true);
+    else run();
+  }, [items, draw, run]);
+
+  /** Arrow Up and Down: one book up (newer) or down (older), with the ease. */
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    const by = event.key === 'ArrowUp' ? 1 : event.key === 'ArrowDown' ? -1 : 0;
+    const el = scroller.current;
+    const total = scene.current.items.length;
+    if (!by || !el || total === 0) return;
+    event.preventDefault();
+    const c = cam.current;
+    window.clearTimeout(c.settleTimer);
+    c.settling = false;
+    c.target = stepTarget(c.target, by, total);
+    ownScroll(c, el, positionToScroll(c.target, total));
+    run();
+  };
 
   // The benchmark's handle (developer tools): nothing here runs unless the benchmark calls it.
   useEffect(() => {
@@ -899,7 +1215,7 @@ function CanvasStack({
       jumpTo,
       clearLabels,
       prewarm(from, to) {
-        const { entries, paints } = scene.current;
+        const { items, paints } = scene.current;
         const kit: FaceKit = {
           scale: size.current.scale,
           labels,
@@ -908,11 +1224,11 @@ function CanvasStack({
           plainAvatars: c.overrides?.plainAvatars ?? false,
           prep: { ms: 0, count: 0 },
         };
-        for (let i = Math.max(0, from); i < Math.min(entries.length, to); i++) spineLabel(entries[i].step, paints[i], kit);
+        for (let i = Math.max(0, from); i < Math.min(items.length, to); i++) spineLabel(paints[i], kit);
       },
       drawNow: () => draw(true),
       scroller: () => scroller.current,
-      count: () => scene.current.entries.length,
+      count: () => scene.current.items.length,
       canvasSize: () => ({ width: canvas.current?.width ?? 0, height: canvas.current?.height ?? 0, scale: size.current.scale }),
       listen(listener) {
         c.listener = listener;
@@ -942,6 +1258,7 @@ function CanvasStack({
         aria-label={label}
         tabIndex={0}
         onScroll={handleScroll}
+        onKeyDown={handleKeyDown}
       >
         <div ref={sizer} className="book-stack__sizer" style={{ height: scrollHeight(count, 0) }} />
       </div>

@@ -65,3 +65,8 @@ export function stepCamera(shown: number, target: number, dtMs: number, reducedM
 export function settleTarget(s: number, count: number): number {
   return clampPosition(Math.round(clampPosition(s, count)), count);
 }
+
+/** Arrow keys: the next whole book up (+1, newer) or down (-1, older) from where the camera is going. */
+export function stepTarget(target: number, by: number, count: number): number {
+  return settleTarget(Math.round(clampPosition(target, count)) + Math.sign(by), count);
+}

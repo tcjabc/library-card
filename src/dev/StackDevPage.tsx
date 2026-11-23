@@ -3,7 +3,9 @@ import { currentBuildInfo, formatVersionLine } from '../grownups/version';
 import { href } from '../router';
 import { bookRenders } from '../staircase/bookRenders';
 import type { CentreBook, CentreTag, DrawStats, StackBench } from '../staircase/CanvasStack';
-import { generateFakeStack } from '../staircase/stackModel';
+import { currentTimeZone } from '../lib/timezone';
+import { stackMarkers } from '../staircase/stackItems';
+import { fakeStackItems, generateFakeStack } from '../staircase/stackModel';
 import { MAX_TWIST_DEG, TWIST_DEG } from '../staircase/stackProjection';
 import { fmt, strings } from '../strings';
 import {
@@ -25,7 +27,9 @@ import './StackDevPage.css';
 /**
  * #/dev/stack — the Family Staircase as a 3D pile of pretend books (stage 1 prototype), with a
  * small panel measuring how smoothly it scrolls. Behind the same gate as the other developer
- * tools. Pretend data only: nothing is read from or written to storage.
+ * tools. Pretend data only: nothing is read from or written to storage. The canvas mode is the
+ * Family Staircase's own component, given pretend books with dates over several years, so the
+ * month lines and book-number flags are measured too.
  */
 
 const BookStack = lazy(() => import('../staircase/BookStack'));
@@ -62,6 +66,16 @@ export default function StackDevPage() {
   const [settle, setSettle] = useState(true);
   const [raster, setRaster] = useState(false);
   const entries = useMemo(() => generateFakeStack(count, SEED), [count]);
+  const items = useMemo(() => fakeStackItems(entries, SEED), [entries]);
+  const markers = useMemo(
+    () =>
+      stackMarkers(items, currentTimeZone(), {
+        locale: strings.app.locale,
+        first: strings.staircase.stackFlagFirst,
+        number: strings.staircase.stackFlagNumber,
+      }),
+    [items],
+  );
   const scroller = useRef<HTMLDivElement | null>(null);
   const meter = useScrollMeter(scroller);
   const { reset } = meter;
@@ -93,7 +107,8 @@ export default function StackDevPage() {
             // A fresh canvas when "Measure raster" changes: Chrome may move a canvas that's been
             // read back to the CPU, and keep it there.
             key={`${count}-${raster}`}
-            entries={entries}
+            items={items}
+            markers={markers}
             seed={SEED}
             twist={twist}
             settle={settle}

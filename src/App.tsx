@@ -20,6 +20,7 @@ import { strings } from './strings';
 import { ToastProvider } from './ui/Toast';
 import { UpdatingNotice } from './ui/UpdatingNotice';
 
+const FamilyStack = lazy(() => import('./screens/journeys/FamilyStack'));
 const DevPage = lazy(() => import('./dev/DevPage'));
 const StackDevPage = lazy(() => import('./dev/StackDevPage'));
 const GrownUpsArea = lazy(() => import('./grownups/GrownUpsArea'));
@@ -85,6 +86,17 @@ function Routes() {
     case '/check':
       return <RequireReader>{(reader) => <CheckReads reader={reader} />}</RequireReader>;
     case '/staircase':
+      return (
+        <RequireReader>
+          {(reader) => (
+            <Suspense fallback={<p className="page muted">{strings.common.loading}</p>}>
+              <FamilyStack reader={reader} />
+            </Suspense>
+          )}
+        </RequireReader>
+      );
+    case '/staircase/old':
+      // The zig-zag staircase from before the pile, kept for comparison (developer tools link here).
       return <RequireReader>{(reader) => <FamilyStaircase reader={reader} />}</RequireReader>;
     case '/dev':
       return (

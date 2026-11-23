@@ -4,6 +4,8 @@
  */
 export const en = {
   app: {
+    /** The language dates and numbers are written in (Intl). */
+    locale: 'en',
     name: 'Library Card',
     shortName: 'Library Card',
     description: 'A reading tracker for kids with QR library cards.',
@@ -157,6 +159,18 @@ export const en = {
     stepLabel: 'Step {step}: {reader} read {title}',
     someone: 'Someone',
     first: 'The very first book!',
+    // The pile of books (the Family Staircase screen).
+    stackTotal: '{count} books!',
+    stackTotalOne: '1 book!',
+    stackEmpty: 'No books on the pile yet. Read a book to put the very first one on!',
+    stackLabel: 'Your family’s pile of {count} books, newest on top. The arrow keys move one book up or down.',
+    stackLabelOne: 'Your family’s pile with its first book. Read more to make it grow!',
+    stackListLabel: 'Every book on the pile, newest first',
+    stackListItem: 'Step {step}, {title}, read by {reader}, {date}',
+    stackUntitled: 'A book',
+    stackNoAvatar: '📖',
+    stackFlagFirst: 'First book!',
+    stackFlagNumber: '#{count}',
     fake: 'Test data: {count} pretend steps (grown-up tools). Nothing is saved.',
     novelties: {
       bird: 'A bird',
@@ -513,11 +527,13 @@ export const en = {
     pretendToday: 'Pretend today is (this tab only)',
     pretendReset: 'Back to the real date ({today})',
 
-    staircaseHeading: 'Family Staircase test data',
-    staircaseIntro: 'Shows the staircase with pretend steps, to check it scrolls smoothly. This tab only; nothing is saved.',
+    staircaseHeading: 'Old staircase',
+    staircaseIntro: 'Shows the old staircase with pretend steps, to check it scrolls smoothly. This tab only; nothing is saved.',
     staircaseFake: 'Show {count} pretend steps',
     staircaseFakeOff: 'Back to real steps',
-    staircaseFakeOn: 'The staircase shows {count} pretend steps in this tab.',
+    staircaseFakeOn: 'The old staircase shows {count} pretend steps in this tab.',
+    staircaseOld: 'Old staircase',
+    staircaseOldIntro: 'The zig-zag staircase from before the pile of books, kept for comparison.',
 
     stackHeading: 'Book stack prototype',
     stackIntro: 'The staircase as a pile of pretend books that turn to face you as you scroll, drawn on a canvas, to check it scrolls smoothly on our tablets and phones. The old CSS 3D and flat modes are still there to compare. Pretend books only; nothing is saved.',

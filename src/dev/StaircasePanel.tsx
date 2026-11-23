@@ -4,17 +4,23 @@ import { fmt, strings } from '../strings';
 
 const t = strings.dev;
 
-/** Dev only: show the Family Staircase with lots of pretend steps (this tab, nothing saved). */
+/** Dev only: the old zig-zag staircase (kept for comparison), and showing it with lots of pretend steps (this tab, nothing saved). */
 export function StaircasePanel() {
   const fake = useFakeStaircaseSteps();
   const count = FAKE_STAIRCASE_STEPS.toLocaleString();
   return (
     <section className="stack card">
       <h2>{t.staircaseHeading}</h2>
+      <p className="muted small">{t.staircaseOldIntro}</p>
+      <div className="row">
+        <a className="btn" href={href('/staircase/old')}>
+          {t.staircaseOld}
+        </a>
+      </div>
       <p className="muted small">{t.staircaseIntro}</p>
       {fake && (
         <p className="small" role="status">
-          {fmt(t.staircaseFakeOn, { count: fake.toLocaleString() })} <a href={href('/staircase')}>{strings.staircase.title}</a>
+          {fmt(t.staircaseFakeOn, { count: fake.toLocaleString() })} <a href={href('/staircase/old')}>{t.staircaseOld}</a>
         </p>
       )}
       <div className="row">

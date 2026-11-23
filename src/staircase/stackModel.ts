@@ -1,11 +1,12 @@
 /**
- * The Family Staircase as a 3D pile of books (stage 1 prototype, developer tools only).
+ * The Family Staircase as a pile of books: the pretend piles for developer tools and shared shapes.
  * Pure helpers (unit-tested): pretend books, each book's seeded size and wobble, the pile's
  * layout and which books are on screen. One book in the pile = one reader + book, as on the
  * current staircase (one first read per reader per book), so the same title read by two
  * readers appears twice.
  */
 import { hashString, visibleWindow as uniformWindow } from '../journeys/staircase';
+import type { StackItem } from './stackItems';
 
 export interface StackReader {
   id: string;
@@ -116,9 +117,9 @@ export function mixedHash(text: string): number {
   return x >>> 0;
 }
 
-/** A number in [0, 1) from the seed, a key and a step: the same on every device. */
-function seeded(seed: string, key: string, step: number): number {
-  return mixedHash(`${seed}|${key}|${step}`) / 2 ** 32;
+/** A number in [0, 1) from the seed, a key and an id (a step, or a stack book's key): the same on every device. */
+function seeded(seed: string, key: string, id: number | string): number {
+  return mixedHash(`${seed}|${key}|${id}`) / 2 ** 32;
 }
 
 function pick<T>(list: readonly T[], unit: number): T {
@@ -173,16 +174,55 @@ export function generateFakeStack(count: number, seed: string): StackEntry[] {
   return out;
 }
 
-/** A book's size and wobble, seeded by step (and the household, later): stable as the pile grows. */
-export function bookShape(seed: string, step: number): BookShape {
+/**
+ * A book's size and wobble, seeded by the household and an id: stable as the pile grows. The
+ * Family Staircase seeds by the stack book's key (reader + book), so a read that lands in the
+ * middle of the pile (a check confirmed later) never changes the books above it; the pretend
+ * piles seed by step. A step and its digits as a string give the same shape.
+ */
+export function bookShape(seed: string, id: number | string): BookShape {
   return {
-    width: pick(BOOK_WIDTHS, seeded(seed, 'width', step)),
-    depth: pick(BOOK_DEPTHS, seeded(seed, 'depth', step)),
-    thickness: pick(BOOK_THICKNESSES, seeded(seed, 'thickness', step)),
-    yaw: spread(seeded(seed, 'yaw', step), MAX_YAW),
-    x: spread(seeded(seed, 'x', step), MAX_NUDGE_X),
-    z: spread(seeded(seed, 'z', step), MAX_NUDGE_Z),
+    width: pick(BOOK_WIDTHS, seeded(seed, 'width', id)),
+    depth: pick(BOOK_DEPTHS, seeded(seed, 'depth', id)),
+    thickness: pick(BOOK_THICKNESSES, seeded(seed, 'thickness', id)),
+    yaw: spread(seeded(seed, 'yaw', id), MAX_YAW),
+    x: spread(seeded(seed, 'x', id), MAX_NUDGE_X),
+    z: spread(seeded(seed, 'z', id), MAX_NUDGE_Z),
   };
+}
+
+/** Pretend first-read dates start here and spread over this many years, so the pretend piles have month lines. */
+export const FAKE_DATES_FROM = Date.UTC(2023, 0, 1);
+export const FAKE_DATES_YEARS = 4;
+const YEAR_MS = 365.25 * 86_400_000;
+
+/**
+ * A pretend first-read date for `step` of `count`: evenly spread from FAKE_DATES_FROM over
+ * FAKE_DATES_YEARS, each nudged a little later within its own share of the time, so the dates
+ * stay in step order.
+ */
+export function fakeFirstReadAt(step: number, count: number, seed: string): string {
+  const slot = (FAKE_DATES_YEARS * YEAR_MS) / Math.max(1, Math.floor(count));
+  const at = FAKE_DATES_FROM + (Math.max(1, step) - 1) * slot + seeded(seed, 'date', step) * slot * 0.9;
+  return new Date(Math.floor(at)).toISOString();
+}
+
+/**
+ * The pretend pile as stack books (what the canvas stack draws): keyed by step, so their shapes
+ * match the pretend 3D pile's; each pretend reader gets a reader colour of their own.
+ */
+export function fakeStackItems(entries: readonly StackEntry[], seed: string): StackItem[] {
+  const colour = new Map(FAKE_READERS.map((r, i) => [r.id, i + 1]));
+  return entries.map((e) => ({
+    key: String(e.step),
+    step: e.step,
+    isbn: e.isbn,
+    title: e.title,
+    readerId: e.readerId,
+    avatar: e.avatar,
+    readerColour: colour.get(e.readerId) ?? 1,
+    firstReadAt: fakeFirstReadAt(e.step, entries.length, seed),
+  }));
 }
 
 export interface StackLayout {

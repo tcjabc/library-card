@@ -12,6 +12,16 @@
   inset: 0;
 }
 
+/* The scroll area takes the keys (arrow Up and Down); its focus ring is drawn on the canvas over it. */
+.canvas-stack > .canvas-stack__scroller:focus-visible {
+  outline: none;
+}
+
+.canvas-stack > .canvas-stack__scroller:focus-visible + .canvas-stack__canvas {
+  outline: var(--border-thick) solid var(--color-focus);
+  outline-offset: calc(-1 * var(--border-thick));
+}
+
 .canvas-stack__canvas {
   position: absolute;
   top: 0;
