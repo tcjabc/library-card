@@ -4,7 +4,7 @@ import { isGrownUpPath } from '../session';
 
 describe('isGrownUpPath', () => {
   it('covers the grown-up area and developer tools only', () => {
-    expect(['/grownups', '/grownups/books', '/grownups/settings', '/dev'].map(isGrownUpPath)).toEqual([true, true, true, true]);
+    expect(['/grownups', '/grownups/books', '/grownups/settings', '/dev', '/dev/stack'].map(isGrownUpPath)).toEqual([true, true, true, true, true]);
     expect(['/', '/hub', '/shelf', '/grownupsx', '/devices'].map(isGrownUpPath)).toEqual([false, false, false, false, false]);
   });
 });

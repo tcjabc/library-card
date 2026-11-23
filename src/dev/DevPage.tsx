@@ -40,6 +40,15 @@ export default function DevPage() {
 
       <PretendTodayPanel />
       <StaircasePanel />
+      <section className="stack card">
+        <h2>{t.stackHeading}</h2>
+        <p className="muted small">{t.stackIntro}</p>
+        <div className="row">
+          <a className="btn" href={href('/dev/stack')}>
+            {t.stackOpen}
+          </a>
+        </div>
+      </section>
       <SelfTestPanel />
     </main>
   );

@@ -1,0 +1,106 @@
+/* The book stack prototype (BookStack.tsx). Every rule is under .book-stack. */
+
+.book-stack {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.book-stack__sizer {
+  position: relative;
+  overflow: clip;
+}
+
+/* The one tilted container: a fixed camera, tipped down and turned a little. */
+.book-stack__pile {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  transform-origin: 50% 0;
+  transform: rotateX(var(--tilt-x)) rotateY(var(--tilt-y));
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+.book-stack__book {
+  position: absolute;
+  left: 50%;
+  transform-style: preserve-3d;
+}
+
+.book-stack__face {
+  position: absolute;
+  backface-visibility: hidden;
+}
+
+.book-stack__book > .book-stack__spine {
+  inset: 0;
+}
+
+/* The spine: the book's colour, the reader's band and avatar, then the title. */
+.book-stack__spine {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-inline-end: var(--space-2);
+  overflow: hidden;
+  color: var(--color-on-book);
+  background:
+    linear-gradient(to bottom, transparent 55%, var(--color-book-shade)),
+    hsl(var(--spine-hue) var(--book-spine-saturation) var(--book-spine-lightness));
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  line-height: 1.2;
+}
+
+.book-stack__band {
+  flex: 0 0 var(--book-band-width);
+  align-self: stretch;
+  background: hsl(var(--reader-hue) var(--book-band-saturation) var(--book-band-lightness));
+}
+
+.book-stack__avatar {
+  flex: 0 0 auto;
+  font-family: var(--font-emoji);
+  font-size: var(--text-md);
+  line-height: 1;
+}
+
+.book-stack__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.book-stack__cover {
+  left: 0;
+  background:
+    linear-gradient(to top, var(--color-book-shade), transparent 40%),
+    hsl(var(--spine-hue) var(--book-spine-saturation) var(--book-cover-lightness));
+}
+
+/* Page edges: thin lines across the paper, a little shade towards the back. */
+.book-stack__pages {
+  top: 0;
+  background:
+    repeating-linear-gradient(to bottom, var(--color-book-pages) 0 2px, var(--color-book-page-line) 2px 3px),
+    var(--color-book-pages);
+}
+
+/* Lite: the same spines in flat rows, no 3D. */
+.book-stack__flat {
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+
+.book-stack__flat-book {
+  position: absolute;
+  left: 50%;
+}

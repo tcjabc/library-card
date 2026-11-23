@@ -1,0 +1,115 @@
+/* #/dev/stack (StackDevPage.tsx). Every rule is under .stack-dev. */
+
+/* The page fills the screen; the pile scrolls inside it. */
+.stack-dev {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  max-width: var(--content-max-wide);
+  margin: 0 auto;
+  padding-top: env(safe-area-inset-top);
+}
+
+.stack-dev__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+}
+
+.stack-dev__title {
+  margin: 0;
+  font-size: var(--text-md);
+}
+
+.stack-dev__loading {
+  padding: var(--space-4);
+}
+
+/* Measurements: small, collapsible, over the bottom of the pile. */
+.stack-dev__panel {
+  position: fixed;
+  right: var(--space-2);
+  bottom: max(var(--space-2), env(safe-area-inset-bottom));
+  left: var(--space-2);
+  z-index: var(--z-dev-panel);
+  width: max-content;
+  max-width: min(var(--dev-panel-max), calc(100% - 2 * var(--space-2)));
+  max-height: 50dvh;
+  margin-left: auto;
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-thin) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+  font-size: var(--text-sm);
+}
+
+.stack-dev__summary {
+  min-height: var(--tap-target-grownup);
+  display: flex;
+  align-items: center;
+  font-weight: var(--weight-bold);
+  cursor: pointer;
+}
+
+.stack-dev__summary::-webkit-details-marker {
+  display: none;
+}
+
+.stack-dev__summary::before {
+  content: '▸';
+  margin-right: var(--space-2);
+}
+
+.stack-dev__panel[open] > .stack-dev__summary::before {
+  content: '▾';
+}
+
+.stack-dev__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-block: var(--space-2);
+}
+
+.stack-dev__panel .chip {
+  min-height: var(--tap-target-grownup);
+  padding: 0 var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.stack-dev__readout {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.stack-dev__line {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+.stack-dev__line dt {
+  color: var(--color-text-muted);
+}
+
+.stack-dev__line dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+/* The fallback copy's off-screen text box. */
+.stack-dev__copy-area {
+  position: fixed;
+  top: 0;
+  left: 0;
+  opacity: 0;
+}

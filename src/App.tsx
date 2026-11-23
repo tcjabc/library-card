@@ -21,6 +21,7 @@ import { ToastProvider } from './ui/Toast';
 import { UpdatingNotice } from './ui/UpdatingNotice';
 
 const DevPage = lazy(() => import('./dev/DevPage'));
+const StackDevPage = lazy(() => import('./dev/StackDevPage'));
 const GrownUpsArea = lazy(() => import('./grownups/GrownUpsArea'));
 
 export function App() {
@@ -90,6 +91,14 @@ function Routes() {
         <GrownUpGate>
           <Suspense fallback={<p className="page muted">{strings.common.loading}</p>}>
             <DevPage />
+          </Suspense>
+        </GrownUpGate>
+      );
+    case '/dev/stack':
+      return (
+        <GrownUpGate>
+          <Suspense fallback={<p className="page muted">{strings.common.loading}</p>}>
+            <StackDevPage />
           </Suspense>
         </GrownUpGate>
       );

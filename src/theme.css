@@ -101,6 +101,19 @@
   --color-milestone: #f59f00;
   --color-on-milestone: #2b1d00;
 
+  /* Book stack (prototype): each spine gets a hue from its ISBN and the reader's band a hue */
+  /* from the reader; these set how bright and strong they are. Books look the same in both themes. */
+  --book-spine-saturation: 48%;
+  --book-spine-lightness: 36%;
+  --book-cover-lightness: 46%;
+  --book-band-saturation: 78%;
+  --book-band-lightness: 58%;
+  --color-on-book: #ffffff;
+  --color-book-pages: #f6eedd;
+  --color-book-page-line: #d8c9a8;
+  --color-book-shade: rgba(0, 0, 0, 0.28);
+  --book-band-width: 0.625rem;
+
   /* Overlays */
   --color-backdrop: rgba(20, 24, 33, 0.55);
   --color-toast: #1f2430;
@@ -216,6 +229,9 @@
   --z-celebration: 55;
   --z-tabbar: 40;
   --z-sticky: 30;
+  /* Developer tools: the book stack's measurement panel, over the pile. */
+  --z-dev-panel: 45;
+  --dev-panel-max: 22rem;
   --z-menu: 45;
   /* "Updating…": over everything while a new version waits for the database. */
   --z-updating: 90;
