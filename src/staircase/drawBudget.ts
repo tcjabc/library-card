@@ -140,4 +140,6 @@ export interface StackOverrides {
   plainAvatars: boolean;
   settle: boolean;
   twist: number;
+  /** How many spine labels the cache keeps while benchmarking (enough for every book a run shows). */
+  labelCache: number;
 }

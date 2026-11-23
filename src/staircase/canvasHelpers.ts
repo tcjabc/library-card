@@ -52,14 +52,28 @@ export function fitWithEllipsis(text: string, maxWidth: number, measure: (s: str
 /** A small least-recently-used cache: getting or setting a key makes it the newest; the oldest goes first. */
 export class LruCache<K, V> {
   private readonly map = new Map<K, V>();
-  private readonly limit: number;
+  private max: number;
 
   constructor(limit: number) {
-    this.limit = Math.max(1, Math.floor(limit));
+    this.max = Math.max(1, Math.floor(limit));
   }
 
   get size(): number {
     return this.map.size;
+  }
+
+  get limit(): number {
+    return this.max;
+  }
+
+  /** A new limit (at least 1); a smaller one drops the oldest entries straight away. */
+  resize(limit: number): void {
+    this.max = Math.max(1, Math.floor(limit));
+    this.trim();
+  }
+
+  private trim(): void {
+    while (this.map.size > this.max) this.map.delete(this.map.keys().next().value as K);
   }
 
   get(key: K): V | undefined {
@@ -73,7 +87,7 @@ export class LruCache<K, V> {
   set(key: K, value: V): void {
     this.map.delete(key);
     this.map.set(key, value);
-    while (this.map.size > this.limit) this.map.delete(this.map.keys().next().value as K);
+    this.trim();
   }
 
   has(key: K): boolean {

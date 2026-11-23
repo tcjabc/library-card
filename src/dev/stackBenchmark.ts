@@ -4,7 +4,7 @@
  * canvas stack through these.
  */
 import { PX_PER_BOOK } from '../staircase/camera';
-import type { StackOverrides } from '../staircase/drawBudget';
+import { FAN_CAP, type StackOverrides } from '../staircase/drawBudget';
 import { TWIST_DEG } from '../staircase/stackProjection';
 import { fmt, strings } from '../strings';
 
@@ -54,6 +54,7 @@ export function overridesFor(config: BenchConfig): StackOverrides {
     plainAvatars: config.plainAvatars,
     settle: config.settle,
     twist: config.twist,
+    labelCache: benchLabelCache(),
   };
 }
 
@@ -62,7 +63,8 @@ export const RESTORED: StackOverrides | null = null;
 
 // ---- The fixed scroll ----
 
-export const BENCH_BOOKS_PER_SECOND = 6;
+/** A firm flick's speed, held steady: about 1,700 scroll px a second. */
+export const BENCH_BOOKS_PER_SECOND = 30;
 /** Down this long, hold, then back up this long (ms). */
 export const BENCH_LEG_MS = 3000;
 export const BENCH_HOLD_MS = 400;
@@ -86,9 +88,17 @@ export function benchHolding(ms: number): boolean {
 }
 
 /** The books (indexes, oldest first) a run can show, for prewarming their labels: the top of the pile, down past the farthest point. */
-export function benchBooks(count: number, cap: number): { from: number; to: number } {
+export function benchBooks(count: number, cap: number = FAN_CAP): { from: number; to: number } {
   const top = Math.max(0, count - 1);
   return { from: Math.max(0, top - Math.ceil(BENCH_BOOKS_VISITED) - cap - 1), to: count };
+}
+
+/**
+ * The label cache size while benchmarking: every book a run can show, plus a little room, so
+ * prewarmed labels aren't pushed out mid-run (the normal cache holds 100).
+ */
+export function benchLabelCache(cap: number = FAN_CAP): number {
+  return Math.ceil(BENCH_BOOKS_VISITED) + 2 * cap + 2 + 10;
 }
 
 // ---- Frame maths ----

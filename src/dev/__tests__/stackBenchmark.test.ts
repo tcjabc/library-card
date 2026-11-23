@@ -10,6 +10,7 @@ import {
   BENCH_RUN_MS,
   RESTORED,
   benchBooks,
+  benchLabelCache,
   benchConfigs,
   benchHolding,
   benchScrollAt,
@@ -62,7 +63,15 @@ describe('benchConfigs', () => {
   });
 
   it('fixes everything for the stack, adaptive resolution off; afterwards nothing is overridden', () => {
-    expect(overridesFor(configs[5])).toEqual({ scale: 1.5, adaptive: false, overlays: false, plainAvatars: false, settle: false, twist: TWIST_DEG });
+    expect(overridesFor(configs[5])).toEqual({
+      scale: 1.5,
+      adaptive: false,
+      overlays: false,
+      plainAvatars: false,
+      settle: false,
+      twist: TWIST_DEG,
+      labelCache: benchLabelCache(),
+    });
     expect(configs.map(overridesFor).every((o) => o.adaptive === false)).toBe(true);
     expect(RESTORED).toBeNull();
   });
@@ -83,12 +92,13 @@ describe('benchConfigs', () => {
 describe('the fixed scroll', () => {
   const far = (BENCH_BOOKS_VISITED * PX_PER_BOOK);
 
-  it('goes down at six books a second, holds, and comes back to the top', () => {
+  it('goes down at thirty books a second (a firm flick), holds, and comes back to the top', () => {
     expect(benchScrollAt(0)).toBe(0);
-    expect(benchScrollAt(1000)).toBeCloseTo(6 * PX_PER_BOOK, 9);
+    expect(BENCH_BOOKS_VISITED).toBe(90);
+    expect(benchScrollAt(1000)).toBeCloseTo(30 * PX_PER_BOOK, 9);
     expect(benchScrollAt(BENCH_LEG_MS)).toBeCloseTo(far, 9);
     expect(benchScrollAt(BENCH_LEG_MS + BENCH_HOLD_MS / 2)).toBeCloseTo(far, 9);
-    expect(benchScrollAt(BENCH_LEG_MS + BENCH_HOLD_MS + 1000)).toBeCloseTo(far - 6 * PX_PER_BOOK, 9);
+    expect(benchScrollAt(BENCH_LEG_MS + BENCH_HOLD_MS + 1000)).toBeCloseTo(far - 30 * PX_PER_BOOK, 9);
     expect(benchScrollAt(BENCH_RUN_MS)).toBeCloseTo(0, 9);
     expect(benchScrollAt(BENCH_RUN_MS + 500)).toBe(0);
     expect(benchScrollAt(-50)).toBe(0);
@@ -101,8 +111,15 @@ describe('the fixed scroll', () => {
     expect(benchHolding(BENCH_LEG_MS + BENCH_HOLD_MS + 1)).toBe(false);
   });
 
+  it('keeps every prewarmed label in the cache for the whole run', () => {
+    const { from, to } = benchBooks(1000);
+    expect(benchLabelCache()).toBeGreaterThanOrEqual(to - from);
+    expect(benchLabelCache()).toBeGreaterThan(100);
+  });
+
   it('prewarms every book a run can show', () => {
-    expect(benchBooks(1000, FAN_CAP)).toEqual({ from: 999 - 18 - FAN_CAP - 1, to: 1000 });
+    expect(benchBooks(1000, FAN_CAP)).toEqual({ from: 999 - 90 - FAN_CAP - 1, to: 1000 });
+    expect(benchBooks(1000)).toEqual(benchBooks(1000, FAN_CAP));
     expect(benchBooks(10, FAN_CAP)).toEqual({ from: 0, to: 10 });
   });
 });

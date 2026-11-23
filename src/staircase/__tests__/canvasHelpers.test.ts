@@ -95,6 +95,24 @@ describe('LruCache', () => {
     expect(cache.size).toBe(0);
   });
 
+  it('can grow and shrink, dropping the oldest entries when it shrinks', () => {
+    const cache = new LruCache<number, number>(3);
+    for (let i = 1; i <= 3; i++) cache.set(i, i);
+    cache.resize(5);
+    expect(cache.limit).toBe(5);
+    cache.set(4, 4);
+    cache.set(5, 5);
+    expect(cache.size).toBe(5);
+    cache.get(1); // 1 is now the newest
+    cache.resize(2);
+    expect(cache.size).toBe(2);
+    expect(cache.has(1)).toBe(true);
+    expect(cache.has(5)).toBe(true);
+    expect(cache.has(2)).toBe(false);
+    cache.resize(0);
+    expect(cache.limit).toBe(1);
+  });
+
   it('keeps at least one entry', () => {
     const cache = new LruCache<number, number>(0);
     cache.set(1, 1);

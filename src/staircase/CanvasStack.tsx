@@ -875,6 +875,8 @@ function CanvasStack({
     const handle: StackBench = {
       setOverrides(next) {
         if (next && !c.overrides) c.saved = { scale: size.current.scale, scaleCap: c.scaleCap, scrollTop: c.scrollTop };
+        // A bigger label cache while benchmarking, the normal one afterwards.
+        labels.resize(next ? Math.max(LABEL_CACHE_SIZE, next.labelCache) : LABEL_CACHE_SIZE);
         const plainChanged = (c.overrides?.plainAvatars ?? false) !== (next?.plainAvatars ?? false);
         c.overrides = next;
         c.motionFrames = 0;

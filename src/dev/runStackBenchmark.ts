@@ -5,7 +5,6 @@
  * again. Whatever happens (finished, cancelled or an error), the stack is put back as it was.
  */
 import type { DrawStats, StackBench } from '../staircase/CanvasStack';
-import { FAN_CAP } from '../staircase/drawBudget';
 import { addBreakdown, breakdownAverages, emptyBreakdown } from './frameStats';
 import {
   BENCH_RUN_MS,
@@ -185,7 +184,7 @@ async function runConfig(bench: StackBench, config: BenchConfig, isCancelled: ()
   bench.jumpTo(0);
   bench.clearLabels();
   if (config.labels === 'prewarmed') {
-    const { from, to } = benchBooks(bench.count(), FAN_CAP);
+    const { from, to } = benchBooks(bench.count());
     bench.prewarm(from, to);
   }
   await sleep(REST_MS);
