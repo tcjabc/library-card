@@ -1,19 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import { bookShape, generateFakeStack, stackLayout, TILT_SCALE, type BookShape } from '../stackModel';
+import { BOOK_THICKNESSES, bookShape, generateFakeStack, stackLayout, type BookShape } from '../stackModel';
 import {
-  ROTATE_PX_PER_TURN,
+  ELEVATION_DEG,
+  FAN_CAMERA,
+  FAN_MIN_EACH_WAY,
   STACK_CAMERA,
+  TWIST_DEG,
+  bookYaw,
+  cameraYaw,
   drawOrder,
   faceCorners,
   faceTransform,
+  fanReach,
+  fanWindow,
+  fannedBook,
+  heightAt,
   hitTest,
-  pileReach,
-  placedBooks,
+  pileCentres,
   pointInPolygon,
   projectBook,
   projectPoint,
-  projectedWindow,
-  yawForScroll,
+  relativeYaw,
   type Camera,
   type PlacedBook,
   type Vec2,
@@ -172,23 +179,17 @@ describe('projectBook', () => {
   });
 });
 
+/** A pile under the old fixed camera: newest first, each at its layout place. */
 function pile(count: number, seed = 'seed') {
   const entries = generateFakeStack(count, seed);
   const shapes = entries.map((e) => bookShape(seed, e.step));
   const layout = stackLayout(shapes.map((s) => s.thickness));
-  return { entries, layout, books: placedBooks(entries, shapes, layout) };
-}
-
-describe('placedBooks', () => {
-  it('lists the pile newest first, each at its layout place with its seeded shape', () => {
-    const { entries, layout, books } = pile(12);
-    expect(books.map((b) => b.step)).toEqual(entries.map((e) => e.step).reverse());
-    books.forEach((book, row) => {
-      expect(book.top).toBe(layout.tops[row]);
-      expect(book.shape).toEqual(bookShape('seed', book.step));
-    });
+  const books: PlacedBook[] = layout.tops.map((top, row) => {
+    const index = entries.length - 1 - row;
+    return { step: entries[index].step, top, shape: shapes[index] };
   });
-});
+  return { entries, shapes, layout, books };
+}
 
 describe('drawOrder', () => {
   it('paints the bottom of the pile first and the newest book last', () => {
@@ -271,53 +272,165 @@ describe('faceTransform', () => {
   });
 });
 
-describe('projectedWindow', () => {
-  it('holds every book with a corner in the viewport, at any yaw', () => {
-    const { layout, books } = pile(400);
-    const height = 700;
-    for (const from of [0, 950, 4321]) {
-      for (const yaw of [STACK_CAMERA.yaw, 0, 63, 171, -110]) {
-        const view: View = { camera: { pitch: STACK_CAMERA.pitch, yaw }, originX: 0, originY: -from };
-        const win = projectedWindow(layout, from, height, 0);
-        books.forEach((book, row) => {
-          const onScreen = projectBook(book, view).faces.some((f) => faceCorners(f).some((p) => p.y >= 0 && p.y <= height));
-          if (onScreen) {
-            expect(row).toBeGreaterThanOrEqual(win.start);
-            expect(row).toBeLessThan(win.end);
-          }
-        });
-      }
+/** A fanned pile at position s: the camera's view of every book, oldest first. */
+function fan(count: number, s: number, twist = TWIST_DEG, seed = 'seed') {
+  const entries = generateFakeStack(count, seed);
+  const shapes = entries.map((e) => bookShape(seed, e.step));
+  const centres = pileCentres(shapes.map((sh) => sh.thickness));
+  const view: View = { camera: FAN_CAMERA, originX: 0, originY: 0 };
+  const books = entries.map((e, i) => fannedBook(i, e.step, shapes[i], centres, s, twist));
+  return { entries, shapes, centres, view, books, projected: books.map((b) => projectBook(b, view)) };
+}
+
+const sidesOf = (book: { faces: { side: string }[] }) => book.faces.map((f) => f.side).sort();
+
+describe('the fan (stage 2a)', () => {
+  it('turns the centre book square-on and each neighbour TWIST further', () => {
+    expect(relativeYaw(40, 40)).toBe(0);
+    expect(relativeYaw(41, 40)).toBe(TWIST_DEG);
+    expect(relativeYaw(39, 40)).toBe(-TWIST_DEG);
+    expect(relativeYaw(43, 40.5, 12)).toBe(30);
+    expect(bookYaw(7, 10)).toBe(70);
+    const { books } = fan(60, 30);
+    expect(books[30].shape.yaw).toBe(0);
+    expect(books[31].shape.yaw).toBe(TWIST_DEG);
+    expect(books[29].shape.yaw).toBe(-TWIST_DEG);
+  });
+
+  it('turns the camera steadily as s rises', () => {
+    let last = -Infinity;
+    for (let s = 0; s <= 50; s += 0.25) {
+      const yaw = cameraYaw(s);
+      expect(yaw).toBeGreaterThan(last);
+      last = yaw;
+    }
+    expect(cameraYaw(3, 0)).toBe(0);
+  });
+
+  it('drops the seeded nudges and keeps the seeded size', () => {
+    const { books, shapes } = fan(20, 10);
+    books.forEach((b, i) => {
+      expect(b.shape).toMatchObject({ x: 0, z: 0, width: shapes[i].width, depth: shapes[i].depth, thickness: shapes[i].thickness });
+    });
+  });
+
+  it('puts the centre book in the middle of the screen, the ones above higher up', () => {
+    const { centres, projected, books } = fan(30, 12);
+    expect(heightAt(centres, 12)).toBe(centres[12]);
+    expect(books[12].top + books[12].shape.thickness / 2).toBeCloseTo(0, 9);
+    const front = projected[12].faces.find((f) => f.side === 'front')!;
+    // Square-on: the spine is an upright rectangle, centred on the origin's x.
+    expect(front.u.y).toBeCloseTo(0, 9);
+    expect(front.v.x).toBeCloseTo(0, 9);
+    expect(front.origin.x + front.u.x / 2).toBeCloseTo(0, 9);
+    expect(front.u.x).toBeCloseTo(books[12].shape.width, 9);
+    expect(front.v.y).toBeCloseTo(books[12].shape.thickness * Math.cos(ELEVATION_DEG * RAD), 9);
+    const centreY = (i: number) => projectPoint({ x: 0, y: books[i].top + books[i].shape.thickness / 2, z: 0 }, fan(30, 12).view).y;
+    expect(centreY(13)).toBeLessThan(centreY(12));
+    expect(centreY(11)).toBeGreaterThan(centreY(12));
+  });
+
+  it('follows the spec’s projection for a rotated corner', () => {
+    const shape: BookShape = { width: 200, depth: 100, thickness: 30, x: 0, z: 0, yaw: 0 };
+    const centres = pileCentres([30, 30, 30]);
+    const book = fannedBook(2, 3, shape, centres, 1, 10); // one book above the centre: rel = 10°
+    const front = projectBook(book, { camera: FAN_CAMERA, originX: 0, originY: 0 }).faces.find((f) => f.side === 'front')!;
+    const rel = 10 * RAD;
+    const e = ELEVATION_DEG * RAD;
+    // Its spine's top-left corner: local (-w/2, top, +d/2), its centre 30 px above the origin.
+    const [x, y, z] = [-100, 30 + 15, 50];
+    const xr = x * Math.cos(rel) + z * Math.sin(rel);
+    const zr = -x * Math.sin(rel) + z * Math.cos(rel);
+    expect(front.origin.x).toBeCloseTo(xr, 9);
+    expect(front.origin.y).toBeCloseTo(-y * Math.cos(e) + zr * Math.sin(e), 9);
+  });
+
+  it('shows the spine when cos(rel) > 0, the fore-edge when cos(rel) < 0, and the side by sin(rel)', () => {
+    const shape: BookShape = { width: 200, depth: 110, thickness: 34, x: 0, z: 0, yaw: 0 };
+    const at = (rel: number) =>
+      sidesOf(projectBook({ step: 1, top: 0, shape: { ...shape, yaw: rel } }, { camera: FAN_CAMERA, originX: 0, originY: 0 }));
+    expect(at(0)).toEqual(['front', 'top']);
+    expect(at(30)).toEqual(['front', 'left', 'top']);
+    expect(at(-30)).toEqual(['front', 'right', 'top']);
+    expect(at(120)).toEqual(['back', 'left', 'top']);
+    expect(at(-120)).toEqual(['back', 'right', 'top']);
+    expect(at(180)).toEqual(['back', 'top']);
+    for (let rel = -175; rel <= 175; rel += 5) {
+      const sides = at(rel);
+      const c = Math.cos(rel * RAD);
+      const sn = Math.sin(rel * RAD);
+      expect(sides).toContain('top');
+      expect(sides.includes('front')).toBe(c > 1e-9);
+      expect(sides.includes('back')).toBe(c < -1e-9);
+      expect(sides.includes('left')).toBe(sn > 1e-9);
+      expect(sides.includes('right')).toBe(sn < -1e-9);
     }
   });
 
-  it('adds the buffer each way, within the pile', () => {
-    const { layout } = pile(400);
-    const tight = projectedWindow(layout, 3000, 600, 0);
-    expect(projectedWindow(layout, 3000, 600, 5)).toEqual({ start: tight.start - 5, end: tight.end + 5 });
-    expect(projectedWindow(layout, 0, 600, 50).start).toBe(0);
+  it('draws from the bottom of the pile to the top', () => {
+    const { projected, entries } = fan(40, 17.3);
+    const order = drawOrder([...projected].reverse()).map((b) => b.step);
+    expect(order).toEqual(entries.map((e) => e.step));
   });
 
-  it('reaches as far as the widest, deepest, most nudged book tipped by the camera', () => {
-    expect(pileReach()).toBeCloseTo(Math.hypot(230 / 2 + 12, 132 / 2 + 10) * Math.sin(28 * RAD), 9);
-    expect(pileReach(0)).toBe(0);
-    expect(Math.cos(STACK_CAMERA.pitch * RAD)).toBeCloseTo(TILT_SCALE, 12);
+  it('hit-tests turned books: the spine under the point, the top book where they overlap', () => {
+    const { projected, books } = fan(30, 15.4, 12);
+    const ordered = drawOrder(projected);
+    for (const i of [13, 14, 15, 16, 17]) {
+      const front = projected[i].faces.find((f) => f.side === 'front')!;
+      const p = { x: front.origin.x + front.u.x / 2 + front.v.x * 0.6, y: front.origin.y + front.u.y / 2 + front.v.y * 0.6 };
+      expect(hitTest(p, ordered)).toBe(books[i].step);
+    }
+    // Just under the centre spine's top edge, the book above (painted later) overhangs it: that one wins.
+    const centre = projected[15].faces.find((f) => f.side === 'front')!;
+    const p = { x: centre.origin.x + centre.u.x / 2 + centre.v.x * 0.03, y: centre.origin.y + centre.u.y / 2 + centre.v.y * 0.03 };
+    expect(pointInPolygon(p, faceCorners(centre))).toBe(true);
+    expect(projected[16].faces.some((f) => pointInPolygon(p, faceCorners(f)))).toBe(true);
+    expect(hitTest(p, ordered)).toBe(books[16].step);
+    expect(hitTest({ x: 4000, y: 0 }, ordered)).toBeNull();
   });
 });
 
-describe('yawForScroll', () => {
-  it('starts at the fixed camera’s yaw and makes one turn per ROTATE_PX_PER_TURN', () => {
-    expect(yawForScroll(0)).toBeCloseTo(STACK_CAMERA.yaw, 9);
-    expect(yawForScroll(-500)).toBeCloseTo(STACK_CAMERA.yaw, 9);
-    expect(yawForScroll(ROTATE_PX_PER_TURN)).toBeCloseTo(STACK_CAMERA.yaw, 9);
-    expect(yawForScroll(ROTATE_PX_PER_TURN / 4)).toBeCloseTo(STACK_CAMERA.yaw + 90, 9);
-    expect(yawForScroll(ROTATE_PX_PER_TURN / 2, 0)).toBe(180);
+describe('fanWindow', () => {
+  it('holds every book with a corner on screen, and at least FAN_MIN_EACH_WAY either side', () => {
+    for (const [count, s, half] of [
+      [400, 200, 457],
+      [400, 13.6, 640],
+      [400, 399, 400],
+      [400, 0, 400],
+      [400, 250.5, 120],
+    ]) {
+      const { projected, centres } = fan(count, s);
+      const win = fanWindow(centres, s, half);
+      projected.forEach((book, i) => {
+        const onScreen = book.faces.some((f) => faceCorners(f).some((p) => Math.abs(p.y) <= half));
+        if (onScreen) {
+          expect(i).toBeGreaterThanOrEqual(win.start);
+          expect(i).toBeLessThan(win.end);
+        }
+      });
+      const centre = Math.round(s);
+      expect(win.start).toBeLessThanOrEqual(Math.max(0, centre - FAN_MIN_EACH_WAY));
+      expect(win.end).toBeGreaterThanOrEqual(Math.min(count, centre + FAN_MIN_EACH_WAY + 1));
+      expect(win.start).toBeGreaterThanOrEqual(0);
+      expect(win.end).toBeLessThanOrEqual(count);
+    }
   });
 
-  it('always lands in (-180, 180]', () => {
-    for (let s = 0; s < ROTATE_PX_PER_TURN * 3; s += 37) {
-      const yaw = yawForScroll(s);
-      expect(yaw).toBeGreaterThan(-180);
-      expect(yaw).toBeLessThanOrEqual(180);
-    }
+  it('stays near the minimum on a short viewport, and is empty for an empty pile', () => {
+    const { centres } = fan(500, 250);
+    const win = fanWindow(centres, 250, 0);
+    expect(win.end - win.start).toBeLessThanOrEqual(2 * FAN_MIN_EACH_WAY + 1 + 2 * Math.ceil(fanReach() / Math.min(...BOOK_THICKNESSES)));
+    expect(fanWindow([], 0, 500)).toEqual({ start: 0, end: 0 });
+  });
+
+  it('interpolates the height between book centres and clamps at the ends', () => {
+    const centres = pileCentres([20, 40, 30]);
+    expect(centres).toEqual([10, 40, 75]);
+    expect(heightAt(centres, 0.5)).toBe(25);
+    expect(heightAt(centres, 1.5)).toBe(57.5);
+    expect(heightAt(centres, -2)).toBe(10);
+    expect(heightAt(centres, 9)).toBe(75);
+    expect(heightAt([], 3)).toBe(0);
   });
 });

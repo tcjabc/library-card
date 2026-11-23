@@ -235,6 +235,9 @@
   /* Developer tools: the book stack's measurement panel, over the pile (above the tab bar, below menus). */
   --z-dev-panel: 42;
   --dev-panel-max: 22rem;
+  /* …and on the canvas stack: the top-down inset's side and the centre book tag's widest. */
+  --dev-stack-inset: 7rem;
+  --dev-stack-tag-max: 16rem;
   --z-menu: 45;
   /* "Updating…": over everything while a new version waits for the database. */
   --z-updating: 90;

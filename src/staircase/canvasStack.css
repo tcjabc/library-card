@@ -18,3 +18,49 @@
   left: 0;
   pointer-events: none;
 }
+
+/* Developer tools: the centre book's title, reader and turn, over the top left of the pile. */
+.canvas-stack__tag {
+  position: absolute;
+  top: var(--space-2);
+  left: var(--space-2);
+  max-width: var(--dev-stack-tag-max);
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  border: var(--border-thin) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  pointer-events: none;
+}
+
+.canvas-stack__tag > span {
+  display: block;
+}
+
+.canvas-stack__tag-book {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: var(--weight-bold);
+}
+
+.canvas-stack__tag-turned {
+  color: var(--color-text-muted);
+}
+
+/* Developer tools: the fan from above, top right. */
+.canvas-stack__inset {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  width: var(--dev-stack-inset);
+  height: var(--dev-stack-inset);
+  border: var(--border-thin) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+  pointer-events: none;
+}

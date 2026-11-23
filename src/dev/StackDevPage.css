@@ -106,6 +106,22 @@
   overflow-wrap: anywhere;
 }
 
+/* The twist slider: the label, then the slider, a full grown-up tap target tall. */
+.stack-dev__slider {
+  display: flex;
+  flex: 1 1 100%;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--tap-target-grownup);
+}
+
+.stack-dev__slider > input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: var(--tap-target-grownup);
+  accent-color: var(--color-chip-active);
+}
+
 /* The fallback copy's off-screen text box. */
 .stack-dev__copy-area {
   position: fixed;

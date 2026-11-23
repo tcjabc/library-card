@@ -1,7 +1,9 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { href } from '../router';
 import { bookRenders } from '../staircase/bookRenders';
+import type { CentreBook, CentreTag } from '../staircase/CanvasStack';
 import { generateFakeStack } from '../staircase/stackModel';
+import { MAX_TWIST_DEG, TWIST_DEG } from '../staircase/stackProjection';
 import { fmt, strings } from '../strings';
 import { FRAME_MS, drawStats, framesPerSecond, missedFrames, rendersPerSecond, type DrawSample, type Frame } from './frameStats';
 import './StackDevPage.css';
@@ -15,9 +17,15 @@ import './StackDevPage.css';
 const BookStack = lazy(() => import('../staircase/BookStack'));
 const CanvasStack = lazy(() => import('../staircase/CanvasStack'));
 
-/** 3D = the CSS 3D pile, Lite = flat 2D rows, Canvas = the 3D pile drawn on one canvas. */
-type StackMode = '3d' | 'lite' | 'canvas';
-const MODES: readonly StackMode[] = ['3d', 'lite', 'canvas'];
+/** Canvas = the fan of books drawn on one canvas (stage 2a); 3D and Lite = the old stage 1 modes. */
+type StackMode = 'canvas' | '3d' | 'lite';
+const MODES: readonly StackMode[] = ['canvas', '3d', 'lite'];
+/** The twist slider's step (degrees). */
+const TWIST_STEP = 0.5;
+
+function describeCentre({ title, avatar, degrees }: CentreBook): CentreTag {
+  return { book: fmt(t.stackCentreBook, { avatar, title }), turned: fmt(t.stackCentreTurned, { degrees }) };
+}
 
 const t = strings.dev;
 const COUNTS = [100, 1000, 3000] as const;
@@ -30,8 +38,9 @@ const READOUT_EVERY_MS = 500;
 
 export default function StackDevPage() {
   const [count, setCount] = useState<number>(1000);
-  const [mode, setMode] = useState<StackMode>('3d');
-  const [rotate, setRotate] = useState(false);
+  const [mode, setMode] = useState<StackMode>('canvas');
+  const [twist, setTwist] = useState<number>(TWIST_DEG);
+  const [settle, setSettle] = useState(true);
   const entries = useMemo(() => generateFakeStack(count, SEED), [count]);
   const scroller = useRef<HTMLDivElement | null>(null);
   const meter = useScrollMeter(scroller);
@@ -41,7 +50,7 @@ export default function StackDevPage() {
   }, []);
 
   // A new pile starts its counts afresh.
-  useEffect(() => reset(), [count, mode, rotate, reset]);
+  useEffect(() => reset(), [count, mode, twist, settle, reset]);
   const label = fmt(t.stackLabel, { count: count.toLocaleString() });
 
   return (
@@ -58,7 +67,10 @@ export default function StackDevPage() {
             key={count}
             entries={entries}
             seed={SEED}
-            rotate={rotate}
+            twist={twist}
+            settle={settle}
+            inset
+            describeCentre={describeCentre}
             label={label}
             onScroller={onScroller}
             onScroll={meter.onScroll}
@@ -79,10 +91,12 @@ export default function StackDevPage() {
       <MeasurePanel
         count={count}
         mode={mode}
-        rotate={rotate}
+        twist={twist}
+        settle={settle}
         onCount={setCount}
         onMode={setMode}
-        onRotate={setRotate}
+        onTwist={setTwist}
+        onSettle={setSettle}
         readout={meter.readout}
         onReset={reset}
       />
@@ -218,12 +232,13 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
   return { readout, onScroll, onDraw, reset };
 }
 
-function modeName(mode: StackMode, rotate: boolean): string {
-  if (mode === 'canvas') return rotate ? t.measureModeCanvasRotate : t.measureModeCanvas;
+function modeName(mode: StackMode): string {
+  if (mode === 'canvas') return t.measureModeCanvas;
   return mode === 'lite' ? t.measureModeLite : t.measureMode3d;
 }
 
-function readoutLines(readout: Readout, count: number, mode: StackMode, rotate: boolean): [string, string][] {
+function readoutLines(readout: Readout, count: number, mode: StackMode, twist: number, settle: boolean): [string, string][] {
+  const canvas = mode === 'canvas';
   const draw =
     mode !== 'canvas'
       ? t.measureDrawCanvasOnly
@@ -232,7 +247,9 @@ function readoutLines(readout: Readout, count: number, mode: StackMode, rotate: 
         : fmt(t.measureDrawValue, { average: readout.draw.average.toFixed(2), max: readout.draw.max.toFixed(2) });
   return [
     [t.measureBooks, count.toLocaleString()],
-    [t.measureMode, modeName(mode, rotate)],
+    [t.measureMode, modeName(mode)],
+    [t.measureTwist, canvas ? fmt(t.measureDegrees, { degrees: twist }) : t.measureDrawCanvasOnly],
+    [t.measureSettle, canvas ? (settle ? t.measureOn : t.measureOff) : t.measureDrawCanvasOnly],
     [t.measureFps, readout.fps === null ? t.measureFpsNone : readout.fps.toFixed(1)],
     [t.measureRenders, readout.renders === null ? t.measureFpsNone : readout.renders.toFixed(1)],
     [t.measureDraw, draw],
@@ -275,18 +292,20 @@ async function copyText(text: string): Promise<boolean> {
 interface MeasurePanelProps {
   count: number;
   mode: StackMode;
-  rotate: boolean;
+  twist: number;
+  settle: boolean;
   onCount: (count: number) => void;
   onMode: (mode: StackMode) => void;
-  onRotate: (rotate: boolean) => void;
+  onTwist: (twist: number) => void;
+  onSettle: (settle: boolean) => void;
   readout: Readout;
   onReset: () => void;
 }
 
 /** Small and collapsible, over the pile: the controls, the live numbers and "Copy results". */
-function MeasurePanel({ count, mode, rotate, onCount, onMode, onRotate, readout, onReset }: MeasurePanelProps) {
+function MeasurePanel({ count, mode, twist, settle, onCount, onMode, onTwist, onSettle, readout, onReset }: MeasurePanelProps) {
   const [copied, setCopied] = useState<boolean | null>(null);
-  const lines = readoutLines(readout, count, mode, rotate);
+  const lines = readoutLines(readout, count, mode, twist, settle);
 
   const copy = async () => {
     const text = [t.stackTitle, ...lines.map(([label, value]) => `${label}: ${value}`)].join('\n');
@@ -311,16 +330,29 @@ function MeasurePanel({ count, mode, rotate, onCount, onMode, onRotate, readout,
         <div className="chip-row" role="group" aria-label={t.measureMode}>
           {MODES.map((m) => (
             <button key={m} type="button" className="chip" aria-pressed={mode === m} onClick={() => onMode(m)}>
-              {modeName(m, false)}
+              {modeName(m)}
             </button>
           ))}
         </div>
-        {mode === 'canvas' && (
-          <button type="button" className="chip" aria-pressed={rotate} onClick={() => onRotate(!rotate)}>
-            {t.measureRotate}
-          </button>
-        )}
       </div>
+      {mode === 'canvas' && (
+        <div className="stack-dev__controls">
+          <label className="stack-dev__slider">
+            <span>{fmt(t.measureTwistValue, { degrees: twist })}</span>
+            <input
+              type="range"
+              min={0}
+              max={MAX_TWIST_DEG}
+              step={TWIST_STEP}
+              value={twist}
+              onChange={(e) => onTwist(Number(e.target.value))}
+            />
+          </label>
+          <button type="button" className="chip" aria-pressed={settle} onClick={() => onSettle(!settle)}>
+            {t.measureSettle}
+          </button>
+        </div>
+      )}
       <dl className="stack-dev__readout">
         {lines.map(([label, value]) => (
           <div key={label} className="stack-dev__line">

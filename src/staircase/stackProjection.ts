@@ -1,26 +1,21 @@
 /**
  * The book pile seen by an orthographic camera, for the canvas renderer (pure, unit-tested).
- * The same geometry as the CSS 3D version (BookStack.tsx): each book is a box at its place in the
- * pile, nudged and turned by its seeded wobble, then the whole pile is turned by the camera's yaw
- * and tipped by its pitch, with no perspective. A box's faces are parallelograms on screen, so the
- * canvas can draw each with one affine setTransform.
+ * Each book is a box at its place in the pile, turned about the vertical axis by its yaw, then
+ * the whole pile is turned by the camera's yaw and tipped by its pitch, with no perspective. A
+ * box's faces are parallelograms on screen, so the canvas can draw each with one affine setTransform.
+ *
+ * Stage 2a, "books that face the reader": book i (0 = the oldest) is turned i * twist degrees,
+ * and the camera at position s (a continuous book index) is turned s * twist, so the book at s
+ * faces the reader square-on and its neighbours fan out by twist degrees each (the fan model
+ * below). The camera only tips; each book gets its turn relative to the camera.
+ *
+ * STACK_CAMERA is the fixed camera of the CSS 3D version (BookStack.tsx), kept so the geometry
+ * can be checked against CSS.
  *
  * Coordinates follow CSS: x to the right, y down (down the pile), z towards the viewer. A book's
  * own axes: u along the spine (left to right), v down through its thickness, s from back to front.
  */
-import {
-  BOOK_DEPTHS,
-  BOOK_WIDTHS,
-  MAX_NUDGE_X,
-  MAX_NUDGE_Z,
-  TILT_X_DEG,
-  TILT_Y_DEG,
-  layoutWindow,
-  type BookShape,
-  type StackEntry,
-  type StackLayout,
-  type StackWindow,
-} from './stackModel';
+import { BOOK_DEPTHS, BOOK_THICKNESSES, BOOK_WIDTHS, TILT_X_DEG, TILT_Y_DEG, type BookShape, type StackWindow } from './stackModel';
 
 export interface Vec2 {
   x: number;
@@ -85,21 +80,14 @@ export function projectPoint(p: Vec3, view: View): ScreenPoint {
   return project(basis(view), p.x, p.y, p.z);
 }
 
-/** One book in the pile: its seeded shape and how far its top is from the top of the pile (px). */
+/**
+ * One book to draw: its shape (size, nudges and its yaw relative to the camera) and where its
+ * top is (px, y down) from the camera's origin height. Bigger `top` = lower in the pile.
+ */
 export interface PlacedBook {
   step: number;
   top: number;
   shape: BookShape;
-}
-
-/** The pile's books, newest (row 0, the top of the pile) first. `entries` and `shapes` are oldest first. */
-export function placedBooks(entries: readonly StackEntry[], shapes: readonly BookShape[], layout: StackLayout): PlacedBook[] {
-  const out: PlacedBook[] = [];
-  for (let row = 0; row < entries.length; row++) {
-    const index = entries.length - 1 - row;
-    out.push({ step: entries[index].step, top: layout.tops[row], shape: shapes[index] });
-  }
-  return out;
 }
 
 export type FaceSide = 'front' | 'back' | 'left' | 'right' | 'top' | 'bottom';
@@ -250,32 +238,111 @@ export function faceTransform(face: ProjectedFace, scale: number): [number, numb
   return [face.u.x * ku, face.u.y * ku, face.v.x * kv, face.v.y * kv, face.origin.x * scale, face.origin.y * scale];
 }
 
-/**
- * How far (px on screen, up or down) a book's corners can be from where its centre's height in
- * the pile puts it, at any yaw: the widest, deepest book with the biggest nudges, tipped by the pitch.
- */
-export function pileReach(pitch: number = STACK_CAMERA.pitch): number {
-  const halfW = Math.max(...BOOK_WIDTHS) / 2 + MAX_NUDGE_X;
-  const halfD = Math.max(...BOOK_DEPTHS) / 2 + MAX_NUDGE_Z;
-  return Math.hypot(halfW, halfD) * Math.abs(Math.sin(pitch * RAD));
+// ---- The fan: books that face the reader (stage 2a) ----
+
+/** The camera's tip (degrees above the horizon). */
+export const ELEVATION_DEG = 24;
+/** Each book is turned this much more than the one under it (degrees). */
+export const TWIST_DEG = 10;
+export const MAX_TWIST_DEG = 15;
+/** The fan's camera: tipped down to see the covers, never turned (books turn relative to it). */
+export const FAN_CAMERA: Camera = { pitch: -ELEVATION_DEG, yaw: 0 };
+/** Books drawn at least this far either side of the centre book. */
+export const FAN_MIN_EACH_WAY = 10;
+
+/** Book `index`'s own turn in the world (degrees). */
+export function bookYaw(index: number, twist: number = TWIST_DEG): number {
+  return index * twist;
+}
+
+/** The camera's turn at position `s` (degrees): rises steadily with s. */
+export function cameraYaw(s: number, twist: number = TWIST_DEG): number {
+  return s * twist;
+}
+
+/** Book `index`'s turn relative to the camera at `s` (degrees): 0 for the book at s. */
+export function relativeYaw(index: number, s: number, twist: number = TWIST_DEG): number {
+  return bookYaw(index, twist) - cameraYaw(s, twist);
+}
+
+/** How high each book's centre is above the bottom of the pile (px). `thicknesses` are oldest first. */
+export function pileCentres(thicknesses: readonly number[]): number[] {
+  const out: number[] = [];
+  let y = 0;
+  for (const t of thicknesses) {
+    const h = Math.max(0, t);
+    out.push(y + h / 2);
+    y += h;
+  }
+  return out;
+}
+
+/** The height of a continuous position `s` in the pile: book centres, joined in straight lines. */
+export function heightAt(centres: readonly number[], s: number): number {
+  if (centres.length === 0) return 0;
+  const max = centres.length - 1;
+  const at = Math.min(max, Math.max(0, Number.isFinite(s) ? s : 0));
+  const below = Math.floor(at);
+  const above = Math.min(max, below + 1);
+  return centres[below] + (centres[above] - centres[below]) * (at - below);
 }
 
 /**
- * Which books (as [start, end) rows, newest first) can show in a viewport `height` px tall whose top
- * is `from` px below the pile's top on screen, plus `buffer` books each way.
+ * Book `index` as the camera at `s` sees it: no sideways nudge, turned by its relative yaw, and
+ * placed so the height at `s` is the camera's origin (the middle of the screen).
  */
-export function projectedWindow(layout: StackLayout, from: number, height: number, buffer: number, pitch: number = STACK_CAMERA.pitch): StackWindow {
-  const reach = pileReach(pitch);
-  const scale = Math.cos(pitch * RAD);
-  return layoutWindow(layout, (from - reach) / scale, (from + height + reach) / scale, buffer);
+export function fannedBook(
+  index: number,
+  step: number,
+  shape: BookShape,
+  centres: readonly number[],
+  s: number,
+  twist: number = TWIST_DEG,
+): PlacedBook {
+  const rise = centres[index] - heightAt(centres, s);
+  return { step, top: -rise - shape.thickness / 2, shape: { ...shape, x: 0, z: 0, yaw: relativeYaw(index, s, twist) } };
 }
 
-/** "Rotate with scroll": one full turn of the camera for this much scrolling (px). */
-export const ROTATE_PX_PER_TURN = 2400;
+/**
+ * How far (px on screen, up or down) a book's corners can be from its centre, at any turn:
+ * half the thickest book's height plus the widest, deepest footprint tipped by the camera.
+ */
+export function fanReach(elevation: number = ELEVATION_DEG): number {
+  const e = elevation * RAD;
+  const halfT = Math.max(...BOOK_THICKNESSES) / 2;
+  const halfDiag = Math.hypot(Math.max(...BOOK_WIDTHS) / 2, Math.max(...BOOK_DEPTHS) / 2);
+  return halfT * Math.cos(e) + halfDiag * Math.abs(Math.sin(e));
+}
 
-/** The camera's yaw (degrees, in (-180, 180]) for a scroll position, starting from the fixed camera's. */
-export function yawForScroll(scrollTop: number, base: number = STACK_CAMERA.yaw): number {
-  const turned = base + (Math.max(0, scrollTop) / ROTATE_PX_PER_TURN) * 360;
-  const wrapped = ((((turned + 180) % 360) + 360) % 360) - 180;
-  return wrapped === -180 ? 180 : wrapped;
+/** The first index whose value is at least `y` (centres rise). */
+function lowerBound(values: readonly number[], y: number): number {
+  let lo = 0;
+  let hi = values.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (values[mid] < y) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/**
+ * Which books to draw (as [start, end) indexes, oldest first) around position `s`: every book that
+ * can reach a viewport `halfHeight` px above and below the centre, and at least `minEachWay` either side.
+ */
+export function fanWindow(
+  centres: readonly number[],
+  s: number,
+  halfHeight: number,
+  minEachWay: number = FAN_MIN_EACH_WAY,
+  elevation: number = ELEVATION_DEG,
+): StackWindow {
+  const count = centres.length;
+  if (count === 0) return { start: 0, end: 0 };
+  const h = heightAt(centres, s);
+  const reach = (Math.max(0, halfHeight) + fanReach(elevation)) / Math.cos(elevation * RAD);
+  const centre = Math.round(Math.min(count - 1, Math.max(0, s)));
+  const start = Math.min(lowerBound(centres, h - reach), centre - minEachWay);
+  const end = Math.max(lowerBound(centres, h + reach + 1e-9), centre + minEachWay + 1);
+  return { start: Math.max(0, start), end: Math.min(count, end) };
 }

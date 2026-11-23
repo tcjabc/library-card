@@ -1,22 +1,18 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { SETTLE_IDLE_MS, clampPosition, positionToScroll, scrollHeight, scrollToPosition, settleTarget, stepCamera } from './camera';
 import { LruCache, backingSize, canvasScale, cssLength, fitWithEllipsis } from './canvasHelpers';
+import { BOOK_DEPTHS, BOOK_WIDTHS, bookShape, type StackEntry } from './stackModel';
 import {
-  STACK_BUFFER,
-  STACK_PAD_BOTTOM,
-  STACK_PAD_TOP,
-  TILT_SCALE,
-  bookShape,
-  stackLayout,
-  type StackEntry,
-} from './stackModel';
-import {
-  STACK_CAMERA,
+  FAN_CAMERA,
+  FAN_MIN_EACH_WAY,
+  TWIST_DEG,
   drawOrder,
   faceTransform,
-  placedBooks,
+  fanWindow,
+  fannedBook,
+  pileCentres,
   projectBook,
-  projectedWindow,
-  yawForScroll,
+  relativeYaw,
   type ProjectedBook,
   type ProjectedFace,
 } from './stackProjection';
@@ -24,37 +20,65 @@ import './bookStack.css';
 import './canvasStack.css';
 
 /**
- * The book pile drawn on one canvas (stage 1 prototype, developer tools only), to compare with
- * the CSS 3D version: the same seeded books, layout and camera (stackProjection.ts), but one
- * layer for the compositor instead of hundreds of transformed faces.
+ * The book pile drawn on one canvas (developer tools only). Stage 2a, "books that face the
+ * reader": the camera's position is a continuous book index; the book there faces the reader
+ * square-on and its neighbours fan out by the twist per book (stackProjection.ts), so the books
+ * near the middle of the screen are always readable.
  *
- * A native scroll area with a sized spacer keeps the browser's own (inertia) scrolling; the
- * canvas sits over it, out of the way of touches, and is redrawn once per frame while it scrolls
- * (requestAnimationFrame, no React state). Only the books that can be on screen are drawn, and
- * nothing runs while the pile is still: nothing moves by itself, whatever prefers-reduced-motion
- * says. Each spine's label is drawn once to a small canvas and reused.
+ * A native scroll area with a sized spacer keeps the browser's own (inertia) scrolling, and sets
+ * where the camera is going; the drawn position eases towards it (camera.ts). When scrolling
+ * stops, the camera settles on the nearest book and the scroll offset is moved to match. The
+ * canvas sits over the scroll area, out of the way of touches; frames run only while the camera
+ * moves (no idle loop), and with prefers-reduced-motion the camera jumps instead of easing. Each
+ * spine's label is drawn once to a small canvas and reused.
  */
+
+/** The centre book, for the overlay tag. */
+export interface CentreBook {
+  title: string;
+  avatar: string;
+  /** How far it is turned from the reader (whole degrees). */
+  degrees: number;
+}
+
+/** The overlay tag's two lines: the book (cut to one line) and how far it is turned. */
+export interface CentreTag {
+  book: string;
+  turned: string;
+}
 
 export interface CanvasStackProps {
   /** Oldest first. */
   entries: readonly StackEntry[];
-  /** Seeds each book's size and wobble (the household id, later). */
+  /** Seeds each book's size (the household id, later). */
   seed: string;
-  /** Turn the camera as the pile scrolls (to measure the worst case: every book moves every frame). */
-  rotate?: boolean;
+  /** Degrees each book is turned more than the one under it. */
+  twist?: number;
+  /** Come to rest square-on to a book when scrolling stops. */
+  settle?: boolean;
+  /** Draw the top-down view of the fan in a small corner box (developer tools). */
+  inset?: boolean;
+  /** The overlay tag's text for the centre book; no tag without it. */
+  describeCentre?: (centre: CentreBook) => CentreTag;
   /** The scroll area's name. */
   label: string;
   /** The scroll area, for measuring. */
   onScroller?: (el: HTMLDivElement | null) => void;
+  /** Each scroll by the reader (not the settle's own scroll). */
   onScroll?: () => void;
   /** How long each frame's drawing took (ms). */
   onDraw?: (ms: number) => void;
 }
 
-/** Books drawn above and below the ones that can be on screen. */
-const BUFFER = STACK_BUFFER * 2;
 /** Spine labels kept ready to draw. */
 const LABEL_CACHE_SIZE = 100;
+/** The settle's own scroll is ignored this close to where it put the scroll offset (px). */
+const OWN_SCROLL_SLACK = 1;
+/** …and stops being expected after this long (ms), in case the browser sends no scroll event. */
+const OWN_SCROLL_MS = 300;
+const RAD = Math.PI / 180;
+/** The inset fits the biggest footprint at any turn. */
+const INSET_SPAN = Math.hypot(Math.max(...BOOK_WIDTHS), Math.max(...BOOK_DEPTHS));
 
 /** The book tokens from theme.css, read once from the page. */
 interface BookTheme {
@@ -74,6 +98,11 @@ interface BookTheme {
   gap: number;
   titleFont: string;
   avatarFont: string;
+  /** The inset's lines (px) and colours. */
+  borderThin: number;
+  borderThick: number;
+  insetLine: string;
+  insetHighlight: string;
 }
 
 function readTheme(): BookTheme {
@@ -98,6 +127,10 @@ function readTheme(): BookTheme {
     gap: px('--space-2'),
     titleFont: `${v('--weight-bold')} ${px('--text-sm')}px ${v('--font-body')}`,
     avatarFont: `${px('--text-md')}px ${v('--font-emoji')}`,
+    borderThin: px('--border-thin'),
+    borderThick: px('--border-thick'),
+    insetLine: v('--color-text-muted'),
+    insetHighlight: v('--color-text'),
   };
 }
 
@@ -113,6 +146,8 @@ interface BookPaint {
   width: number;
   thickness: number;
   cover: string;
+  /** The reader's colour. */
+  band: string;
 }
 
 /** A spine at `scale` canvas pixels per px: the book's colour and shade, the reader's band and avatar, then the title. */
@@ -212,51 +247,153 @@ interface Size {
   width: number;
   height: number;
   scale: number;
+  /** The inset's side (px), 0 without it. */
+  inset: number;
 }
 
-function CanvasStack({ entries, seed, rotate = false, label, onScroller, onScroll, onDraw }: CanvasStackProps) {
+/**
+ * The top-down view: each drawn book's footprint turned by its relative yaw, the spine edge (the
+ * side facing the reader, at the bottom) in the reader's colour, and the centre book filled in.
+ */
+function drawInset(
+  ctx: CanvasRenderingContext2D,
+  side: number,
+  scale: number,
+  books: readonly { index: number; yaw: number }[],
+  centre: number,
+  shapes: readonly { width: number; depth: number }[],
+  paints: readonly BookPaint[],
+  theme: BookTheme,
+) {
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  ctx.clearRect(0, 0, side, side);
+  const mid = side / 2;
+  const k = (side - 2 * theme.gap) / INSET_SPAN;
+  const corners = (index: number, yaw: number) => {
+    const { width: w, depth: d } = shapes[index];
+    const c = Math.cos(yaw * RAD);
+    const s = Math.sin(yaw * RAD);
+    // Back-left, back-right, front-right, front-left: x across, z towards the reader (down here).
+    return [
+      [-w / 2, -d / 2],
+      [w / 2, -d / 2],
+      [w / 2, d / 2],
+      [-w / 2, d / 2],
+    ].map(([x, z]) => [mid + (x * c + z * s) * k, mid + (-x * s + z * c) * k] as const);
+  };
+  const outline = (pts: readonly (readonly [number, number])[]) => {
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.closePath();
+  };
+  const spineEdge = (pts: readonly (readonly [number, number])[], index: number) => {
+    ctx.beginPath();
+    ctx.moveTo(pts[3][0], pts[3][1]);
+    ctx.lineTo(pts[2][0], pts[2][1]);
+    ctx.strokeStyle = paints[index].band;
+    ctx.lineWidth = theme.borderThick;
+    ctx.stroke();
+  };
+  let centreYaw: number | null = null;
+  ctx.lineWidth = theme.borderThin;
+  for (const { index, yaw } of books) {
+    if (index === centre) {
+      centreYaw = yaw;
+      continue;
+    }
+    const pts = corners(index, yaw);
+    outline(pts);
+    ctx.strokeStyle = theme.insetLine;
+    ctx.lineWidth = theme.borderThin;
+    ctx.stroke();
+    spineEdge(pts, index);
+  }
+  if (centreYaw !== null) {
+    const pts = corners(centre, centreYaw);
+    outline(pts);
+    ctx.fillStyle = paints[centre].cover;
+    ctx.fill();
+    ctx.strokeStyle = theme.insetHighlight;
+    ctx.lineWidth = theme.borderThick;
+    ctx.stroke();
+    spineEdge(pts, centre);
+  }
+}
+
+function prefersReducedMotion(): boolean {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+function CanvasStack({
+  entries,
+  seed,
+  twist = TWIST_DEG,
+  settle = true,
+  inset = false,
+  describeCentre,
+  label,
+  onScroller,
+  onScroll,
+  onDraw,
+}: CanvasStackProps) {
+  const count = entries.length;
   const shapes = useMemo(() => entries.map((e) => bookShape(seed, e.step)), [entries, seed]);
-  const layout = useMemo(() => stackLayout(shapes.map((s) => s.thickness)), [shapes]);
-  const books = useMemo(() => placedBooks(entries, shapes, layout), [entries, shapes, layout]);
+  const centres = useMemo(() => pileCentres(shapes.map((s) => s.thickness)), [shapes]);
   const [theme] = useState(readTheme);
-  // Newest first, like `books`.
+  // Oldest first, like `entries`.
   const paints = useMemo<BookPaint[]>(
     () =>
-      books.map((book, row) => {
-        const entry = entries[entries.length - 1 - row];
-        return {
-          title: entry.title,
-          avatar: entry.avatar,
-          spineHue: entry.spineHue,
-          readerHue: entry.readerHue,
-          width: book.shape.width,
-          thickness: book.shape.thickness,
-          cover: hsl(entry.spineHue, theme.spineSaturation, theme.coverLightness),
-        };
-      }),
-    [books, entries, theme],
+      entries.map((entry, i) => ({
+        title: entry.title,
+        avatar: entry.avatar,
+        spineHue: entry.spineHue,
+        readerHue: entry.readerHue,
+        width: shapes[i].width,
+        thickness: shapes[i].thickness,
+        cover: hsl(entry.spineHue, theme.spineSaturation, theme.coverLightness),
+        band: hsl(entry.readerHue, theme.bandSaturation, theme.bandLightness),
+      })),
+    [entries, shapes, theme],
   );
   const labels = useMemo(() => new LruCache<number, HTMLCanvasElement>(LABEL_CACHE_SIZE), []);
 
   const scroller = useRef<HTMLDivElement | null>(null);
+  const sizer = useRef<HTMLDivElement | null>(null);
   const canvas = useRef<HTMLCanvasElement | null>(null);
-  const frame = useRef(0);
-  const size = useRef<Size>({ width: 0, height: 0, scale: 1 });
+  const insetCanvas = useRef<HTMLCanvasElement | null>(null);
+  const tagBook = useRef<HTMLSpanElement | null>(null);
+  const tagTurned = useRef<HTMLSpanElement | null>(null);
+  const size = useRef<Size>({ width: 0, height: 0, scale: 1, inset: 0 });
   const paint = useRef<Paint>({ pattern: null, coverShade: null, scale: 0 });
+  /** Where the camera is going and where it's drawn (book positions), and the frame loop's state. */
+  const cam = useRef({
+    target: Math.max(0, count - 1),
+    shown: Math.max(0, count - 1),
+    last: 0,
+    raf: 0,
+    settleTimer: 0,
+    /** Settling: when the ease ends, move the scroll offset to match. */
+    settling: false,
+    /** The scroll offset the settle set, so its scroll event is ignored. */
+    expected: null as number | null,
+    expectedTimer: 0,
+    reduced: false,
+    /** The tag's text, to skip writing it again. */
+    tagKey: '',
+  });
   // What the next frame draws: kept in a ref so scrolling never waits on React.
-  const scene = useRef({ books, paints, layout, rotate, onDraw });
+  const scene = useRef({ entries, shapes, centres, paints, twist, settle, describeCentre, onDraw });
   useLayoutEffect(() => {
-    scene.current = { books, paints, layout, rotate, onDraw };
+    scene.current = { entries, shapes, centres, paints, twist, settle, describeCentre, onDraw };
   });
 
   const draw = useCallback(() => {
-    frame.current = 0;
-    const el = scroller.current;
     const ctx = canvas.current?.getContext('2d');
-    if (!el || !ctx) return;
+    if (!ctx) return;
     const started = performance.now();
     const { width, height, scale } = size.current;
-    const { books, paints, layout, rotate, onDraw } = scene.current;
+    const { entries, shapes, centres, paints, twist, describeCentre, onDraw } = scene.current;
     if (paint.current.scale !== scale) {
       labels.clear();
       // The cover's shade runs across a face's unit square, towards the spine.
@@ -268,34 +405,90 @@ function CanvasStack({ entries, seed, rotate = false, label, onScroller, onScrol
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
-    const scrollTop = el.scrollTop;
-    const camera = rotate ? { pitch: STACK_CAMERA.pitch, yaw: yawForScroll(scrollTop) } : STACK_CAMERA;
-    const view = { camera, originX: width / 2, originY: STACK_PAD_TOP - scrollTop };
-    const win = projectedWindow(layout, scrollTop - STACK_PAD_TOP, height, BUFFER, camera.pitch);
+    const s = cam.current.shown;
+    const view = { camera: FAN_CAMERA, originX: width / 2, originY: height / 2 };
+    const win = fanWindow(centres, s, height / 2);
     const projected: ProjectedBook[] = [];
-    const rows = new Map<number, number>();
-    for (let row = win.start; row < win.end; row++) {
-      const step = books[row].step;
-      projected.push(projectBook(books[row], view));
-      rows.set(step, row);
-      // Ready each spine as its book comes into the window, even facing away: a turning
-      // camera then never has dozens of spines to draw in one frame.
-      if (!labels.get(step)) labels.set(step, renderSpine(paints[row], theme, scale));
+    const indexOf = new Map<number, number>();
+    for (let i = win.start; i < win.end; i++) {
+      const step = entries[i].step;
+      projected.push(projectBook(fannedBook(i, step, shapes[i], centres, s, twist), view));
+      indexOf.set(step, i);
+      // Ready each spine as its book comes into the window, even facing away, so a turn of the
+      // fan never has many spines to draw in one frame.
+      if (!labels.get(step)) labels.set(step, renderSpine(paints[i], theme, scale));
+    }
+    for (const book of drawOrder(projected)) {
+      const i = indexOf.get(book.step)!;
+      for (const face of book.faces) drawFace(ctx, face, book.step, paints[i], scale, labels, theme, paint.current);
     }
 
-    for (const book of drawOrder(projected)) {
-      const row = rows.get(book.step)!;
-      for (const face of book.faces) drawFace(ctx, face, book.step, paints[row], scale, labels, theme, paint.current);
+    const centre = entries.length > 0 ? Math.round(clampPosition(s, entries.length)) : -1;
+    const insetCtx = size.current.inset > 0 ? insetCanvas.current?.getContext('2d') : null;
+    if (insetCtx && centre >= 0) {
+      const near: { index: number; yaw: number }[] = [];
+      const from = Math.max(win.start, centre - FAN_MIN_EACH_WAY);
+      const to = Math.min(win.end, centre + FAN_MIN_EACH_WAY + 1);
+      for (let i = from; i < to; i++) near.push({ index: i, yaw: relativeYaw(i, s, twist) });
+      drawInset(insetCtx, size.current.inset, scale, near, centre, shapes, paints, theme);
+    }
+    if (tagBook.current && tagTurned.current && describeCentre && centre >= 0) {
+      const entry = entries[centre];
+      const degrees = Math.round(Math.abs(relativeYaw(centre, s, twist)));
+      const key = `${entry.step}|${degrees}`;
+      if (key !== cam.current.tagKey) {
+        cam.current.tagKey = key;
+        const text = describeCentre({ title: entry.title, avatar: entry.avatar, degrees });
+        tagBook.current.textContent = text.book;
+        tagTurned.current.textContent = text.turned;
+      }
     }
     onDraw?.(performance.now() - started);
   }, [labels, theme]);
 
-  const schedule = useCallback(() => {
-    if (!frame.current) frame.current = requestAnimationFrame(draw);
+  /** Run the camera: one frame at a time (ease, draw) until it arrives, then stop. */
+  const run = useCallback(() => {
+    const c = cam.current;
+    if (c.raf) return;
+    const tick = (now: number) => {
+      c.raf = 0;
+      const dt = c.last > 0 ? now - c.last : 1000 / 60;
+      c.last = now;
+      const next = stepCamera(c.shown, c.target, dt, c.reduced);
+      c.shown = next.shown;
+      draw();
+      if (!next.done) {
+        c.raf = requestAnimationFrame(tick);
+        return;
+      }
+      c.last = 0;
+      if (c.settling) {
+        c.settling = false;
+        const el = scroller.current;
+        const top = positionToScroll(c.shown, scene.current.entries.length);
+        if (el && Math.abs(el.scrollTop - top) >= OWN_SCROLL_SLACK / 2) {
+          c.expected = top;
+          window.clearTimeout(c.expectedTimer);
+          c.expectedTimer = window.setTimeout(() => (cam.current.expected = null), OWN_SCROLL_MS);
+          el.scrollTop = top;
+        }
+      }
+    };
+    c.raf = requestAnimationFrame(tick);
   }, [draw]);
 
-  // Size the canvas to the scroll area (its backing at up to 2x), now and on every resize,
-  // rotation or zoom, and draw straight away so the first frame isn't empty.
+  /** Scrolling has stopped: come to rest on the nearest book. */
+  const settleNow = useCallback(() => {
+    const c = cam.current;
+    const el = scroller.current;
+    if (!el || !scene.current.settle) return;
+    c.target = settleTarget(scrollToPosition(el.scrollTop, scene.current.entries.length), scene.current.entries.length);
+    c.settling = true;
+    run();
+  }, [run]);
+
+  // Size the canvases to the scroll area (backing at up to 2x) and the spacer to the pile, now
+  // and on every resize, rotation or zoom, and draw straight away so the first frame isn't empty.
   useLayoutEffect(() => {
     const el = scroller.current;
     const c = canvas.current;
@@ -305,12 +498,18 @@ function CanvasStack({ entries, seed, rotate = false, label, onScroller, onScrol
       const scale = canvasScale(window.devicePixelRatio);
       const width = el.clientWidth;
       const height = el.clientHeight;
-      size.current = { width, height, scale };
+      const insetEl = insetCanvas.current;
+      const insetSide = insetEl ? insetEl.clientWidth : 0;
+      size.current = { width, height, scale, inset: insetSide };
       c.width = backingSize(width, scale);
       c.height = backingSize(height, scale);
       c.style.width = `${width}px`;
       c.style.height = `${height}px`;
-      cancelAnimationFrame(frame.current);
+      if (insetEl && insetSide > 0) {
+        insetEl.width = backingSize(insetSide, scale);
+        insetEl.height = backingSize(insetSide, scale);
+      }
+      if (sizer.current) sizer.current.style.height = `${scrollHeight(scene.current.entries.length, height)}px`;
       draw();
     };
     const watchScale = () => {
@@ -322,6 +521,8 @@ function CanvasStack({ entries, seed, rotate = false, label, onScroller, onScrol
       watchScale();
       fit();
     };
+    const camState = cam.current;
+    camState.target = camState.shown = scrollToPosition(el.scrollTop, scene.current.entries.length);
     fit();
     watchScale();
     const resize = new ResizeObserver(fit);
@@ -329,17 +530,45 @@ function CanvasStack({ entries, seed, rotate = false, label, onScroller, onScrol
     return () => {
       resize.disconnect();
       media?.removeEventListener('change', onScale);
-      cancelAnimationFrame(frame.current);
-      frame.current = 0;
+      cancelAnimationFrame(camState.raf);
+      camState.raf = 0;
+      window.clearTimeout(camState.settleTimer);
+      window.clearTimeout(camState.expectedTimer);
     };
   }, [draw]);
 
-  // A new pile or the rotate switch: draw again (the next frame is soon enough).
-  useEffect(schedule, [schedule, books, paints, rotate]);
+  // prefers-reduced-motion: no easing (followed live).
+  useEffect(() => {
+    const c = cam.current;
+    c.reduced = prefersReducedMotion();
+    if (typeof window.matchMedia !== 'function') return;
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const onChange = () => (cam.current.reduced = media.matches);
+    media.addEventListener('change', onChange);
+    return () => media.removeEventListener('change', onChange);
+  }, []);
+
+  // A new twist, tag or inset: draw again where the camera is.
+  useEffect(() => {
+    if (!cam.current.raf) draw();
+  }, [draw, twist, describeCentre, inset]);
 
   const handleScroll = () => {
+    const c = cam.current;
+    const el = scroller.current;
+    if (!el) return;
+    if (c.expected !== null && Math.abs(el.scrollTop - c.expected) < OWN_SCROLL_SLACK) {
+      // The settle's own scroll: the camera is already there.
+      c.expected = null;
+      return;
+    }
+    c.expected = null;
     onScroll?.();
-    schedule();
+    c.target = scrollToPosition(el.scrollTop, scene.current.entries.length);
+    c.settling = false;
+    window.clearTimeout(c.settleTimer);
+    if (scene.current.settle) c.settleTimer = window.setTimeout(settleNow, SETTLE_IDLE_MS);
+    run();
   };
 
   const setScroller = useCallback(
@@ -349,8 +578,6 @@ function CanvasStack({ entries, seed, rotate = false, label, onScroller, onScrol
     },
     [onScroller],
   );
-
-  const spacer = STACK_PAD_TOP + STACK_PAD_BOTTOM + layout.height * TILT_SCALE;
 
   return (
     <div className="canvas-stack">
@@ -362,9 +589,16 @@ function CanvasStack({ entries, seed, rotate = false, label, onScroller, onScrol
         tabIndex={0}
         onScroll={handleScroll}
       >
-        <div className="book-stack__sizer" style={{ height: spacer }} />
+        <div ref={sizer} className="book-stack__sizer" style={{ height: scrollHeight(count, 0) }} />
       </div>
       <canvas ref={canvas} className="canvas-stack__canvas" aria-hidden="true" />
+      {describeCentre && (
+        <p className="canvas-stack__tag">
+          <span ref={tagBook} className="canvas-stack__tag-book" />
+          <span ref={tagTurned} className="canvas-stack__tag-turned" />
+        </p>
+      )}
+      {inset && <canvas ref={insetCanvas} className="canvas-stack__inset" aria-hidden="true" />}
     </div>
   );
 }
