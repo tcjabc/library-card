@@ -8,6 +8,7 @@ import { looksLikePairingCode } from '../sync/pairingCode';
 import { fmt, strings } from '../strings';
 import { Sheet } from '../ui/Sheet';
 import { GrownUpSignIn } from './GrownUpSignIn';
+import { GrownUpsLink } from './GrownUpsLink';
 import { splashTiles, type SplashTile } from './splashTiles';
 
 const NOTICE_MS = 3500;
@@ -86,9 +87,7 @@ function ReaderPicker() {
         </section>
       )}
       <footer className="splash__footer">
-        <a className="link-quiet" href={href('/grownups')}>
-          {t.grownUps}
-        </a>
+        <GrownUpsLink />
       </footer>
       {signingIn && (
         <Sheet title={fmt(strings.grownUpSignIn.title, { name: signingIn.display_name })} onClose={() => setSigningIn(null)}>

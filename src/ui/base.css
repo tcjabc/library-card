@@ -626,7 +626,8 @@ img {
   gap: var(--space-4);
 }
 
-.hub__not-me {
+.hub__not-me,
+.hub__grown-ups {
   align-self: center;
 }
 

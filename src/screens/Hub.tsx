@@ -6,6 +6,7 @@ import { dueStatus, needsAttention } from '../library/due';
 import { href, navigate } from '../router';
 import { clearActiveReader } from '../session/activeReader';
 import { fmt, strings } from '../strings';
+import { GrownUpsLink } from './GrownUpsLink';
 import { useCompletionCheckOnOpen, useJourneyStatus } from './journeys/useJourneyStatus';
 
 /** #/hub — the reader's home screen. */
@@ -99,6 +100,7 @@ export function Hub({ reader }: { reader: Reader }) {
       <button type="button" className="btn btn--big btn--quiet hub__not-me" onClick={notMe}>
         {t.notMe}
       </button>
+      <GrownUpsLink className="hub__grown-ups" />
       {writing && store && <NoteEditor store={store} householdId={reader.household_id} note={null} authorId={reader.id} onClose={() => setWriting(false)} />}
     </main>
   );
