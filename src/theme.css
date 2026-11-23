@@ -113,6 +113,9 @@
   --color-book-page-line: #d8c9a8;
   --color-book-shade: rgba(0, 0, 0, 0.28);
   --book-band-width: 0.625rem;
+  /* Page edges: a strip of paper, then a thin line, repeated down the edge. */
+  --book-page-stripe-paper: 2px;
+  --book-page-stripe-line: 1px;
 
   /* Overlays */
   --color-backdrop: rgba(20, 24, 33, 0.55);
@@ -229,8 +232,8 @@
   --z-celebration: 55;
   --z-tabbar: 40;
   --z-sticky: 30;
-  /* Developer tools: the book stack's measurement panel, over the pile. */
-  --z-dev-panel: 45;
+  /* Developer tools: the book stack's measurement panel, over the pile (above the tab bar, below menus). */
+  --z-dev-panel: 42;
   --dev-panel-max: 22rem;
   --z-menu: 45;
   /* "Updating…": over everything while a new version waits for the database. */

@@ -1,8 +1,9 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { href } from '../router';
+import { bookRenders } from '../staircase/bookRenders';
 import { generateFakeStack } from '../staircase/stackModel';
 import { fmt, strings } from '../strings';
-import { FRAME_MS, framesPerSecond, missedFrames, type Frame } from './frameStats';
+import { FRAME_MS, framesPerSecond, missedFrames, rendersPerSecond, type Frame } from './frameStats';
 import './StackDevPage.css';
 
 /**
@@ -63,6 +64,8 @@ export default function StackDevPage() {
 interface Readout {
   /** FPS over the last 2 s of scrolling (the latest measured), or null before any scrolling. */
   fps: number | null;
+  /** Book renders per second over the same frames, or null before any scrolling. */
+  renders: number | null;
   dropped: number;
   /** null where the browser can't report long tasks. */
   longTasks: number | null;
@@ -77,7 +80,7 @@ function supportsLongTasks(): boolean {
 }
 
 function emptyReadout(): Readout {
-  return { fps: null, dropped: 0, longTasks: supportsLongTasks() ? 0 : null, longTaskMs: 0, nodes: 0, viewport: '', dpr: 1 };
+  return { fps: null, renders: null, dropped: 0, longTasks: supportsLongTasks() ? 0 : null, longTaskMs: 0, nodes: 0, viewport: '', dpr: 1 };
 }
 
 /** Times every frame while the pile is scrolling, counts late frames and long tasks. */
@@ -85,11 +88,14 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
   const live = useRef({
     frames: [] as Frame[],
     last: 0,
+    /** bookRenders() at the last frame. */
+    lastRenders: 0,
     scrollingUntil: 0,
     dropped: 0,
     longTasks: 0,
     longTaskMs: 0,
     lastFps: null as number | null,
+    lastRendersPerSec: null as number | null,
   });
   const [readout, setReadout] = useState<Readout>(emptyReadout);
 
@@ -97,13 +103,16 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
     const s = live.current;
     const longTasks = supportsLongTasks();
     let raf = 0;
+    s.lastRenders = bookRenders();
     const tick = (now: number) => {
+      const renders = bookRenders();
       if (s.last > 0 && now <= s.scrollingUntil + FRAME_MS) {
         const dt = now - s.last;
-        s.frames.push({ at: now, dt });
+        s.frames.push({ at: now, dt, renders: renders - s.lastRenders });
         s.dropped += missedFrames(dt);
       }
       s.last = now;
+      s.lastRenders = renders;
       while (s.frames.length > 0 && s.frames[0].at <= now - FPS_WINDOW_MS) s.frames.shift();
       raf = requestAnimationFrame(tick);
     };
@@ -121,10 +130,14 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
     }
 
     const timer = window.setInterval(() => {
-      const fps = framesPerSecond(s.frames, performance.now(), FPS_WINDOW_MS);
+      const now = performance.now();
+      const fps = framesPerSecond(s.frames, now, FPS_WINDOW_MS);
       if (fps !== null) s.lastFps = fps;
+      const renders = rendersPerSecond(s.frames, now, FPS_WINDOW_MS);
+      if (renders !== null) s.lastRendersPerSec = renders;
       setReadout({
         fps: s.lastFps,
+        renders: s.lastRendersPerSec,
         dropped: s.dropped,
         longTasks: longTasks ? s.longTasks : null,
         longTaskMs: Math.round(s.longTaskMs),
@@ -152,6 +165,7 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
     s.longTasks = 0;
     s.longTaskMs = 0;
     s.lastFps = null;
+    s.lastRendersPerSec = null;
   }, []);
 
   return { readout, onScroll, reset };
@@ -162,6 +176,7 @@ function readoutLines(readout: Readout, count: number, lite: boolean): [string, 
     [t.measureBooks, count.toLocaleString()],
     [t.measureMode, lite ? t.measureModeLite : t.measureMode3d],
     [t.measureFps, readout.fps === null ? t.measureFpsNone : readout.fps.toFixed(1)],
+    [t.measureRenders, readout.renders === null ? t.measureFpsNone : readout.renders.toFixed(1)],
     [t.measureDropped, readout.dropped.toLocaleString()],
     [
       t.measureLongTasks,

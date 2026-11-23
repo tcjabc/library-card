@@ -539,6 +539,7 @@ export const en = {
     measureModeLite: 'Lite (flat 2D)',
     measureFps: 'FPS (last 2 s of scrolling)',
     measureFpsNone: 'Scroll the pile to measure',
+    measureRenders: 'Book renders per second (same 2 s)',
     measureDropped: 'Dropped frames',
     measureLongTasks: 'Long tasks',
     measureLongTasksValue: '{count} ({ms} ms in all)',

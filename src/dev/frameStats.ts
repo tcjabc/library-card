@@ -5,6 +5,8 @@ export interface Frame {
   at: number;
   /** Time since the frame before (ms). */
   dt: number;
+  /** Book renders since the frame before (0 if not counted). */
+  renders?: number;
 }
 
 /** One frame at 60 Hz (ms). */
@@ -16,14 +18,28 @@ export function missedFrames(dt: number, frameMs: number = FRAME_MS): number {
   return Math.max(0, Math.round(dt / frameMs) - 1);
 }
 
-/** Frames per second over the frames in the last `windowMs` before `now`, or null if there are none. */
-export function framesPerSecond(frames: readonly Frame[], now: number, windowMs: number = 2000): number | null {
+/** Frames, and renders, over the frames in the last `windowMs` before `now`, and the time they took. */
+function sumWindow(frames: readonly Frame[], now: number, windowMs: number): { count: number; renders: number; time: number } {
   let count = 0;
+  let renders = 0;
   let time = 0;
   for (const f of frames) {
     if (f.at <= now - windowMs || f.at > now || !(f.dt > 0)) continue;
     count += 1;
+    renders += f.renders !== undefined && f.renders > 0 ? f.renders : 0;
     time += f.dt;
   }
+  return { count, renders, time };
+}
+
+/** Frames per second over the frames in the last `windowMs` before `now`, or null if there are none. */
+export function framesPerSecond(frames: readonly Frame[], now: number, windowMs: number = 2000): number | null {
+  const { count, time } = sumWindow(frames, now, windowMs);
   return count > 0 && time > 0 ? (count * 1000) / time : null;
+}
+
+/** Book renders per second over the same frames as framesPerSecond, or null if there are none. */
+export function rendersPerSecond(frames: readonly Frame[], now: number, windowMs: number = 2000): number | null {
+  const { count, renders, time } = sumWindow(frames, now, windowMs);
+  return count > 0 && time > 0 ? (renders * 1000) / time : null;
 }

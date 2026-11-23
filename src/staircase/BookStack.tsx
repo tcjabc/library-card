@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { countBookRender } from './bookRenders';
+import { bookViews, type BookViews } from './bookViews';
 import {
   LITE_ROW,
   TILT_SCALE,
@@ -6,10 +8,11 @@ import {
   TILT_Y_DEG,
   bookShape,
   layoutWindow,
+  sameWindow,
   stackLayout,
   visibleWindow,
-  type BookShape,
   type StackEntry,
+  type StackWindow,
 } from './stackModel';
 import './bookStack.css';
 
@@ -17,7 +20,11 @@ import './bookStack.css';
  * The Family Staircase as a pile of books, in CSS 3D (stage 1 prototype, loaded only by the
  * developer tools). Newest book on top; scroll down to go down the pile. Only the books on
  * screen (plus a few each way) are in the page: a sized spacer gives the scroll height, and
- * one tilted container holds the visible books, moved as the window changes.
+ * one tilted container holds the visible books at their places in the whole pile.
+ *
+ * Scrolling re-renders only books coming into or leaving the window: each book is memoised
+ * with stable props (its step and the pile's style lookup), and the window state changes only
+ * when its first or last book does.
  */
 
 export interface BookStackProps {
@@ -39,21 +46,22 @@ const PAD_TOP = 112;
 const PAD_BOTTOM = 160;
 /** Books kept in the page above and below the visible ones. */
 const BUFFER = 3;
-/** Lite: the gap between flat spines (px). */
-const LITE_GAP = 4;
 
-interface Range {
-  start: number;
-  end: number;
-}
+const PILE_STYLE = {
+  top: PAD_TOP,
+  '--tilt-x': `${TILT_X_DEG}deg`,
+  '--tilt-y': `${TILT_Y_DEG}deg`,
+} as CSSProperties;
+const FLAT_STYLE: CSSProperties = { top: PAD_TOP };
 
-export default function BookStack({ entries, seed, lite = false, label, onScroller, onScroll }: BookStackProps) {
+function BookStack({ entries, seed, lite = false, label, onScroller, onScroll }: BookStackProps) {
   const count = entries.length;
   const shapes = useMemo(() => entries.map((e) => bookShape(seed, e.step)), [entries, seed]);
   const layout = useMemo(() => stackLayout(shapes.map((s) => s.thickness)), [shapes]);
+  const views = useMemo(() => bookViews(entries, shapes, layout), [entries, shapes, layout]);
   const scroller = useRef<HTMLDivElement | null>(null);
   const frame = useRef(0);
-  const [range, setRange] = useState<Range>({ start: 0, end: 0 });
+  const [range, setRange] = useState<StackWindow>({ start: 0, end: 0 });
 
   const measure = useCallback(() => {
     frame.current = 0;
@@ -63,7 +71,7 @@ export default function BookStack({ entries, seed, lite = false, label, onScroll
     const next = lite
       ? visibleWindow(top, el.clientHeight, LITE_ROW, count, BUFFER)
       : layoutWindow(layout, top / TILT_SCALE, (top + el.clientHeight) / TILT_SCALE, BUFFER);
-    setRange((prev) => (prev.start === next.start && prev.end === next.end ? prev : next));
+    setRange((prev) => (sameWindow(prev, next) ? prev : next));
   }, [count, layout, lite]);
 
   useLayoutEffect(measure, [measure]);
@@ -76,9 +84,11 @@ export default function BookStack({ entries, seed, lite = false, label, onScroll
     return () => {
       resize.disconnect();
       cancelAnimationFrame(frame.current);
+      frame.current = 0;
     };
   }, [measure]);
 
+  // At most one measure per frame, however many scroll events arrive.
   const handleScroll = () => {
     onScroll?.();
     if (!frame.current) frame.current = requestAnimationFrame(measure);
@@ -93,37 +103,24 @@ export default function BookStack({ entries, seed, lite = false, label, onScroll
   );
 
   const spacer = PAD_TOP + PAD_BOTTOM + (lite ? count * LITE_ROW : layout.height * TILT_SCALE);
-  const books = [];
-  for (let i = range.start; i < range.end; i++) {
-    const index = count - 1 - i; // list index 0 = the newest entry
-    books.push({ entry: entries[index], shape: shapes[index], top: lite ? i * LITE_ROW : layout.tops[i] });
-  }
-  // Oldest of the window first, so a newer book paints over the one under it.
-  books.reverse();
-  const origin = lite ? 0 : (layout.tops[range.start] ?? 0);
+  // Window rows run newest first; paint the oldest of the window first, so a newer book
+  // paints over the one under it. Row r is entries[count - 1 - r].
+  const steps: number[] = [];
+  for (let r = range.end - 1; r >= range.start; r--) steps.push(entries[count - 1 - r].step);
 
   return (
     <div ref={setScroller} className="book-stack" role="region" aria-label={label} tabIndex={0} onScroll={handleScroll}>
       <div className="book-stack__sizer" style={{ height: spacer }}>
         {lite ? (
-          <div className="book-stack__flat" style={{ top: PAD_TOP }}>
-            {books.map(({ entry, shape, top }) => (
-              <FlatBook key={entry.step} entry={entry} shape={shape} top={top} />
+          <div className="book-stack__flat" style={FLAT_STYLE}>
+            {steps.map((step) => (
+              <FlatBook key={step} step={step} views={views} />
             ))}
           </div>
         ) : (
-          <div
-            className="book-stack__pile"
-            style={
-              {
-                top: PAD_TOP + origin * TILT_SCALE,
-                '--tilt-x': `${TILT_X_DEG}deg`,
-                '--tilt-y': `${TILT_Y_DEG}deg`,
-              } as CSSProperties
-            }
-          >
-            {books.map(({ entry, shape, top }) => (
-              <Book key={entry.step} entry={entry} shape={shape} top={top - origin} />
+          <div className="book-stack__pile" style={PILE_STYLE}>
+            {steps.map((step) => (
+              <Book key={step} step={step} views={views} />
             ))}
           </div>
         )}
@@ -132,71 +129,50 @@ export default function BookStack({ entries, seed, lite = false, label, onScroll
   );
 }
 
-function colours(entry: StackEntry): CSSProperties {
-  return { '--spine-hue': entry.spineHue, '--reader-hue': entry.readerHue } as CSSProperties;
+export default memo(BookStack);
+
+interface BookProps {
+  step: number;
+  /** The pile's style lookup: the same object for the whole pile. */
+  views: BookViews;
 }
 
-function Spine({ entry }: { entry: StackEntry }) {
+function Spine({ title, avatar }: { title: string; avatar: string }) {
   return (
     <>
       <span className="book-stack__band" />
       <span className="book-stack__avatar" aria-hidden="true">
-        {entry.avatar}
+        {avatar}
       </span>
-      <span className="book-stack__title">{entry.title}</span>
+      <span className="book-stack__title">{title}</span>
     </>
   );
 }
 
-/** A box: the spine facing us, the cover on top and page edges on the two short sides. */
-function Book({ entry, shape, top }: { entry: StackEntry; shape: BookShape; top: number }) {
-  const { width: w, depth: d, thickness: t } = shape;
+/** A box as the camera sees it: the spine facing us, the cover on top and the page edges on the right. */
+const Book = memo(function Book({ step, views }: BookProps) {
+  countBookRender();
+  const view = views.get(step);
+  if (!view) return null;
   return (
-    <div
-      className="book-stack__book"
-      style={{
-        ...colours(entry),
-        top,
-        width: w,
-        height: t,
-        marginLeft: -w / 2,
-        transform: `translate3d(${shape.x}px, 0, ${shape.z}px) rotateY(${shape.yaw}deg)`,
-      }}
-    >
-      <div className="book-stack__face book-stack__spine" style={{ transform: `translateZ(${d / 2}px)` }}>
-        <Spine entry={entry} />
+    <div className="book-stack__book" style={view.book}>
+      <div className="book-stack__face book-stack__spine" style={view.spine}>
+        <Spine title={view.title} avatar={view.avatar} />
       </div>
-      <div
-        className="book-stack__face book-stack__cover"
-        style={{ width: w, height: d, top: (t - d) / 2, transform: `rotateX(90deg) translateZ(${t / 2}px)` }}
-      />
-      <div
-        className="book-stack__face book-stack__pages"
-        style={{ width: d, height: t, left: (w - d) / 2, transform: `rotateY(90deg) translateZ(${w / 2}px)` }}
-      />
-      <div
-        className="book-stack__face book-stack__pages"
-        style={{ width: d, height: t, left: (w - d) / 2, transform: `rotateY(-90deg) translateZ(${w / 2}px)` }}
-      />
+      <div className="book-stack__face book-stack__cover" style={view.cover} />
+      <div className="book-stack__face book-stack__pages" style={view.pages} />
     </div>
   );
-}
+});
 
 /** Lite: the same spine, flat, in rows of one height. */
-function FlatBook({ entry, shape, top }: { entry: StackEntry; shape: BookShape; top: number }) {
+const FlatBook = memo(function FlatBook({ step, views }: BookProps) {
+  countBookRender();
+  const view = views.get(step);
+  if (!view) return null;
   return (
-    <div
-      className="book-stack__spine book-stack__flat-book"
-      style={{
-        ...colours(entry),
-        top,
-        width: shape.width,
-        height: LITE_ROW - LITE_GAP,
-        marginLeft: -shape.width / 2,
-        transform: `translateX(${shape.x}px)`,
-      }}
-    >
-      <Spine entry={entry} />
+    <div className="book-stack__spine book-stack__flat-book" style={view.flat}>
+      <Spine title={view.title} avatar={view.avatar} />
     </div>
   );
-}
+});

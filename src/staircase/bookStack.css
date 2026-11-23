@@ -54,7 +54,7 @@
     hsl(var(--spine-hue) var(--book-spine-saturation) var(--book-spine-lightness));
   font-size: var(--text-sm);
   font-weight: var(--weight-bold);
-  line-height: 1.2;
+  line-height: var(--line-height);
 }
 
 .book-stack__band {
@@ -89,7 +89,11 @@
 .book-stack__pages {
   top: 0;
   background:
-    repeating-linear-gradient(to bottom, var(--color-book-pages) 0 2px, var(--color-book-page-line) 2px 3px),
+    repeating-linear-gradient(
+      to bottom,
+      var(--color-book-pages) 0 var(--book-page-stripe-paper),
+      var(--color-book-page-line) 0 calc(var(--book-page-stripe-paper) + var(--book-page-stripe-line))
+    ),
     var(--color-book-pages);
 }
 

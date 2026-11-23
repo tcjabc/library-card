@@ -203,7 +203,7 @@ function countBefore(tops: readonly number[], y: number, inclusive: boolean): nu
  * Books of different thicknesses: which to render, as [start, end) indexes into `layout.tops`,
  * for the slice of the pile from `from` to `to` px (from its top), plus `buffer` books each way.
  */
-export function layoutWindow(layout: StackLayout, from: number, to: number, buffer: number): { start: number; end: number } {
+export function layoutWindow(layout: StackLayout, from: number, to: number, buffer: number): StackWindow {
   const count = layout.tops.length;
   if (count === 0 || to <= from || to <= 0 || from >= layout.height) {
     const at = from >= layout.height ? count : 0;
@@ -214,6 +214,16 @@ export function layoutWindow(layout: StackLayout, from: number, to: number, buff
   return { start: Math.max(0, first - buffer), end: Math.min(count, last + buffer) };
 }
 
+export interface StackWindow {
+  start: number;
+  end: number;
+}
+
+/** Whether two [start, end) windows hold the same books, so the stack can skip a state update. */
+export function sameWindow(a: StackWindow, b: StackWindow): boolean {
+  return a.start === b.start && a.end === b.end;
+}
+
 /** Rows all `itemHeight` tall (the Lite view): which to render, as [start, end). */
 export function visibleWindow(
   scrollTop: number,
@@ -221,6 +231,6 @@ export function visibleWindow(
   itemHeight: number,
   total: number,
   buffer: number,
-): { start: number; end: number } {
+): StackWindow {
   return uniformWindow({ scrollTop, viewportHeight, itemHeight, count: total, buffer: Math.max(0, buffer) });
 }

@@ -10,6 +10,7 @@ import {
   bookShape,
   generateFakeStack,
   layoutWindow,
+  sameWindow,
   spineHue,
   stackLayout,
   visibleWindow,
@@ -172,5 +173,21 @@ describe('visibleWindow', () => {
     expect(visibleWindow(-500, 400, 40, 1000, 0)).toEqual({ start: 0, end: 10 });
     expect(visibleWindow(0, 400, 0, 1000, 3)).toEqual({ start: 0, end: 0 });
     expect(visibleWindow(0, 400, 40, 1000, -2)).toEqual({ start: 0, end: 10 });
+  });
+});
+
+describe('sameWindow', () => {
+  it('is true only when both ends match', () => {
+    expect(sameWindow({ start: 3, end: 20 }, { start: 3, end: 20 })).toBe(true);
+    expect(sameWindow({ start: 0, end: 0 }, { start: 0, end: 0 })).toBe(true);
+    expect(sameWindow({ start: 3, end: 20 }, { start: 4, end: 20 })).toBe(false);
+    expect(sameWindow({ start: 3, end: 20 }, { start: 3, end: 21 })).toBe(false);
+  });
+
+  it('holds while scrolling within one book: the window only changes at a book edge', () => {
+    const layout = stackLayout([30, 30, 30, 30, 30, 30, 30, 30]);
+    const at = (y: number) => layoutWindow(layout, y, y + 60, 1);
+    expect(sameWindow(at(31), at(45))).toBe(true);
+    expect(sameWindow(at(31), at(61))).toBe(false);
   });
 });
