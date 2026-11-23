@@ -9,7 +9,10 @@ import {
   MAX_YAW,
   bookShape,
   generateFakeStack,
+  LITE_ROW,
+  STACK_BUFFER,
   layoutWindow,
+  liteBuffer,
   sameWindow,
   spineHue,
   stackLayout,
@@ -189,5 +192,15 @@ describe('sameWindow', () => {
     const at = (y: number) => layoutWindow(layout, y, y + 60, 1);
     expect(sameWindow(at(31), at(45))).toBe(true);
     expect(sameWindow(at(31), at(61))).toBe(false);
+  });
+});
+
+describe('liteBuffer', () => {
+  it('keeps a whole viewport of rows each way, never fewer than the 3D buffer', () => {
+    expect(liteBuffer(788)).toBe(Math.ceil(788 / LITE_ROW));
+    expect(liteBuffer(400, 40)).toBe(10);
+    expect(liteBuffer(0)).toBe(STACK_BUFFER);
+    expect(liteBuffer(-50)).toBe(STACK_BUFFER);
+    expect(liteBuffer(800, 0)).toBe(STACK_BUFFER);
   });
 });

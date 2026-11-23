@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FRAME_MS, framesPerSecond, missedFrames, rendersPerSecond } from '../frameStats';
+import { FRAME_MS, drawStats, framesPerSecond, missedFrames, rendersPerSecond } from '../frameStats';
 
 // The book stack prototype's frame timing (src/dev/frameStats.ts).
 
@@ -57,5 +57,25 @@ describe('rendersPerSecond', () => {
 
   it('is null with no frames', () => {
     expect(rendersPerSecond([], 1000)).toBeNull();
+  });
+});
+
+describe('drawStats', () => {
+  it('averages the draws in the window and finds the longest', () => {
+    const samples = [
+      { at: 100, ms: 9 },
+      { at: 1100, ms: 2 },
+      { at: 1500, ms: 4 },
+      { at: 2900, ms: 3 },
+    ];
+    expect(drawStats(samples, 3000, 2000)).toEqual({ average: 3, max: 4 });
+    expect(drawStats(samples, 3000, 5000)).toEqual({ average: 4.5, max: 9 });
+  });
+
+  it('is null with no draws in the window, and skips odd samples', () => {
+    expect(drawStats([], 1000)).toBeNull();
+    expect(drawStats([{ at: 10, ms: 5 }], 5000, 2000)).toBeNull();
+    expect(drawStats([{ at: 4000, ms: 1 }], 3000, 2000)).toBeNull();
+    expect(drawStats([{ at: 2500, ms: Number.NaN }, { at: 2600, ms: -1 }, { at: 2700, ms: 2 }], 3000, 2000)).toEqual({ average: 2, max: 2 });
   });
 });

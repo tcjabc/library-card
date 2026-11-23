@@ -1,0 +1,20 @@
+/* The canvas book stack (CanvasStack.tsx). Every rule is under .canvas-stack. */
+
+.canvas-stack {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The native scroll area fills the box; the canvas sits over it and lets touches through. */
+.canvas-stack > .canvas-stack__scroller {
+  position: absolute;
+  inset: 0;
+}
+
+.canvas-stack__canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}

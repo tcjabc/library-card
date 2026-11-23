@@ -43,3 +43,23 @@ export function rendersPerSecond(frames: readonly Frame[], now: number, windowMs
   const { count, renders, time } = sumWindow(frames, now, windowMs);
   return count > 0 && time > 0 ? (renders * 1000) / time : null;
 }
+
+/** One canvas draw: when it ran (ms, performance.now()) and how long it took (ms). */
+export interface DrawSample {
+  at: number;
+  ms: number;
+}
+
+/** The average and longest draw over the draws in the last `windowMs` before `now`, or null if there are none. */
+export function drawStats(samples: readonly DrawSample[], now: number, windowMs: number = 2000): { average: number; max: number } | null {
+  let count = 0;
+  let total = 0;
+  let max = 0;
+  for (const s of samples) {
+    if (s.at <= now - windowMs || s.at > now || !(s.ms >= 0)) continue;
+    count += 1;
+    total += s.ms;
+    max = Math.max(max, s.ms);
+  }
+  return count > 0 ? { average: total / count, max } : null;
+}

@@ -3,7 +3,7 @@ import { href } from '../router';
 import { bookRenders } from '../staircase/bookRenders';
 import { generateFakeStack } from '../staircase/stackModel';
 import { fmt, strings } from '../strings';
-import { FRAME_MS, framesPerSecond, missedFrames, rendersPerSecond, type Frame } from './frameStats';
+import { FRAME_MS, drawStats, framesPerSecond, missedFrames, rendersPerSecond, type DrawSample, type Frame } from './frameStats';
 import './StackDevPage.css';
 
 /**
@@ -13,6 +13,11 @@ import './StackDevPage.css';
  */
 
 const BookStack = lazy(() => import('../staircase/BookStack'));
+const CanvasStack = lazy(() => import('../staircase/CanvasStack'));
+
+/** 3D = the CSS 3D pile, Lite = flat 2D rows, Canvas = the 3D pile drawn on one canvas. */
+type StackMode = '3d' | 'lite' | 'canvas';
+const MODES: readonly StackMode[] = ['3d', 'lite', 'canvas'];
 
 const t = strings.dev;
 const COUNTS = [100, 1000, 3000] as const;
@@ -25,7 +30,8 @@ const READOUT_EVERY_MS = 500;
 
 export default function StackDevPage() {
   const [count, setCount] = useState<number>(1000);
-  const [lite, setLite] = useState(false);
+  const [mode, setMode] = useState<StackMode>('3d');
+  const [rotate, setRotate] = useState(false);
   const entries = useMemo(() => generateFakeStack(count, SEED), [count]);
   const scroller = useRef<HTMLDivElement | null>(null);
   const meter = useScrollMeter(scroller);
@@ -35,7 +41,8 @@ export default function StackDevPage() {
   }, []);
 
   // A new pile starts its counts afresh.
-  useEffect(() => reset(), [count, lite, reset]);
+  useEffect(() => reset(), [count, mode, rotate, reset]);
+  const label = fmt(t.stackLabel, { count: count.toLocaleString() });
 
   return (
     <main className="stack-dev">
@@ -46,17 +53,39 @@ export default function StackDevPage() {
         <h1 className="stack-dev__title">{t.stackTitle}</h1>
       </header>
       <Suspense fallback={<p className="muted stack-dev__loading">{strings.common.loading}</p>}>
-        <BookStack
-          key={`${count}-${lite}`}
-          entries={entries}
-          seed={SEED}
-          lite={lite}
-          label={fmt(t.stackLabel, { count: count.toLocaleString() })}
-          onScroller={onScroller}
-          onScroll={meter.onScroll}
-        />
+        {mode === 'canvas' ? (
+          <CanvasStack
+            key={count}
+            entries={entries}
+            seed={SEED}
+            rotate={rotate}
+            label={label}
+            onScroller={onScroller}
+            onScroll={meter.onScroll}
+            onDraw={meter.onDraw}
+          />
+        ) : (
+          <BookStack
+            key={`${count}-${mode}`}
+            entries={entries}
+            seed={SEED}
+            lite={mode === 'lite'}
+            label={label}
+            onScroller={onScroller}
+            onScroll={meter.onScroll}
+          />
+        )}
       </Suspense>
-      <MeasurePanel count={count} lite={lite} onCount={setCount} onLite={setLite} readout={meter.readout} onReset={reset} />
+      <MeasurePanel
+        count={count}
+        mode={mode}
+        rotate={rotate}
+        onCount={setCount}
+        onMode={setMode}
+        onRotate={setRotate}
+        readout={meter.readout}
+        onReset={reset}
+      />
     </main>
   );
 }
@@ -66,6 +95,8 @@ interface Readout {
   fps: number | null;
   /** Book renders per second over the same frames, or null before any scrolling. */
   renders: number | null;
+  /** Canvas only: draw time per frame (ms) over the same 2 s, or null before any drawing while scrolling. */
+  draw: { average: number; max: number } | null;
   dropped: number;
   /** null where the browser can't report long tasks. */
   longTasks: number | null;
@@ -80,13 +111,15 @@ function supportsLongTasks(): boolean {
 }
 
 function emptyReadout(): Readout {
-  return { fps: null, renders: null, dropped: 0, longTasks: supportsLongTasks() ? 0 : null, longTaskMs: 0, nodes: 0, viewport: '', dpr: 1 };
+  return { fps: null, renders: null, draw: null, dropped: 0, longTasks: supportsLongTasks() ? 0 : null, longTaskMs: 0, nodes: 0, viewport: '', dpr: 1 };
 }
 
 /** Times every frame while the pile is scrolling, counts late frames and long tasks. */
 function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
   const live = useRef({
     frames: [] as Frame[],
+    /** Canvas draws while scrolling. */
+    draws: [] as DrawSample[],
     last: 0,
     /** bookRenders() at the last frame. */
     lastRenders: 0,
@@ -96,6 +129,7 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
     longTaskMs: 0,
     lastFps: null as number | null,
     lastRendersPerSec: null as number | null,
+    lastDraw: null as { average: number; max: number } | null,
   });
   const [readout, setReadout] = useState<Readout>(emptyReadout);
 
@@ -114,6 +148,7 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
       s.last = now;
       s.lastRenders = renders;
       while (s.frames.length > 0 && s.frames[0].at <= now - FPS_WINDOW_MS) s.frames.shift();
+      while (s.draws.length > 0 && s.draws[0].at <= now - FPS_WINDOW_MS) s.draws.shift();
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -135,9 +170,12 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
       if (fps !== null) s.lastFps = fps;
       const renders = rendersPerSecond(s.frames, now, FPS_WINDOW_MS);
       if (renders !== null) s.lastRendersPerSec = renders;
+      const draw = drawStats(s.draws, now, FPS_WINDOW_MS);
+      if (draw !== null) s.lastDraw = draw;
       setReadout({
         fps: s.lastFps,
         renders: s.lastRendersPerSec,
+        draw: s.lastDraw,
         dropped: s.dropped,
         longTasks: longTasks ? s.longTasks : null,
         longTaskMs: Math.round(s.longTaskMs),
@@ -158,9 +196,18 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
     live.current.scrollingUntil = performance.now() + SCROLL_IDLE_MS;
   }, []);
 
+  /** A canvas draw: counted only while the pile is scrolling, like the frames. */
+  const onDraw = useCallback((ms: number) => {
+    const s = live.current;
+    const now = performance.now();
+    if (now <= s.scrollingUntil + FRAME_MS) s.draws.push({ at: now, ms });
+  }, []);
+
   const reset = useCallback(() => {
     const s = live.current;
     s.frames = [];
+    s.draws = [];
+    s.lastDraw = null;
     s.dropped = 0;
     s.longTasks = 0;
     s.longTaskMs = 0;
@@ -168,15 +215,27 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
     s.lastRendersPerSec = null;
   }, []);
 
-  return { readout, onScroll, reset };
+  return { readout, onScroll, onDraw, reset };
 }
 
-function readoutLines(readout: Readout, count: number, lite: boolean): [string, string][] {
+function modeName(mode: StackMode, rotate: boolean): string {
+  if (mode === 'canvas') return rotate ? t.measureModeCanvasRotate : t.measureModeCanvas;
+  return mode === 'lite' ? t.measureModeLite : t.measureMode3d;
+}
+
+function readoutLines(readout: Readout, count: number, mode: StackMode, rotate: boolean): [string, string][] {
+  const draw =
+    mode !== 'canvas'
+      ? t.measureDrawCanvasOnly
+      : readout.draw === null
+        ? t.measureFpsNone
+        : fmt(t.measureDrawValue, { average: readout.draw.average.toFixed(2), max: readout.draw.max.toFixed(2) });
   return [
     [t.measureBooks, count.toLocaleString()],
-    [t.measureMode, lite ? t.measureModeLite : t.measureMode3d],
+    [t.measureMode, modeName(mode, rotate)],
     [t.measureFps, readout.fps === null ? t.measureFpsNone : readout.fps.toFixed(1)],
     [t.measureRenders, readout.renders === null ? t.measureFpsNone : readout.renders.toFixed(1)],
+    [t.measureDraw, draw],
     [t.measureDropped, readout.dropped.toLocaleString()],
     [
       t.measureLongTasks,
@@ -215,17 +274,19 @@ async function copyText(text: string): Promise<boolean> {
 
 interface MeasurePanelProps {
   count: number;
-  lite: boolean;
+  mode: StackMode;
+  rotate: boolean;
   onCount: (count: number) => void;
-  onLite: (lite: boolean) => void;
+  onMode: (mode: StackMode) => void;
+  onRotate: (rotate: boolean) => void;
   readout: Readout;
   onReset: () => void;
 }
 
 /** Small and collapsible, over the pile: the controls, the live numbers and "Copy results". */
-function MeasurePanel({ count, lite, onCount, onLite, readout, onReset }: MeasurePanelProps) {
+function MeasurePanel({ count, mode, rotate, onCount, onMode, onRotate, readout, onReset }: MeasurePanelProps) {
   const [copied, setCopied] = useState<boolean | null>(null);
-  const lines = readoutLines(readout, count, lite);
+  const lines = readoutLines(readout, count, mode, rotate);
 
   const copy = async () => {
     const text = [t.stackTitle, ...lines.map(([label, value]) => `${label}: ${value}`)].join('\n');
@@ -245,9 +306,20 @@ function MeasurePanel({ count, lite, onCount, onLite, readout, onReset }: Measur
             </button>
           ))}
         </div>
-        <button type="button" className="chip" aria-pressed={lite} onClick={() => onLite(!lite)}>
-          {t.measureLite}
-        </button>
+      </div>
+      <div className="stack-dev__controls">
+        <div className="chip-row" role="group" aria-label={t.measureMode}>
+          {MODES.map((m) => (
+            <button key={m} type="button" className="chip" aria-pressed={mode === m} onClick={() => onMode(m)}>
+              {modeName(m, false)}
+            </button>
+          ))}
+        </div>
+        {mode === 'canvas' && (
+          <button type="button" className="chip" aria-pressed={rotate} onClick={() => onRotate(!rotate)}>
+            {t.measureRotate}
+          </button>
+        )}
       </div>
       <dl className="stack-dev__readout">
         {lines.map(([label, value]) => (

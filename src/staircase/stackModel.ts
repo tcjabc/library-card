@@ -85,6 +85,22 @@ export const TILT_SCALE = Math.cos((TILT_X_DEG * Math.PI) / 180);
 /** Lite (flat 2D) rows are all this tall (px). */
 export const LITE_ROW = 40;
 
+/** Room above the newest book (its top shows above its spine) and below the oldest (px). */
+export const STACK_PAD_TOP = 112;
+export const STACK_PAD_BOTTOM = 160;
+
+/** 3D: books kept in the page above and below the visible ones. */
+export const STACK_BUFFER = 3;
+
+/**
+ * Lite: rows kept in the page above and below the visible ones. A whole viewport each way, so a
+ * fast flick (which the compositor scrolls ahead of React) doesn't show an empty pile.
+ */
+export function liteBuffer(viewportHeight: number, rowHeight: number = LITE_ROW): number {
+  if (!(rowHeight > 0)) return STACK_BUFFER;
+  return Math.max(STACK_BUFFER, Math.ceil(Math.max(0, viewportHeight) / rowHeight));
+}
+
 /**
  * hashString (FNV-1a) barely mixes the last character, so keys that differ only at the end
  * (step 11 and 12, ISBN …01 and …02) land close together. This 32-bit finaliser (from

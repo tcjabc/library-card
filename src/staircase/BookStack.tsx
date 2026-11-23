@@ -3,11 +3,15 @@ import { countBookRender } from './bookRenders';
 import { bookViews, type BookViews } from './bookViews';
 import {
   LITE_ROW,
+  STACK_BUFFER,
+  STACK_PAD_BOTTOM,
+  STACK_PAD_TOP,
   TILT_SCALE,
   TILT_X_DEG,
   TILT_Y_DEG,
   bookShape,
   layoutWindow,
+  liteBuffer,
   sameWindow,
   stackLayout,
   visibleWindow,
@@ -41,11 +45,8 @@ export interface BookStackProps {
   onScroll?: () => void;
 }
 
-/** Room above the newest book (its top shows above its spine) and below the oldest (px). */
-const PAD_TOP = 112;
-const PAD_BOTTOM = 160;
-/** Books kept in the page above and below the visible ones. */
-const BUFFER = 3;
+const PAD_TOP = STACK_PAD_TOP;
+const PAD_BOTTOM = STACK_PAD_BOTTOM;
 
 const PILE_STYLE = {
   top: PAD_TOP,
@@ -69,8 +70,8 @@ function BookStack({ entries, seed, lite = false, label, onScroller, onScroll }:
     if (!el) return;
     const top = el.scrollTop - PAD_TOP;
     const next = lite
-      ? visibleWindow(top, el.clientHeight, LITE_ROW, count, BUFFER)
-      : layoutWindow(layout, top / TILT_SCALE, (top + el.clientHeight) / TILT_SCALE, BUFFER);
+      ? visibleWindow(top, el.clientHeight, LITE_ROW, count, liteBuffer(el.clientHeight))
+      : layoutWindow(layout, top / TILT_SCALE, (top + el.clientHeight) / TILT_SCALE, STACK_BUFFER);
     setRange((prev) => (sameWindow(prev, next) ? prev : next));
   }, [count, layout, lite]);
 
