@@ -44,22 +44,46 @@ export function rendersPerSecond(frames: readonly Frame[], now: number, windowMs
   return count > 0 && time > 0 ? (renders * 1000) / time : null;
 }
 
-/** One canvas draw: when it ran (ms, performance.now()) and how long it took (ms). */
+/** One canvas draw: when it ran (ms, performance.now()) and how long it took (ms), plus optional counts. */
 export interface DrawSample {
   at: number;
   ms: number;
+  /** Faces drawn. */
+  faces?: number;
+  /** Canvas drawing calls made. */
+  ops?: number;
 }
 
-/** The average and longest draw over the draws in the last `windowMs` before `now`, or null if there are none. */
-export function drawStats(samples: readonly DrawSample[], now: number, windowMs: number = 2000): { average: number; max: number } | null {
+export interface SampleStats {
+  average: number;
+  max: number;
+}
+
+/**
+ * The average and largest of `value` over the samples in the last `windowMs` before `now`, or null
+ * if there are none. Samples without a value (undefined, NaN or negative) are skipped.
+ */
+export function sampleStats<T extends { at: number }>(
+  samples: readonly T[],
+  now: number,
+  windowMs: number,
+  value: (sample: T) => number | undefined,
+): SampleStats | null {
   let count = 0;
   let total = 0;
   let max = 0;
   for (const s of samples) {
-    if (s.at <= now - windowMs || s.at > now || !(s.ms >= 0)) continue;
+    if (s.at <= now - windowMs || s.at > now) continue;
+    const v = value(s);
+    if (v === undefined || !(v >= 0)) continue;
     count += 1;
-    total += s.ms;
-    max = Math.max(max, s.ms);
+    total += v;
+    max = Math.max(max, v);
   }
   return count > 0 ? { average: total / count, max } : null;
+}
+
+/** The average and longest draw over the draws in the last `windowMs` before `now`, or null if there are none. */
+export function drawStats(samples: readonly DrawSample[], now: number, windowMs: number = 2000): SampleStats | null {
+  return sampleStats(samples, now, windowMs, (s) => s.ms);
 }

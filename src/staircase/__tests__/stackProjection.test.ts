@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { BOOK_THICKNESSES, bookShape, generateFakeStack, stackLayout, type BookShape } from '../stackModel';
+import { bookShape, generateFakeStack, stackLayout, type BookShape } from '../stackModel';
 import {
   ELEVATION_DEG,
   FAN_CAMERA,
-  FAN_MIN_EACH_WAY,
   STACK_CAMERA,
   TWIST_DEG,
   bookYaw,
@@ -11,8 +10,6 @@ import {
   drawOrder,
   faceCorners,
   faceTransform,
-  fanReach,
-  fanWindow,
   fannedBook,
   heightAt,
   hitTest,
@@ -391,39 +388,7 @@ describe('the fan (stage 2a)', () => {
   });
 });
 
-describe('fanWindow', () => {
-  it('holds every book with a corner on screen, and at least FAN_MIN_EACH_WAY either side', () => {
-    for (const [count, s, half] of [
-      [400, 200, 457],
-      [400, 13.6, 640],
-      [400, 399, 400],
-      [400, 0, 400],
-      [400, 250.5, 120],
-    ]) {
-      const { projected, centres } = fan(count, s);
-      const win = fanWindow(centres, s, half);
-      projected.forEach((book, i) => {
-        const onScreen = book.faces.some((f) => faceCorners(f).some((p) => Math.abs(p.y) <= half));
-        if (onScreen) {
-          expect(i).toBeGreaterThanOrEqual(win.start);
-          expect(i).toBeLessThan(win.end);
-        }
-      });
-      const centre = Math.round(s);
-      expect(win.start).toBeLessThanOrEqual(Math.max(0, centre - FAN_MIN_EACH_WAY));
-      expect(win.end).toBeGreaterThanOrEqual(Math.min(count, centre + FAN_MIN_EACH_WAY + 1));
-      expect(win.start).toBeGreaterThanOrEqual(0);
-      expect(win.end).toBeLessThanOrEqual(count);
-    }
-  });
-
-  it('stays near the minimum on a short viewport, and is empty for an empty pile', () => {
-    const { centres } = fan(500, 250);
-    const win = fanWindow(centres, 250, 0);
-    expect(win.end - win.start).toBeLessThanOrEqual(2 * FAN_MIN_EACH_WAY + 1 + 2 * Math.ceil(fanReach() / Math.min(...BOOK_THICKNESSES)));
-    expect(fanWindow([], 0, 500)).toEqual({ start: 0, end: 0 });
-  });
-
+describe('pileCentres and heightAt', () => {
   it('interpolates the height between book centres and clamps at the ends', () => {
     const centres = pileCentres([20, 40, 30]);
     expect(centres).toEqual([10, 40, 75]);

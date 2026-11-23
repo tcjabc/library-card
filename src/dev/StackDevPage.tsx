@@ -1,11 +1,21 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { href } from '../router';
 import { bookRenders } from '../staircase/bookRenders';
-import type { CentreBook, CentreTag } from '../staircase/CanvasStack';
+import type { CentreBook, CentreTag, DrawStats } from '../staircase/CanvasStack';
 import { generateFakeStack } from '../staircase/stackModel';
 import { MAX_TWIST_DEG, TWIST_DEG } from '../staircase/stackProjection';
 import { fmt, strings } from '../strings';
-import { FRAME_MS, drawStats, framesPerSecond, missedFrames, rendersPerSecond, type DrawSample, type Frame } from './frameStats';
+import {
+  FRAME_MS,
+  drawStats,
+  framesPerSecond,
+  missedFrames,
+  rendersPerSecond,
+  sampleStats,
+  type DrawSample,
+  type Frame,
+  type SampleStats,
+} from './frameStats';
 import './StackDevPage.css';
 
 /**
@@ -41,6 +51,7 @@ export default function StackDevPage() {
   const [mode, setMode] = useState<StackMode>('canvas');
   const [twist, setTwist] = useState<number>(TWIST_DEG);
   const [settle, setSettle] = useState(true);
+  const [raster, setRaster] = useState(false);
   const entries = useMemo(() => generateFakeStack(count, SEED), [count]);
   const scroller = useRef<HTMLDivElement | null>(null);
   const meter = useScrollMeter(scroller);
@@ -50,7 +61,7 @@ export default function StackDevPage() {
   }, []);
 
   // A new pile starts its counts afresh.
-  useEffect(() => reset(), [count, mode, twist, settle, reset]);
+  useEffect(() => reset(), [count, mode, twist, settle, raster, reset]);
   const label = fmt(t.stackLabel, { count: count.toLocaleString() });
 
   return (
@@ -64,7 +75,9 @@ export default function StackDevPage() {
       <Suspense fallback={<p className="muted stack-dev__loading">{strings.common.loading}</p>}>
         {mode === 'canvas' ? (
           <CanvasStack
-            key={count}
+            // A fresh canvas when "Measure raster" changes: Chrome may move a canvas that's been
+            // read back to the CPU, and keep it there.
+            key={`${count}-${raster}`}
             entries={entries}
             seed={SEED}
             twist={twist}
@@ -74,6 +87,7 @@ export default function StackDevPage() {
             label={label}
             onScroller={onScroller}
             onScroll={meter.onScroll}
+            measureRaster={raster}
             onDraw={meter.onDraw}
           />
         ) : (
@@ -97,6 +111,8 @@ export default function StackDevPage() {
         onMode={setMode}
         onTwist={setTwist}
         onSettle={setSettle}
+        raster={raster}
+        onRaster={setRaster}
         readout={meter.readout}
         onReset={reset}
       />
@@ -110,7 +126,14 @@ interface Readout {
   /** Book renders per second over the same frames, or null before any scrolling. */
   renders: number | null;
   /** Canvas only: draw time per frame (ms) over the same 2 s, or null before any drawing while scrolling. */
-  draw: { average: number; max: number } | null;
+  draw: SampleStats | null;
+  /** Canvas only: faces and canvas drawing calls per frame over the same 2 s. */
+  faces: SampleStats | null;
+  ops: SampleStats | null;
+  /** Canvas only: the latest frame's backing size (px) and scale, or null before the first frame. */
+  canvas: { width: number; height: number; scale: number } | null;
+  /** Canvas, "Measure raster" on: the sampled flushes (ms) over the same 2 s. */
+  raster: SampleStats | null;
   dropped: number;
   /** null where the browser can't report long tasks. */
   longTasks: number | null;
@@ -125,7 +148,7 @@ function supportsLongTasks(): boolean {
 }
 
 function emptyReadout(): Readout {
-  return { fps: null, renders: null, draw: null, dropped: 0, longTasks: supportsLongTasks() ? 0 : null, longTaskMs: 0, nodes: 0, viewport: '', dpr: 1 };
+  return { fps: null, renders: null, draw: null, faces: null, ops: null, canvas: null, raster: null, dropped: 0, longTasks: supportsLongTasks() ? 0 : null, longTaskMs: 0, nodes: 0, viewport: '', dpr: 1 };
 }
 
 /** Times every frame while the pile is scrolling, counts late frames and long tasks. */
@@ -134,6 +157,9 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
     frames: [] as Frame[],
     /** Canvas draws while scrolling. */
     draws: [] as DrawSample[],
+    /** Sampled raster flushes while the camera moves. */
+    flushes: [] as DrawSample[],
+    canvas: null as Readout['canvas'],
     last: 0,
     /** bookRenders() at the last frame. */
     lastRenders: 0,
@@ -143,7 +169,10 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
     longTaskMs: 0,
     lastFps: null as number | null,
     lastRendersPerSec: null as number | null,
-    lastDraw: null as { average: number; max: number } | null,
+    lastDraw: null as SampleStats | null,
+    lastFaces: null as SampleStats | null,
+    lastOps: null as SampleStats | null,
+    lastRaster: null as SampleStats | null,
   });
   const [readout, setReadout] = useState<Readout>(emptyReadout);
 
@@ -163,6 +192,7 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
       s.lastRenders = renders;
       while (s.frames.length > 0 && s.frames[0].at <= now - FPS_WINDOW_MS) s.frames.shift();
       while (s.draws.length > 0 && s.draws[0].at <= now - FPS_WINDOW_MS) s.draws.shift();
+      while (s.flushes.length > 0 && s.flushes[0].at <= now - FPS_WINDOW_MS) s.flushes.shift();
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -186,10 +216,20 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
       if (renders !== null) s.lastRendersPerSec = renders;
       const draw = drawStats(s.draws, now, FPS_WINDOW_MS);
       if (draw !== null) s.lastDraw = draw;
+      const faces = sampleStats(s.draws, now, FPS_WINDOW_MS, (d) => d.faces);
+      if (faces !== null) s.lastFaces = faces;
+      const ops = sampleStats(s.draws, now, FPS_WINDOW_MS, (d) => d.ops);
+      if (ops !== null) s.lastOps = ops;
+      const raster = drawStats(s.flushes, now, FPS_WINDOW_MS);
+      if (raster !== null) s.lastRaster = raster;
       setReadout({
         fps: s.lastFps,
         renders: s.lastRendersPerSec,
         draw: s.lastDraw,
+        faces: s.lastFaces,
+        ops: s.lastOps,
+        canvas: s.canvas,
+        raster: s.lastRaster,
         dropped: s.dropped,
         longTasks: longTasks ? s.longTasks : null,
         longTaskMs: Math.round(s.longTaskMs),
@@ -210,18 +250,24 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
     live.current.scrollingUntil = performance.now() + SCROLL_IDLE_MS;
   }, []);
 
-  /** A canvas draw: counted only while the pile is scrolling, like the frames. */
-  const onDraw = useCallback((ms: number) => {
+  /** A canvas draw: counted only while the pile is scrolling, like the frames; raster flushes whenever sampled. */
+  const onDraw = useCallback((stats: DrawStats) => {
     const s = live.current;
     const now = performance.now();
-    if (now <= s.scrollingUntil + FRAME_MS) s.draws.push({ at: now, ms });
+    s.canvas = { width: stats.width, height: stats.height, scale: stats.scale };
+    if (stats.raster !== undefined) s.flushes.push({ at: now, ms: stats.raster });
+    if (now <= s.scrollingUntil + FRAME_MS) s.draws.push({ at: now, ms: stats.ms, faces: stats.faces, ops: stats.ops });
   }, []);
 
   const reset = useCallback(() => {
     const s = live.current;
     s.frames = [];
     s.draws = [];
+    s.flushes = [];
     s.lastDraw = null;
+    s.lastFaces = null;
+    s.lastOps = null;
+    s.lastRaster = null;
     s.dropped = 0;
     s.longTasks = 0;
     s.longTaskMs = 0;
@@ -237,8 +283,14 @@ function modeName(mode: StackMode): string {
   return mode === 'lite' ? t.measureModeLite : t.measureMode3d;
 }
 
-function readoutLines(readout: Readout, count: number, mode: StackMode, twist: number, settle: boolean): [string, string][] {
+function perFrame(stats: SampleStats | null): string {
+  return stats === null ? t.measureFpsNone : fmt(t.measurePerFrameValue, { average: stats.average.toFixed(1), max: Math.round(stats.max) });
+}
+
+function readoutLines(readout: Readout, count: number, mode: StackMode, twist: number, settle: boolean, raster: boolean): [string, string][] {
   const canvas = mode === 'canvas';
+  const only = t.measureDrawCanvasOnly;
+  const size = readout.canvas;
   const draw =
     mode !== 'canvas'
       ? t.measureDrawCanvasOnly
@@ -253,6 +305,22 @@ function readoutLines(readout: Readout, count: number, mode: StackMode, twist: n
     [t.measureFps, readout.fps === null ? t.measureFpsNone : readout.fps.toFixed(1)],
     [t.measureRenders, readout.renders === null ? t.measureFpsNone : readout.renders.toFixed(1)],
     [t.measureDraw, draw],
+    [t.measureFaces, canvas ? perFrame(readout.faces) : only],
+    [t.measureOps, canvas ? perFrame(readout.ops) : only],
+    [
+      t.measureCanvas,
+      !canvas || size === null ? only : fmt(t.measureCanvasValue, { width: size.width, height: size.height, scale: size.scale }),
+    ],
+    [
+      t.measureRasterLine,
+      !canvas
+        ? only
+        : !raster
+          ? t.measureOff
+          : readout.raster === null
+            ? t.measureFpsNone
+            : fmt(t.measureDrawValue, { average: readout.raster.average.toFixed(2), max: readout.raster.max.toFixed(2) }),
+    ],
     [t.measureDropped, readout.dropped.toLocaleString()],
     [
       t.measureLongTasks,
@@ -298,14 +366,16 @@ interface MeasurePanelProps {
   onMode: (mode: StackMode) => void;
   onTwist: (twist: number) => void;
   onSettle: (settle: boolean) => void;
+  raster: boolean;
+  onRaster: (raster: boolean) => void;
   readout: Readout;
   onReset: () => void;
 }
 
 /** Small and collapsible, over the pile: the controls, the live numbers and "Copy results". */
-function MeasurePanel({ count, mode, twist, settle, onCount, onMode, onTwist, onSettle, readout, onReset }: MeasurePanelProps) {
+function MeasurePanel({ count, mode, twist, settle, onCount, onMode, onTwist, onSettle, raster, onRaster, readout, onReset }: MeasurePanelProps) {
   const [copied, setCopied] = useState<boolean | null>(null);
-  const lines = readoutLines(readout, count, mode, twist, settle);
+  const lines = readoutLines(readout, count, mode, twist, settle, raster);
 
   const copy = async () => {
     const text = [t.stackTitle, ...lines.map(([label, value]) => `${label}: ${value}`)].join('\n');
@@ -350,6 +420,9 @@ function MeasurePanel({ count, mode, twist, settle, onCount, onMode, onTwist, on
           </label>
           <button type="button" className="chip" aria-pressed={settle} onClick={() => onSettle(!settle)}>
             {t.measureSettle}
+          </button>
+          <button type="button" className="chip" aria-pressed={raster} onClick={() => onRaster(!raster)}>
+            {t.measureRasterChip}
           </button>
         </div>
       )}

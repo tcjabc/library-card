@@ -15,7 +15,7 @@
  * Coordinates follow CSS: x to the right, y down (down the pile), z towards the viewer. A book's
  * own axes: u along the spine (left to right), v down through its thickness, s from back to front.
  */
-import { BOOK_DEPTHS, BOOK_THICKNESSES, BOOK_WIDTHS, TILT_X_DEG, TILT_Y_DEG, type BookShape, type StackWindow } from './stackModel';
+import { TILT_X_DEG, TILT_Y_DEG, type BookShape } from './stackModel';
 
 export interface Vec2 {
   x: number;
@@ -247,8 +247,6 @@ export const TWIST_DEG = 10;
 export const MAX_TWIST_DEG = 15;
 /** The fan's camera: tipped down to see the covers, never turned (books turn relative to it). */
 export const FAN_CAMERA: Camera = { pitch: -ELEVATION_DEG, yaw: 0 };
-/** Books drawn at least this far either side of the centre book. */
-export const FAN_MIN_EACH_WAY = 10;
 
 /** Book `index`'s own turn in the world (degrees). */
 export function bookYaw(index: number, twist: number = TWIST_DEG): number {
@@ -301,48 +299,4 @@ export function fannedBook(
 ): PlacedBook {
   const rise = centres[index] - heightAt(centres, s);
   return { step, top: -rise - shape.thickness / 2, shape: { ...shape, x: 0, z: 0, yaw: relativeYaw(index, s, twist) } };
-}
-
-/**
- * How far (px on screen, up or down) a book's corners can be from its centre, at any turn:
- * half the thickest book's height plus the widest, deepest footprint tipped by the camera.
- */
-export function fanReach(elevation: number = ELEVATION_DEG): number {
-  const e = elevation * RAD;
-  const halfT = Math.max(...BOOK_THICKNESSES) / 2;
-  const halfDiag = Math.hypot(Math.max(...BOOK_WIDTHS) / 2, Math.max(...BOOK_DEPTHS) / 2);
-  return halfT * Math.cos(e) + halfDiag * Math.abs(Math.sin(e));
-}
-
-/** The first index whose value is at least `y` (centres rise). */
-function lowerBound(values: readonly number[], y: number): number {
-  let lo = 0;
-  let hi = values.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (values[mid] < y) lo = mid + 1;
-    else hi = mid;
-  }
-  return lo;
-}
-
-/**
- * Which books to draw (as [start, end) indexes, oldest first) around position `s`: every book that
- * can reach a viewport `halfHeight` px above and below the centre, and at least `minEachWay` either side.
- */
-export function fanWindow(
-  centres: readonly number[],
-  s: number,
-  halfHeight: number,
-  minEachWay: number = FAN_MIN_EACH_WAY,
-  elevation: number = ELEVATION_DEG,
-): StackWindow {
-  const count = centres.length;
-  if (count === 0) return { start: 0, end: 0 };
-  const h = heightAt(centres, s);
-  const reach = (Math.max(0, halfHeight) + fanReach(elevation)) / Math.cos(elevation * RAD);
-  const centre = Math.round(Math.min(count - 1, Math.max(0, s)));
-  const start = Math.min(lowerBound(centres, h - reach), centre - minEachWay);
-  const end = Math.max(lowerBound(centres, h + reach + 1e-9), centre + minEachWay + 1);
-  return { start: Math.max(0, start), end: Math.min(count, end) };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FRAME_MS, drawStats, framesPerSecond, missedFrames, rendersPerSecond } from '../frameStats';
+import { FRAME_MS, drawStats, framesPerSecond, missedFrames, rendersPerSecond, sampleStats } from '../frameStats';
 
 // The book stack prototype's frame timing (src/dev/frameStats.ts).
 
@@ -77,5 +77,20 @@ describe('drawStats', () => {
     expect(drawStats([{ at: 10, ms: 5 }], 5000, 2000)).toBeNull();
     expect(drawStats([{ at: 4000, ms: 1 }], 3000, 2000)).toBeNull();
     expect(drawStats([{ at: 2500, ms: Number.NaN }, { at: 2600, ms: -1 }, { at: 2700, ms: 2 }], 3000, 2000)).toEqual({ average: 2, max: 2 });
+  });
+});
+
+describe('sampleStats', () => {
+  it('averages and finds the largest of any value over the window, skipping samples without one', () => {
+    const samples = [
+      { at: 100, ms: 1, faces: 90 },
+      { at: 1200, ms: 2, faces: 40, ops: 70 },
+      { at: 1800, ms: 3, faces: 60 },
+      { at: 2500, ms: 4, ops: 50 },
+    ];
+    expect(sampleStats(samples, 3000, 2000, (s) => s.faces)).toEqual({ average: 50, max: 60 });
+    expect(sampleStats(samples, 3000, 2000, (s) => s.ops)).toEqual({ average: 60, max: 70 });
+    expect(sampleStats(samples, 3000, 500, (s) => s.faces)).toBeNull();
+    expect(sampleStats([{ at: 1, v: Number.NaN }], 10, 100, (s) => s.v)).toBeNull();
   });
 });

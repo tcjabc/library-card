@@ -1,20 +1,31 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { SETTLE_IDLE_MS, clampPosition, positionToScroll, scrollHeight, scrollToPosition, settleTarget, stepCamera } from './camera';
 import { LruCache, backingSize, canvasScale, cssLength, fitWithEllipsis } from './canvasHelpers';
+import {
+  DECIDE_AFTER_MS,
+  FAN_CAP,
+  faceSpan,
+  faceThickness,
+  insetDue,
+  nextScale,
+  pageDetail,
+  tagChanged,
+  visibleRange,
+  type InsetState,
+} from './drawBudget';
 import { BOOK_DEPTHS, BOOK_WIDTHS, bookShape, type StackEntry } from './stackModel';
 import {
   FAN_CAMERA,
-  FAN_MIN_EACH_WAY,
   TWIST_DEG,
-  drawOrder,
+  cameraYaw,
   faceTransform,
-  fanWindow,
   fannedBook,
   pileCentres,
   projectBook,
   relativeYaw,
   type ProjectedBook,
   type ProjectedFace,
+  type View,
 } from './stackProjection';
 import './bookStack.css';
 import './canvasStack.css';
@@ -29,8 +40,13 @@ import './canvasStack.css';
  * where the camera is going; the drawn position eases towards it (camera.ts). When scrolling
  * stops, the camera settles on the nearest book and the scroll offset is moved to match. The
  * canvas sits over the scroll area, out of the way of touches; frames run only while the camera
- * moves (no idle loop), and with prefers-reduced-motion the camera jumps instead of easing. Each
- * spine's label is drawn once to a small canvas and reused.
+ * moves (no idle loop), and with prefers-reduced-motion the camera jumps instead of easing.
+ *
+ * Per frame (drawBudget.ts): only the books on screen plus one spare each way are drawn (at most
+ * FAN_CAP either side), bottom to top; each spine and each thickness of page edge is drawn once
+ * to a small canvas and reused, and far or edge-on page edges are a flat fill. The canvas is
+ * opaque (filled with the page's background), and if frames are slow it steps its resolution
+ * down for the rest of the visit. The tag and the top-down inset only redraw when they change.
  */
 
 /** The centre book, for the overlay tag. */
@@ -47,6 +63,22 @@ export interface CentreTag {
   turned: string;
 }
 
+/** What one frame drew, for the measurement panel. */
+export interface DrawStats {
+  /** How long the drawing took (ms). */
+  ms: number;
+  /** Faces drawn. */
+  faces: number;
+  /** Canvas drawing calls (fills, strokes, clears and drawImage). */
+  ops: number;
+  /** The canvas's backing size (px) and its pixels per CSS px. */
+  width: number;
+  height: number;
+  scale: number;
+  /** "Measure raster" only, on sampled frames: how long a 1×1 read-back took (ms), forcing the GPU to finish. */
+  raster?: number;
+}
+
 export interface CanvasStackProps {
   /** Oldest first. */
   entries: readonly StackEntry[];
@@ -60,14 +92,16 @@ export interface CanvasStackProps {
   inset?: boolean;
   /** The overlay tag's text for the centre book; no tag without it. */
   describeCentre?: (centre: CentreBook) => CentreTag;
+  /** Time a forced GPU flush on about every RASTER_EVERY-th moving frame (developer tools). */
+  measureRaster?: boolean;
   /** The scroll area's name. */
   label: string;
   /** The scroll area, for measuring. */
   onScroller?: (el: HTMLDivElement | null) => void;
   /** Each scroll by the reader (not the settle's own scroll). */
   onScroll?: () => void;
-  /** How long each frame's drawing took (ms). */
-  onDraw?: (ms: number) => void;
+  /** What each frame drew. */
+  onDraw?: (stats: DrawStats) => void;
 }
 
 /** Spine labels kept ready to draw. */
@@ -76,9 +110,16 @@ const LABEL_CACHE_SIZE = 100;
 const OWN_SCROLL_SLACK = 1;
 /** …and stops being expected after this long (ms), in case the browser sends no scroll event. */
 const OWN_SCROLL_MS = 300;
+/** "Measure raster": time a flush on every this-many-th moving frame. */
+const RASTER_EVERY = 10;
+/** The inset shows this many books either side of the centre one at most. */
+const INSET_EACH_WAY = 10;
 const RAD = Math.PI / 180;
 /** The inset fits the biggest footprint at any turn. */
 const INSET_SPAN = Math.hypot(Math.max(...BOOK_WIDTHS), Math.max(...BOOK_DEPTHS));
+
+/** Canvas drawing calls this frame (fills, strokes, clears, drawImage), for the panel. */
+let ops = 0;
 
 /** The book tokens from theme.css, read once from the page. */
 interface BookTheme {
@@ -103,6 +144,8 @@ interface BookTheme {
   borderThick: number;
   insetLine: string;
   insetHighlight: string;
+  /** The page behind the pile: the canvas is opaque and fills itself with this. */
+  background: string;
 }
 
 function readTheme(): BookTheme {
@@ -131,6 +174,7 @@ function readTheme(): BookTheme {
     borderThick: px('--border-thick'),
     insetLine: v('--color-text-muted'),
     insetHighlight: v('--color-text'),
+    background: v('--color-bg'),
   };
 }
 
@@ -148,6 +192,11 @@ interface BookPaint {
   cover: string;
   /** The reader's colour. */
   band: string;
+}
+
+/** The main canvas's context: opaque, so the compositor needn't blend it with the page. */
+function context2d(canvas: HTMLCanvasElement | null, opaque: boolean): CanvasRenderingContext2D | null {
+  return canvas?.getContext('2d', opaque ? { alpha: false } : undefined) ?? null;
 }
 
 /** A spine at `scale` canvas pixels per px: the book's colour and shade, the reader's band and avatar, then the title. */
@@ -180,43 +229,57 @@ function renderSpine(book: BookPaint, theme: BookTheme, scale: number): HTMLCanv
   return canvas;
 }
 
-/** The page edges' stripes, as a pattern in a face's own px. */
-function pagesPattern(ctx: CanvasRenderingContext2D, theme: BookTheme, scale: number): CanvasPattern | string {
+/**
+ * Page-edge stripes for one book thickness, drawn once: a strip of paper then a thin line,
+ * repeated down the edge, as tall as the book (so thicker books have more stripes). It is two
+ * pixels wide and stretched across each face by drawImage, since the stripes run along the face.
+ */
+function renderPages(thickness: number, theme: BookTheme, scale: number): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = 2;
+  canvas.height = backingSize(thickness, scale);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return canvas;
+  ctx.fillStyle = theme.pages;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
   const repeat = theme.stripePaper + theme.stripeLine;
-  if (!(repeat > 0)) return theme.pages;
-  const tile = document.createElement('canvas');
-  tile.width = 1;
-  tile.height = backingSize(repeat, scale);
-  const t = tile.getContext('2d');
-  if (!t) return theme.pages;
-  t.fillStyle = theme.pages;
-  t.fillRect(0, 0, 1, tile.height);
-  t.fillStyle = theme.pageLine;
-  const line = backingSize(theme.stripeLine, scale);
-  t.fillRect(0, tile.height - line, 1, line);
-  const pattern = ctx.createPattern(tile, 'repeat');
-  if (!pattern) return theme.pages;
-  pattern.setTransform?.(new DOMMatrix().scale(repeat / tile.height));
-  return pattern;
+  if (!(repeat > 0) || !(theme.stripeLine > 0)) return canvas;
+  ctx.fillStyle = theme.pageLine;
+  const k = canvas.height / thickness;
+  const line = Math.max(1, Math.round(theme.stripeLine * k));
+  for (let y = theme.stripePaper; y < thickness; y += repeat) ctx.fillRect(0, Math.round(y * k), canvas.width, line);
+  return canvas;
 }
 
 interface Paint {
-  pattern: CanvasPattern | string | null;
+  /** Page-edge stripes, by book thickness. */
+  pages: Map<number, HTMLCanvasElement>;
   coverShade: CanvasGradient | null;
   scale: number;
 }
 
-/** One face of one book, through the face's affine transform. */
-function drawFace(
-  ctx: CanvasRenderingContext2D,
-  face: ProjectedFace,
-  step: number,
-  book: BookPaint,
-  scale: number,
-  labels: LruCache<number, HTMLCanvasElement>,
-  theme: BookTheme,
-  paint: Paint,
-) {
+/** What drawing one face needs besides the face. */
+interface FaceKit {
+  scale: number;
+  labels: LruCache<number, HTMLCanvasElement>;
+  theme: BookTheme;
+  paint: Paint;
+}
+
+/** A face's parallelogram as a path, in screen px (the context set to `scale`). */
+function tracePath(ctx: CanvasRenderingContext2D, face: ProjectedFace) {
+  const { origin: o, u, v } = face;
+  ctx.beginPath();
+  ctx.moveTo(o.x, o.y);
+  ctx.lineTo(o.x + u.x, o.y + u.y);
+  ctx.lineTo(o.x + u.x + v.x, o.y + u.y + v.y);
+  ctx.lineTo(o.x + v.x, o.y + v.y);
+  ctx.closePath();
+}
+
+/** One face of one book, through the face's affine transform. `fromCamera` is the book's distance from the camera (books). */
+function drawFace(ctx: CanvasRenderingContext2D, face: ProjectedFace, step: number, book: BookPaint, fromCamera: number, kit: FaceKit) {
+  const { scale, labels, theme, paint } = kit;
   if (face.side === 'front') {
     let spine = labels.get(step);
     if (!spine) {
@@ -224,26 +287,44 @@ function drawFace(
       labels.set(step, spine);
     }
     ctx.setTransform(...faceTransform(face, scale));
-    // (The draw loop readies every spine in the window, so this rarely renders one.)
     ctx.drawImage(spine, 0, 0, face.width, face.height);
+    ops += 1;
   } else if (face.side === 'top' || face.side === 'bottom') {
     // In the face's unit square, so the one cover gradient fits every book.
     ctx.setTransform(face.u.x * scale, face.u.y * scale, face.v.x * scale, face.v.y * scale, face.origin.x * scale, face.origin.y * scale);
     ctx.fillStyle = book.cover;
     ctx.fillRect(0, 0, 1, 1);
+    ops += 1;
     if (face.side === 'top' && paint.coverShade) {
       ctx.fillStyle = paint.coverShade;
       ctx.fillRect(0, 0, 1, 1);
+      ops += 1;
     }
-  } else {
-    // Page edges: the two short sides and the fore-edge at the back.
+  } else if (pageDetail(fromCamera, faceThickness(face)) === 'striped') {
+    // Page edges up close: the cached stripes, one drawImage.
+    let pages = paint.pages.get(book.thickness);
+    if (!pages) {
+      pages = renderPages(book.thickness, theme, scale);
+      paint.pages.set(book.thickness, pages);
+    }
     ctx.setTransform(...faceTransform(face, scale));
-    ctx.fillStyle = paint.pattern ?? theme.pages;
-    ctx.fillRect(0, 0, face.width, face.height);
+    ctx.drawImage(pages, 0, 0, face.width, face.height);
+    ops += 1;
+  } else {
+    // Far away or edge-on: paper colour and an outline.
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    tracePath(ctx, face);
+    ctx.fillStyle = theme.pages;
+    ctx.fill();
+    ctx.strokeStyle = theme.pageLine;
+    ctx.lineWidth = theme.borderThin;
+    ctx.stroke();
+    ops += 2;
   }
 }
 
 interface Size {
+  /** The scroll area (CSS px), measured on resize only. */
   width: number;
   height: number;
   scale: number;
@@ -259,7 +340,10 @@ function drawInset(
   ctx: CanvasRenderingContext2D,
   side: number,
   scale: number,
-  books: readonly { index: number; yaw: number }[],
+  from: number,
+  to: number,
+  s: number,
+  twist: number,
   centre: number,
   shapes: readonly { width: number; depth: number }[],
   paints: readonly BookPaint[],
@@ -269,55 +353,46 @@ function drawInset(
   ctx.clearRect(0, 0, side, side);
   const mid = side / 2;
   const k = (side - 2 * theme.gap) / INSET_SPAN;
-  const corners = (index: number, yaw: number) => {
+  const footprint = (index: number) => {
     const { width: w, depth: d } = shapes[index];
-    const c = Math.cos(yaw * RAD);
-    const s = Math.sin(yaw * RAD);
-    // Back-left, back-right, front-right, front-left: x across, z towards the reader (down here).
-    return [
-      [-w / 2, -d / 2],
-      [w / 2, -d / 2],
-      [w / 2, d / 2],
-      [-w / 2, d / 2],
-    ].map(([x, z]) => [mid + (x * c + z * s) * k, mid + (-x * s + z * c) * k] as const);
-  };
-  const outline = (pts: readonly (readonly [number, number])[]) => {
+    const yaw = relativeYaw(index, s, twist) * RAD;
+    const c = Math.cos(yaw) * k;
+    const sn = Math.sin(yaw) * k;
+    // x across, z towards the reader (down here): back-left, back-right, front-right, front-left.
+    const px = (x: number, z: number) => mid + x * c + z * sn;
+    const pz = (x: number, z: number) => mid - x * sn + z * c;
     ctx.beginPath();
-    ctx.moveTo(pts[0][0], pts[0][1]);
-    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.moveTo(px(-w / 2, -d / 2), pz(-w / 2, -d / 2));
+    ctx.lineTo(px(w / 2, -d / 2), pz(w / 2, -d / 2));
+    ctx.lineTo(px(w / 2, d / 2), pz(w / 2, d / 2));
+    ctx.lineTo(px(-w / 2, d / 2), pz(-w / 2, d / 2));
     ctx.closePath();
+    return { px, pz, w, d };
   };
-  const spineEdge = (pts: readonly (readonly [number, number])[], index: number) => {
+  const spineEdge = (f: ReturnType<typeof footprint>, index: number) => {
     ctx.beginPath();
-    ctx.moveTo(pts[3][0], pts[3][1]);
-    ctx.lineTo(pts[2][0], pts[2][1]);
+    ctx.moveTo(f.px(-f.w / 2, f.d / 2), f.pz(-f.w / 2, f.d / 2));
+    ctx.lineTo(f.px(f.w / 2, f.d / 2), f.pz(f.w / 2, f.d / 2));
     ctx.strokeStyle = paints[index].band;
     ctx.lineWidth = theme.borderThick;
     ctx.stroke();
   };
-  let centreYaw: number | null = null;
-  ctx.lineWidth = theme.borderThin;
-  for (const { index, yaw } of books) {
-    if (index === centre) {
-      centreYaw = yaw;
-      continue;
-    }
-    const pts = corners(index, yaw);
-    outline(pts);
+  for (let i = from; i < to; i++) {
+    if (i === centre) continue;
+    const f = footprint(i);
     ctx.strokeStyle = theme.insetLine;
     ctx.lineWidth = theme.borderThin;
     ctx.stroke();
-    spineEdge(pts, index);
+    spineEdge(f, i);
   }
-  if (centreYaw !== null) {
-    const pts = corners(centre, centreYaw);
-    outline(pts);
+  if (centre >= from && centre < to) {
+    const f = footprint(centre);
     ctx.fillStyle = paints[centre].cover;
     ctx.fill();
     ctx.strokeStyle = theme.insetHighlight;
     ctx.lineWidth = theme.borderThick;
     ctx.stroke();
-    spineEdge(pts, centre);
+    spineEdge(f, centre);
   }
 }
 
@@ -332,6 +407,7 @@ function CanvasStack({
   settle = true,
   inset = false,
   describeCentre,
+  measureRaster = false,
   label,
   onScroller,
   onScroll,
@@ -365,7 +441,9 @@ function CanvasStack({
   const tagBook = useRef<HTMLSpanElement | null>(null);
   const tagTurned = useRef<HTMLSpanElement | null>(null);
   const size = useRef<Size>({ width: 0, height: 0, scale: 1, inset: 0 });
-  const paint = useRef<Paint>({ pattern: null, coverShade: null, scale: 0 });
+  const paint = useRef<Paint>({ pages: new Map(), coverShade: null, scale: 0 });
+  /** This frame's projected books, by offset from the centre book minus FAN_CAP (reused every frame). */
+  const scratch = useRef<(ProjectedBook | null)[]>(Array.from({ length: 2 * FAN_CAP + 1 }, () => null));
   /** Where the camera is going and where it's drawn (book positions), and the frame loop's state. */
   const cam = useRef({
     target: Math.max(0, count - 1),
@@ -378,73 +456,143 @@ function CanvasStack({
     /** The scroll offset the settle set, so its scroll event is ignored. */
     expected: null as number | null,
     expectedTimer: 0,
+    /** The scroll offset at the last scroll event (so the frame loop never reads layout). */
+    scrollTop: 0,
     reduced: false,
-    /** The tag's text, to skip writing it again. */
-    tagKey: '',
+    /** Frames drawn (for the inset's throttle and raster sampling). */
+    frame: 0,
+    /** Moving frames since the last resolution decision, and their time (ms). */
+    motionFrames: 0,
+    motionMs: 0,
+    /** The resolution never goes back above this once stepped down (this visit). */
+    scaleCap: Infinity,
+    tag: null as { step: number; degrees: number } | null,
+    inset: null as InsetState | null,
   });
   // What the next frame draws: kept in a ref so scrolling never waits on React.
-  const scene = useRef({ entries, shapes, centres, paints, twist, settle, describeCentre, onDraw });
+  const scene = useRef({ entries, shapes, centres, paints, twist, settle, describeCentre, measureRaster, onDraw });
   useLayoutEffect(() => {
-    scene.current = { entries, shapes, centres, paints, twist, settle, describeCentre, onDraw };
+    scene.current = { entries, shapes, centres, paints, twist, settle, describeCentre, measureRaster, onDraw };
   });
 
-  const draw = useCallback(() => {
-    const ctx = canvas.current?.getContext('2d');
-    if (!ctx) return;
-    const started = performance.now();
-    const { width, height, scale } = size.current;
-    const { entries, shapes, centres, paints, twist, describeCentre, onDraw } = scene.current;
-    if (paint.current.scale !== scale) {
-      labels.clear();
-      // The cover's shade runs across a face's unit square, towards the spine.
-      const coverShade = ctx.createLinearGradient(0, 0, 0, 1);
-      coverShade.addColorStop(0.6, 'transparent');
-      coverShade.addColorStop(1, theme.shade);
-      paint.current = { pattern: pagesPattern(ctx, theme, scale), coverShade, scale };
+  /** Size the canvases' backing stores for the scroll area at `scale` (no layout reads). */
+  const applyScale = useCallback((scale: number) => {
+    const c = canvas.current;
+    if (!c) return;
+    const { width, height, inset: side } = size.current;
+    size.current.scale = scale;
+    c.width = backingSize(width, scale);
+    c.height = backingSize(height, scale);
+    const insetEl = insetCanvas.current;
+    if (insetEl && side > 0) {
+      insetEl.width = backingSize(side, scale);
+      insetEl.height = backingSize(side, scale);
     }
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    cam.current.inset = null;
+  }, []);
 
-    const s = cam.current.shown;
-    const view = { camera: FAN_CAMERA, originX: width / 2, originY: height / 2 };
-    const win = fanWindow(centres, s, height / 2);
-    const projected: ProjectedBook[] = [];
-    const indexOf = new Map<number, number>();
-    for (let i = win.start; i < win.end; i++) {
-      const step = entries[i].step;
-      projected.push(projectBook(fannedBook(i, step, shapes[i], centres, s, twist), view));
-      indexOf.set(step, i);
-      // Ready each spine as its book comes into the window, even facing away, so a turn of the
-      // fan never has many spines to draw in one frame.
-      if (!labels.get(step)) labels.set(step, renderSpine(paints[i], theme, scale));
-    }
-    for (const book of drawOrder(projected)) {
-      const i = indexOf.get(book.step)!;
-      for (const face of book.faces) drawFace(ctx, face, book.step, paints[i], scale, labels, theme, paint.current);
-    }
-
-    const centre = entries.length > 0 ? Math.round(clampPosition(s, entries.length)) : -1;
-    const insetCtx = size.current.inset > 0 ? insetCanvas.current?.getContext('2d') : null;
-    if (insetCtx && centre >= 0) {
-      const near: { index: number; yaw: number }[] = [];
-      const from = Math.max(win.start, centre - FAN_MIN_EACH_WAY);
-      const to = Math.min(win.end, centre + FAN_MIN_EACH_WAY + 1);
-      for (let i = from; i < to; i++) near.push({ index: i, yaw: relativeYaw(i, s, twist) });
-      drawInset(insetCtx, size.current.inset, scale, near, centre, shapes, paints, theme);
-    }
-    if (tagBook.current && tagTurned.current && describeCentre && centre >= 0) {
-      const entry = entries[centre];
-      const degrees = Math.round(Math.abs(relativeYaw(centre, s, twist)));
-      const key = `${entry.step}|${degrees}`;
-      if (key !== cam.current.tagKey) {
-        cam.current.tagKey = key;
-        const text = describeCentre({ title: entry.title, avatar: entry.avatar, degrees });
-        tagBook.current.textContent = text.book;
-        tagTurned.current.textContent = text.turned;
+  /** One frame. `settled`: the camera has stopped, so the overlays catch up whatever their throttle. */
+  const draw = useCallback(
+    (settled: boolean) => {
+      const ctx = context2d(canvas.current, true);
+      if (!ctx) return;
+      const started = performance.now();
+      ops = 0;
+      const c = cam.current;
+      const { width, height, scale } = size.current;
+      const { entries, shapes, centres, paints, twist, describeCentre, measureRaster, onDraw } = scene.current;
+      if (paint.current.scale !== scale) {
+        labels.clear();
+        // The cover's shade runs across a face's unit square, towards the spine.
+        const coverShade = ctx.createLinearGradient(0, 0, 0, 1);
+        coverShade.addColorStop(0.6, 'transparent');
+        coverShade.addColorStop(1, theme.shade);
+        paint.current = { pages: new Map(), coverShade, scale };
       }
-    }
-    onDraw?.(performance.now() - started);
-  }, [labels, theme]);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = theme.background;
+      ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      ops += 1;
+
+      const s = c.shown;
+      const total = entries.length;
+      let faces = 0;
+      let from = 0;
+      let to = 0;
+      const centre = total > 0 ? Math.round(clampPosition(s, total)) : -1;
+      if (centre >= 0) {
+        const view: View = { camera: FAN_CAMERA, originX: width / 2, originY: height / 2 };
+        const books = scratch.current;
+        books.fill(null);
+        const base = centre - FAN_CAP;
+        const projectAt = (i: number): ProjectedBook => {
+          let book = books[i - base];
+          if (!book) {
+            book = projectBook(fannedBook(i, entries[i].step, shapes[i], centres, s, twist), view);
+            books[i - base] = book;
+          }
+          return book;
+        };
+        const range = visibleRange(centre, total, (i) => {
+          const span = faceSpan(projectAt(i).faces);
+          return span.bottom >= 0 && span.top <= height;
+        });
+        from = range.start;
+        to = range.end;
+        const kit: FaceKit = { scale, labels, theme, paint: paint.current };
+        // Bottom of the pile first: index order is painter's order (stackProjection's drawOrder).
+        for (let i = from; i < to; i++) {
+          const book = projectAt(i);
+          // Ready each spine as its book comes into the window, even facing away, so a turn of
+          // the fan never has many spines to draw in one frame.
+          if (!labels.get(book.step)) labels.set(book.step, renderSpine(paints[i], theme, scale));
+          for (const face of book.faces) drawFace(ctx, face, book.step, paints[i], i - s, kit);
+          faces += book.faces.length;
+        }
+      }
+
+      let raster: number | undefined;
+      c.frame += 1;
+      if (measureRaster && !settled && c.frame % RASTER_EVERY === 0) {
+        const flushStart = performance.now();
+        ctx.getImageData(0, 0, 1, 1);
+        raster = performance.now() - flushStart;
+      }
+
+      if (centre >= 0) {
+        const insetCtx = size.current.inset > 0 ? insetCanvas.current?.getContext('2d') : null;
+        const next: InsetState = { centre, angle: cameraYaw(s, twist), frame: c.frame };
+        if (insetCtx && insetDue(c.inset, next, settled ? 0 : undefined)) {
+          drawInset(
+            insetCtx,
+            size.current.inset,
+            scale,
+            Math.max(from, centre - INSET_EACH_WAY),
+            Math.min(to, centre + INSET_EACH_WAY + 1),
+            s,
+            twist,
+            centre,
+            shapes,
+            paints,
+            theme,
+          );
+          c.inset = next;
+        }
+        if (tagBook.current && tagTurned.current && describeCentre) {
+          const entry = entries[centre];
+          const degrees = Math.round(Math.abs(relativeYaw(centre, s, twist)));
+          if (tagChanged(c.tag, entry.step, degrees)) {
+            c.tag = { step: entry.step, degrees };
+            const text = describeCentre({ title: entry.title, avatar: entry.avatar, degrees });
+            tagBook.current.textContent = text.book;
+            tagTurned.current.textContent = text.turned;
+          }
+        }
+      }
+      onDraw?.({ ms: performance.now() - started, faces, ops, width: ctx.canvas.width, height: ctx.canvas.height, scale, raster });
+    },
+    [labels, theme],
+  );
 
   /** Run the camera: one frame at a time (ease, draw) until it arrives, then stop. */
   const run = useCallback(() => {
@@ -452,11 +600,27 @@ function CanvasStack({
     if (c.raf) return;
     const tick = (now: number) => {
       c.raf = 0;
-      const dt = c.last > 0 ? now - c.last : 1000 / 60;
+      const moving = c.last > 0;
+      const dt = moving ? now - c.last : 1000 / 60;
       c.last = now;
       const next = stepCamera(c.shown, c.target, dt, c.reduced);
       c.shown = next.shown;
-      draw();
+      // Slow frames for a second of motion: step the resolution down (never back up). Not while
+      // "Measure raster" is on: its read-backs slow the canvas themselves.
+      if (moving && !scene.current.measureRaster) {
+        c.motionFrames += 1;
+        c.motionMs += dt;
+        if (c.motionMs >= DECIDE_AFTER_MS) {
+          const scale = nextScale(size.current.scale, c.motionMs / c.motionFrames, c.motionFrames);
+          c.motionFrames = 0;
+          c.motionMs = 0;
+          if (scale < size.current.scale) {
+            c.scaleCap = scale;
+            applyScale(scale);
+          }
+        }
+      }
+      draw(next.done);
       if (!next.done) {
         c.raf = requestAnimationFrame(tick);
         return;
@@ -466,51 +630,46 @@ function CanvasStack({
         c.settling = false;
         const el = scroller.current;
         const top = positionToScroll(c.shown, scene.current.entries.length);
-        if (el && Math.abs(el.scrollTop - top) >= OWN_SCROLL_SLACK / 2) {
+        if (el && Math.abs(c.scrollTop - top) >= OWN_SCROLL_SLACK / 2) {
           c.expected = top;
           window.clearTimeout(c.expectedTimer);
           c.expectedTimer = window.setTimeout(() => (cam.current.expected = null), OWN_SCROLL_MS);
           el.scrollTop = top;
+          c.scrollTop = top;
         }
       }
     };
     c.raf = requestAnimationFrame(tick);
-  }, [draw]);
+  }, [applyScale, draw]);
 
   /** Scrolling has stopped: come to rest on the nearest book. */
   const settleNow = useCallback(() => {
     const c = cam.current;
-    const el = scroller.current;
-    if (!el || !scene.current.settle) return;
-    c.target = settleTarget(scrollToPosition(el.scrollTop, scene.current.entries.length), scene.current.entries.length);
+    if (!scene.current.settle) return;
+    const total = scene.current.entries.length;
+    c.target = settleTarget(scrollToPosition(c.scrollTop, total), total);
     c.settling = true;
     run();
   }, [run]);
 
-  // Size the canvases to the scroll area (backing at up to 2x) and the spacer to the pile, now
-  // and on every resize, rotation or zoom, and draw straight away so the first frame isn't empty.
+  // Size the canvases to the scroll area (backing at up to 2x, or lower once stepped down) and
+  // the spacer to the pile, now and on every resize, rotation or zoom, and draw straight away
+  // so the first frame isn't empty.
   useLayoutEffect(() => {
     const el = scroller.current;
     const c = canvas.current;
     if (!el || !c) return;
     let media: MediaQueryList | null = null;
     const fit = () => {
-      const scale = canvasScale(window.devicePixelRatio);
       const width = el.clientWidth;
       const height = el.clientHeight;
       const insetEl = insetCanvas.current;
-      const insetSide = insetEl ? insetEl.clientWidth : 0;
-      size.current = { width, height, scale, inset: insetSide };
-      c.width = backingSize(width, scale);
-      c.height = backingSize(height, scale);
+      size.current = { width, height, scale: size.current.scale, inset: insetEl ? insetEl.clientWidth : 0 };
       c.style.width = `${width}px`;
       c.style.height = `${height}px`;
-      if (insetEl && insetSide > 0) {
-        insetEl.width = backingSize(insetSide, scale);
-        insetEl.height = backingSize(insetSide, scale);
-      }
+      applyScale(Math.min(canvasScale(window.devicePixelRatio), cam.current.scaleCap));
       if (sizer.current) sizer.current.style.height = `${scrollHeight(scene.current.entries.length, height)}px`;
-      draw();
+      draw(true);
     };
     const watchScale = () => {
       media?.removeEventListener('change', onScale);
@@ -522,7 +681,8 @@ function CanvasStack({
       fit();
     };
     const camState = cam.current;
-    camState.target = camState.shown = scrollToPosition(el.scrollTop, scene.current.entries.length);
+    camState.scrollTop = el.scrollTop;
+    camState.target = camState.shown = scrollToPosition(camState.scrollTop, scene.current.entries.length);
     fit();
     watchScale();
     const resize = new ResizeObserver(fit);
@@ -535,7 +695,7 @@ function CanvasStack({
       window.clearTimeout(camState.settleTimer);
       window.clearTimeout(camState.expectedTimer);
     };
-  }, [draw]);
+  }, [applyScale, draw]);
 
   // prefers-reduced-motion: no easing (followed live).
   useEffect(() => {
@@ -548,26 +708,28 @@ function CanvasStack({
     return () => media.removeEventListener('change', onChange);
   }, []);
 
-  // A new twist, tag or inset: draw again where the camera is.
+  // A new twist, tag or inset: draw again where the camera is (unless a frame is coming anyway).
   useEffect(() => {
-    if (!cam.current.raf) draw();
+    if (!cam.current.raf) draw(true);
   }, [draw, twist, describeCentre, inset]);
 
   const handleScroll = () => {
     const c = cam.current;
     const el = scroller.current;
     if (!el) return;
-    if (c.expected !== null && Math.abs(el.scrollTop - c.expected) < OWN_SCROLL_SLACK) {
+    c.scrollTop = el.scrollTop;
+    if (c.expected !== null && Math.abs(c.scrollTop - c.expected) < OWN_SCROLL_SLACK) {
       // The settle's own scroll: the camera is already there.
       c.expected = null;
       return;
     }
     c.expected = null;
     onScroll?.();
-    c.target = scrollToPosition(el.scrollTop, scene.current.entries.length);
+    c.target = scrollToPosition(c.scrollTop, scene.current.entries.length);
     c.settling = false;
     window.clearTimeout(c.settleTimer);
     if (scene.current.settle) c.settleTimer = window.setTimeout(settleNow, SETTLE_IDLE_MS);
+    // Drawing happens in the frame loop only: one draw per frame however many scroll events arrive.
     run();
   };
 
