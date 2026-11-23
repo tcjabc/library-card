@@ -122,3 +122,22 @@ export function nextScale(current: number, averageFrameMs: number, frames: numbe
   for (const step of SCALE_STEPS) if (step < current - 1e-9) return step;
   return 1;
 }
+
+// ---- Benchmark overrides (developer tools) ----
+
+/**
+ * Everything the benchmark fixes while it runs. null = none: the stack follows its props and
+ * steps its resolution down by itself, as in normal use.
+ */
+export interface StackOverrides {
+  /** The canvas scale to draw at. */
+  scale: number;
+  /** Adaptive resolution (always off while benchmarking). */
+  adaptive: false;
+  /** Show and update the tag and the inset. */
+  overlays: boolean;
+  /** A coloured circle with an initial instead of the avatar emoji, to see what the emoji cost. */
+  plainAvatars: boolean;
+  settle: boolean;
+  twist: number;
+}

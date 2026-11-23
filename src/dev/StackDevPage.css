@@ -122,6 +122,73 @@
   accent-color: var(--color-chip-active);
 }
 
+/* The build that made these numbers, first in the panel. */
+.stack-dev__version {
+  margin: 0 0 var(--space-2);
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+/* The benchmark: its section in the panel, the progress bar while it runs, and its results. */
+.stack-dev__bench {
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: var(--border-thin) solid var(--color-border);
+}
+
+.stack-dev__bench-heading {
+  margin: 0;
+  font-size: var(--text-md);
+}
+
+.stack-dev__bench-button {
+  min-height: var(--tap-target-grownup);
+}
+
+.stack-dev__bench-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.stack-dev__bench-progress {
+  margin: 0;
+  font-weight: var(--weight-bold);
+}
+
+.stack-dev__results {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-sheet);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: max(var(--space-3), env(safe-area-inset-top)) var(--space-3) max(var(--space-3), env(safe-area-inset-bottom));
+  background: var(--color-surface);
+}
+
+.stack-dev__results-text {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  overflow: auto;
+  padding: var(--space-2);
+  border: var(--border-thin) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--line-height);
+  white-space: pre;
+}
+
+/* The device check's canvas, over the pile while it runs. */
+.stack-dev__calibration {
+  position: fixed;
+  z-index: var(--z-dev-panel);
+  pointer-events: none;
+}
+
 /* The fallback copy's off-screen text box. */
 .stack-dev__copy-area {
   position: fixed;

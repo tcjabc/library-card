@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FRAME_MS, drawStats, framesPerSecond, missedFrames, rendersPerSecond, sampleStats } from '../frameStats';
+import { FRAME_MS, drawStats, framesPerSecond, missedFrames, rendersPerSecond, sampleStats, emptyBreakdown, addBreakdown, breakdownAverages } from '../frameStats';
 
 // The book stack prototype's frame timing (src/dev/frameStats.ts).
 
@@ -92,5 +92,27 @@ describe('sampleStats', () => {
     expect(sampleStats(samples, 3000, 2000, (s) => s.ops)).toEqual({ average: 60, max: 70 });
     expect(sampleStats(samples, 3000, 500, (s) => s.faces)).toBeNull();
     expect(sampleStats([{ at: 1, v: Number.NaN }], 10, 100, (s) => s.v)).toBeNull();
+  });
+});
+
+describe('the frame breakdown accumulator', () => {
+  it('adds frames up and averages each part per frame', () => {
+    let totals = emptyBreakdown();
+    expect(breakdownAverages(totals)).toBeNull();
+    totals = addBreakdown(totals, { labelMs: 2, booksMs: 4, overlayMs: 1, cameraMs: 0.5, labels: 1 });
+    totals = addBreakdown(totals, { labelMs: 0, booksMs: 6, overlayMs: 0, cameraMs: 0.5, labels: 0 });
+    expect(totals.frames).toBe(2);
+    expect(breakdownAverages(totals)).toEqual({ labelMs: 1, booksMs: 5, overlayMs: 0.5, cameraMs: 0.5, labels: 0.5 });
+  });
+
+  it('counts missing or odd values as 0 but still counts the frame', () => {
+    const totals = addBreakdown(addBreakdown(emptyBreakdown(), { booksMs: 3 }), { booksMs: Number.NaN, labelMs: -1 });
+    expect(breakdownAverages(totals)).toEqual({ labelMs: 0, booksMs: 1.5, overlayMs: 0, cameraMs: 0, labels: 0 });
+  });
+
+  it('never changes the totals it was given', () => {
+    const start = emptyBreakdown();
+    addBreakdown(start, { booksMs: 9 });
+    expect(start).toEqual(emptyBreakdown());
   });
 });

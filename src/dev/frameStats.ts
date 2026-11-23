@@ -52,6 +52,12 @@ export interface DrawSample {
   faces?: number;
   /** Canvas drawing calls made. */
   ops?: number;
+  /** The frame's JS time by part (ms) and labels prepared (see FrameBreakdown). */
+  labelMs?: number;
+  booksMs?: number;
+  overlayMs?: number;
+  cameraMs?: number;
+  labels?: number;
 }
 
 export interface SampleStats {
@@ -86,4 +92,42 @@ export function sampleStats<T extends { at: number }>(
 /** The average and longest draw over the draws in the last `windowMs` before `now`, or null if there are none. */
 export function drawStats(samples: readonly DrawSample[], now: number, windowMs: number = 2000): SampleStats | null {
   return sampleStats(samples, now, windowMs, (s) => s.ms);
+}
+
+/** One frame's JS time, split up (ms), and how many spine labels it prepared. */
+export interface FrameBreakdown {
+  labelMs: number;
+  booksMs: number;
+  overlayMs: number;
+  cameraMs: number;
+  labels: number;
+}
+
+/** Running totals of frame breakdowns, to average. */
+export interface BreakdownTotals extends FrameBreakdown {
+  frames: number;
+}
+
+export function emptyBreakdown(): BreakdownTotals {
+  return { frames: 0, labelMs: 0, booksMs: 0, overlayMs: 0, cameraMs: 0, labels: 0 };
+}
+
+/** Adds one frame (values that aren't numbers count as 0). */
+export function addBreakdown(totals: BreakdownTotals, frame: Partial<FrameBreakdown>): BreakdownTotals {
+  const v = (x: number | undefined) => (typeof x === 'number' && x >= 0 ? x : 0);
+  return {
+    frames: totals.frames + 1,
+    labelMs: totals.labelMs + v(frame.labelMs),
+    booksMs: totals.booksMs + v(frame.booksMs),
+    overlayMs: totals.overlayMs + v(frame.overlayMs),
+    cameraMs: totals.cameraMs + v(frame.cameraMs),
+    labels: totals.labels + v(frame.labels),
+  };
+}
+
+/** Per-frame averages, or null before any frame. */
+export function breakdownAverages(totals: BreakdownTotals): FrameBreakdown | null {
+  if (totals.frames === 0) return null;
+  const f = totals.frames;
+  return { labelMs: totals.labelMs / f, booksMs: totals.booksMs / f, overlayMs: totals.overlayMs / f, cameraMs: totals.cameraMs / f, labels: totals.labels / f };
 }

@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { SETTLE_IDLE_MS, clampPosition, positionToScroll, scrollHeight, scrollToPosition, settleTarget, stepCamera } from './camera';
-import { LruCache, backingSize, canvasScale, cssLength, fitWithEllipsis } from './canvasHelpers';
+import { LruCache, backingSize, canvasScale, cssLength, fitWithEllipsis, graphemes } from './canvasHelpers';
 import {
   DECIDE_AFTER_MS,
   FAN_CAP,
@@ -12,6 +12,7 @@ import {
   tagChanged,
   visibleRange,
   type InsetState,
+  type StackOverrides,
 } from './drawBudget';
 import { BOOK_DEPTHS, BOOK_WIDTHS, bookShape, type StackEntry } from './stackModel';
 import {
@@ -77,6 +78,35 @@ export interface DrawStats {
   scale: number;
   /** "Measure raster" only, on sampled frames: how long a 1×1 read-back took (ms), forcing the GPU to finish. */
   raster?: number;
+  /** Where the JS time went (ms): preparing spine labels, drawing the books (without label prep), the tag and inset, and the camera (ease, scroll handling, resolution) since the last frame. */
+  labelMs: number;
+  booksMs: number;
+  overlayMs: number;
+  cameraMs: number;
+  /** Spine labels prepared this frame. */
+  labels: number;
+  /** Times the label cache was emptied and rebuilt this visit (a resolution step, or the benchmark). */
+  rebuilds: number;
+}
+
+/** The benchmark's handle on the stack (developer tools): fixed set-ups, jumps and label control. */
+export interface StackBench {
+  /** Fix the set-up (null: back to the reader's own twist, settle and resolution, at the scroll position from before). */
+  setOverrides(overrides: StackOverrides | null): void;
+  /** Go to a scroll offset at once, no easing, and draw. */
+  jumpTo(scrollTop: number): void;
+  /** Empty the spine label cache. */
+  clearLabels(): void;
+  /** Prepare the spine labels of books [from, to) (indexes, oldest first). */
+  prewarm(from: number, to: number): void;
+  /** Draw one frame now. */
+  drawNow(): void;
+  scroller(): HTMLDivElement | null;
+  count(): number;
+  /** The canvas's backing size (px) and scale. */
+  canvasSize(): { width: number; height: number; scale: number };
+  /** Hear about every frame (null to stop). */
+  listen(listener: ((stats: DrawStats) => void) | null): void;
 }
 
 export interface CanvasStackProps {
@@ -102,6 +132,8 @@ export interface CanvasStackProps {
   onScroll?: () => void;
   /** What each frame drew. */
   onDraw?: (stats: DrawStats) => void;
+  /** Given the benchmark's handle while mounted, and null when unmounted (developer tools). */
+  onBench?: (bench: StackBench | null) => void;
 }
 
 /** Spine labels kept ready to draw. */
@@ -139,6 +171,8 @@ interface BookTheme {
   gap: number;
   titleFont: string;
   avatarFont: string;
+  /** The avatar's size (px), for the benchmark's plain avatars. */
+  avatarSize: number;
   /** The inset's lines (px) and colours. */
   borderThin: number;
   borderThick: number;
@@ -170,6 +204,7 @@ function readTheme(): BookTheme {
     gap: px('--space-2'),
     titleFont: `${v('--weight-bold')} ${px('--text-sm')}px ${v('--font-body')}`,
     avatarFont: `${px('--text-md')}px ${v('--font-emoji')}`,
+    avatarSize: px('--text-md'),
     borderThin: px('--border-thin'),
     borderThick: px('--border-thick'),
     insetLine: v('--color-text-muted'),
@@ -200,7 +235,7 @@ function context2d(canvas: HTMLCanvasElement | null, opaque: boolean): CanvasRen
 }
 
 /** A spine at `scale` canvas pixels per px: the book's colour and shade, the reader's band and avatar, then the title. */
-function renderSpine(book: BookPaint, theme: BookTheme, scale: number): HTMLCanvasElement {
+function renderSpine(book: BookPaint, theme: BookTheme, scale: number, plainAvatar = false): HTMLCanvasElement {
   const { width: w, thickness: t } = book;
   const canvas = document.createElement('canvas');
   canvas.width = backingSize(w, scale);
@@ -220,9 +255,24 @@ function renderSpine(book: BookPaint, theme: BookTheme, scale: number): HTMLCanv
   ctx.textBaseline = 'middle';
   ctx.fillStyle = theme.onBook;
   let x = theme.bandWidth + theme.gap;
-  ctx.font = theme.avatarFont;
-  ctx.fillText(book.avatar, x, t / 2);
-  x += ctx.measureText(book.avatar).width + theme.gap;
+  if (plainAvatar) {
+    // The benchmark's "plain avatars": a circle in the reader's colour with the title's initial, no emoji.
+    const r = theme.avatarSize / 2;
+    ctx.fillStyle = book.band;
+    ctx.beginPath();
+    ctx.arc(x + r, t / 2, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = theme.onBook;
+    ctx.font = theme.titleFont;
+    ctx.textAlign = 'center';
+    ctx.fillText((graphemes(book.title)[0] ?? '').toUpperCase(), x + r, t / 2);
+    ctx.textAlign = 'start';
+    x += theme.avatarSize + theme.gap;
+  } else {
+    ctx.font = theme.avatarFont;
+    ctx.fillText(book.avatar, x, t / 2);
+    x += ctx.measureText(book.avatar).width + theme.gap;
+  }
   ctx.font = theme.titleFont;
   const title = fitWithEllipsis(book.title, w - x - theme.gap, (s) => ctx.measureText(s).width);
   ctx.fillText(title, x, t / 2);
@@ -264,6 +314,22 @@ interface FaceKit {
   labels: LruCache<number, HTMLCanvasElement>;
   theme: BookTheme;
   paint: Paint;
+  plainAvatars: boolean;
+  /** Label preparation this frame: time (ms) and count. */
+  prep: { ms: number; count: number };
+}
+
+/** A spine label from the cache, prepared (and timed) if it isn't there. */
+function spineLabel(step: number, book: BookPaint, kit: FaceKit): HTMLCanvasElement {
+  let spine = kit.labels.get(step);
+  if (!spine) {
+    const started = performance.now();
+    spine = renderSpine(book, kit.theme, kit.scale, kit.plainAvatars);
+    kit.labels.set(step, spine);
+    kit.prep.ms += performance.now() - started;
+    kit.prep.count += 1;
+  }
+  return spine;
 }
 
 /** A face's parallelogram as a path, in screen px (the context set to `scale`). */
@@ -279,13 +345,9 @@ function tracePath(ctx: CanvasRenderingContext2D, face: ProjectedFace) {
 
 /** One face of one book, through the face's affine transform. `fromCamera` is the book's distance from the camera (books). */
 function drawFace(ctx: CanvasRenderingContext2D, face: ProjectedFace, step: number, book: BookPaint, fromCamera: number, kit: FaceKit) {
-  const { scale, labels, theme, paint } = kit;
+  const { scale, theme, paint } = kit;
   if (face.side === 'front') {
-    let spine = labels.get(step);
-    if (!spine) {
-      spine = renderSpine(book, theme, scale);
-      labels.set(step, spine);
-    }
+    const spine = spineLabel(step, book, kit);
     ctx.setTransform(...faceTransform(face, scale));
     ctx.drawImage(spine, 0, 0, face.width, face.height);
     ops += 1;
@@ -412,6 +474,7 @@ function CanvasStack({
   onScroller,
   onScroll,
   onDraw,
+  onBench,
 }: CanvasStackProps) {
   const count = entries.length;
   const shapes = useMemo(() => entries.map((e) => bookShape(seed, e.step)), [entries, seed]);
@@ -438,6 +501,7 @@ function CanvasStack({
   const sizer = useRef<HTMLDivElement | null>(null);
   const canvas = useRef<HTMLCanvasElement | null>(null);
   const insetCanvas = useRef<HTMLCanvasElement | null>(null);
+  const tagEl = useRef<HTMLParagraphElement | null>(null);
   const tagBook = useRef<HTMLSpanElement | null>(null);
   const tagTurned = useRef<HTMLSpanElement | null>(null);
   const size = useRef<Size>({ width: 0, height: 0, scale: 1, inset: 0 });
@@ -468,6 +532,14 @@ function CanvasStack({
     scaleCap: Infinity,
     tag: null as { step: number; degrees: number } | null,
     inset: null as InsetState | null,
+    /** Camera work (ease, scroll handling, resolution) since the last frame (ms). */
+    cameraMs: 0,
+    /** Label cache rebuilds this visit. */
+    rebuilds: 0,
+    /** The benchmark's fixed set-up, and what to go back to afterwards. */
+    overrides: null as StackOverrides | null,
+    saved: null as { scale: number; scaleCap: number; scrollTop: number } | null,
+    listener: null as ((stats: DrawStats) => void) | null,
   });
   // What the next frame draws: kept in a ref so scrolling never waits on React.
   const scene = useRef({ entries, shapes, centres, paints, twist, settle, describeCentre, measureRaster, onDraw });
@@ -500,8 +572,12 @@ function CanvasStack({
       ops = 0;
       const c = cam.current;
       const { width, height, scale } = size.current;
-      const { entries, shapes, centres, paints, twist, describeCentre, measureRaster, onDraw } = scene.current;
+      const { entries, shapes, centres, paints, describeCentre, measureRaster, onDraw } = scene.current;
+      const o = c.overrides;
+      const twist = o ? o.twist : scene.current.twist;
+      const overlays = o ? o.overlays : true;
       if (paint.current.scale !== scale) {
+        if (paint.current.scale !== 0) c.rebuilds += 1;
         labels.clear();
         // The cover's shade runs across a face's unit square, towards the spine.
         const coverShade = ctx.createLinearGradient(0, 0, 0, 1);
@@ -519,6 +595,8 @@ function CanvasStack({
       let faces = 0;
       let from = 0;
       let to = 0;
+      const prep = { ms: 0, count: 0 };
+      const booksStart = performance.now();
       const centre = total > 0 ? Math.round(clampPosition(s, total)) : -1;
       if (centre >= 0) {
         const view: View = { camera: FAN_CAMERA, originX: width / 2, originY: height / 2 };
@@ -539,18 +617,19 @@ function CanvasStack({
         });
         from = range.start;
         to = range.end;
-        const kit: FaceKit = { scale, labels, theme, paint: paint.current };
+        const kit: FaceKit = { scale, labels, theme, paint: paint.current, plainAvatars: o?.plainAvatars ?? false, prep };
         // Bottom of the pile first: index order is painter's order (stackProjection's drawOrder).
         for (let i = from; i < to; i++) {
           const book = projectAt(i);
           // Ready each spine as its book comes into the window, even facing away, so a turn of
           // the fan never has many spines to draw in one frame.
-          if (!labels.get(book.step)) labels.set(book.step, renderSpine(paints[i], theme, scale));
+          spineLabel(book.step, paints[i], kit);
           for (const face of book.faces) drawFace(ctx, face, book.step, paints[i], i - s, kit);
           faces += book.faces.length;
         }
       }
 
+      const booksMs = performance.now() - booksStart - prep.ms;
       let raster: number | undefined;
       c.frame += 1;
       if (measureRaster && !settled && c.frame % RASTER_EVERY === 0) {
@@ -559,7 +638,8 @@ function CanvasStack({
         raster = performance.now() - flushStart;
       }
 
-      if (centre >= 0) {
+      const overlayStart = performance.now();
+      if (centre >= 0 && overlays) {
         const insetCtx = size.current.inset > 0 ? insetCanvas.current?.getContext('2d') : null;
         const next: InsetState = { centre, angle: cameraYaw(s, twist), frame: c.frame };
         if (insetCtx && insetDue(c.inset, next, settled ? 0 : undefined)) {
@@ -589,7 +669,25 @@ function CanvasStack({
           }
         }
       }
-      onDraw?.({ ms: performance.now() - started, faces, ops, width: ctx.canvas.width, height: ctx.canvas.height, scale, raster });
+      const end = performance.now();
+      const stats: DrawStats = {
+        ms: end - started,
+        faces,
+        ops,
+        width: ctx.canvas.width,
+        height: ctx.canvas.height,
+        scale,
+        raster,
+        labelMs: prep.ms,
+        booksMs,
+        overlayMs: end - overlayStart,
+        cameraMs: c.cameraMs,
+        labels: prep.count,
+        rebuilds: c.rebuilds,
+      };
+      c.cameraMs = 0;
+      onDraw?.(stats);
+      c.listener?.(stats);
     },
     [labels, theme],
   );
@@ -599,6 +697,7 @@ function CanvasStack({
     const c = cam.current;
     if (c.raf) return;
     const tick = (now: number) => {
+      const cameraStart = performance.now();
       c.raf = 0;
       const moving = c.last > 0;
       const dt = moving ? now - c.last : 1000 / 60;
@@ -607,7 +706,7 @@ function CanvasStack({
       c.shown = next.shown;
       // Slow frames for a second of motion: step the resolution down (never back up). Not while
       // "Measure raster" is on: its read-backs slow the canvas themselves.
-      if (moving && !scene.current.measureRaster) {
+      if (moving && !scene.current.measureRaster && !c.overrides) {
         c.motionFrames += 1;
         c.motionMs += dt;
         if (c.motionMs >= DECIDE_AFTER_MS) {
@@ -620,6 +719,7 @@ function CanvasStack({
           }
         }
       }
+      c.cameraMs += performance.now() - cameraStart;
       draw(next.done);
       if (!next.done) {
         c.raf = requestAnimationFrame(tick);
@@ -645,7 +745,7 @@ function CanvasStack({
   /** Scrolling has stopped: come to rest on the nearest book. */
   const settleNow = useCallback(() => {
     const c = cam.current;
-    if (!scene.current.settle) return;
+    if (!(c.overrides ? c.overrides.settle : scene.current.settle)) return;
     const total = scene.current.entries.length;
     c.target = settleTarget(scrollToPosition(c.scrollTop, total), total);
     c.settling = true;
@@ -714,6 +814,7 @@ function CanvasStack({
   }, [draw, twist, describeCentre, inset]);
 
   const handleScroll = () => {
+    const started = performance.now();
     const c = cam.current;
     const el = scroller.current;
     if (!el) return;
@@ -724,14 +825,103 @@ function CanvasStack({
       return;
     }
     c.expected = null;
-    onScroll?.();
     c.target = scrollToPosition(c.scrollTop, scene.current.entries.length);
     c.settling = false;
     window.clearTimeout(c.settleTimer);
-    if (scene.current.settle) c.settleTimer = window.setTimeout(settleNow, SETTLE_IDLE_MS);
+    if (c.overrides ? c.overrides.settle : scene.current.settle) c.settleTimer = window.setTimeout(settleNow, SETTLE_IDLE_MS);
     // Drawing happens in the frame loop only: one draw per frame however many scroll events arrive.
     run();
+    c.cameraMs += performance.now() - started;
+    // (After the timing: the measurement panel's own bookkeeping isn't the stack's cost.)
+    onScroll?.();
   };
+
+  /** Go to a scroll offset at once (no easing), as if the camera had always been there, and draw. */
+  const jumpTo = useCallback(
+    (top: number) => {
+      const c = cam.current;
+      const el = scroller.current;
+      if (!el) return;
+      cancelAnimationFrame(c.raf);
+      c.raf = 0;
+      c.last = 0;
+      c.settling = false;
+      window.clearTimeout(c.settleTimer);
+      if (Math.abs(el.scrollTop - top) >= OWN_SCROLL_SLACK / 2) {
+        c.expected = top;
+        window.clearTimeout(c.expectedTimer);
+        c.expectedTimer = window.setTimeout(() => (cam.current.expected = null), OWN_SCROLL_MS);
+        el.scrollTop = top;
+      }
+      c.scrollTop = top;
+      c.target = c.shown = scrollToPosition(top, scene.current.entries.length);
+      draw(true);
+    },
+    [draw],
+  );
+
+  // The benchmark's handle (developer tools): nothing here runs unless the benchmark calls it.
+  useEffect(() => {
+    if (!onBench) return;
+    const c = cam.current;
+    const clearLabels = () => {
+      labels.clear();
+      c.rebuilds += 1;
+    };
+    const hideOverlays = (hidden: boolean) => {
+      if (tagEl.current) tagEl.current.hidden = hidden;
+      if (insetCanvas.current) insetCanvas.current.hidden = hidden;
+    };
+    const handle: StackBench = {
+      setOverrides(next) {
+        if (next && !c.overrides) c.saved = { scale: size.current.scale, scaleCap: c.scaleCap, scrollTop: c.scrollTop };
+        const plainChanged = (c.overrides?.plainAvatars ?? false) !== (next?.plainAvatars ?? false);
+        c.overrides = next;
+        c.motionFrames = 0;
+        c.motionMs = 0;
+        c.tag = null;
+        c.inset = null;
+        if (plainChanged) clearLabels();
+        hideOverlays(next ? !next.overlays : false);
+        if (next) {
+          if (size.current.scale !== next.scale) applyScale(next.scale);
+          draw(true);
+        } else if (c.saved) {
+          const saved = c.saved;
+          c.saved = null;
+          c.scaleCap = saved.scaleCap;
+          if (size.current.scale !== saved.scale) applyScale(saved.scale);
+          jumpTo(saved.scrollTop);
+        }
+      },
+      jumpTo,
+      clearLabels,
+      prewarm(from, to) {
+        const { entries, paints } = scene.current;
+        const kit: FaceKit = {
+          scale: size.current.scale,
+          labels,
+          theme,
+          paint: paint.current,
+          plainAvatars: c.overrides?.plainAvatars ?? false,
+          prep: { ms: 0, count: 0 },
+        };
+        for (let i = Math.max(0, from); i < Math.min(entries.length, to); i++) spineLabel(entries[i].step, paints[i], kit);
+      },
+      drawNow: () => draw(true),
+      scroller: () => scroller.current,
+      count: () => scene.current.entries.length,
+      canvasSize: () => ({ width: canvas.current?.width ?? 0, height: canvas.current?.height ?? 0, scale: size.current.scale }),
+      listen(listener) {
+        c.listener = listener;
+      },
+    };
+    onBench(handle);
+    return () => {
+      onBench(null);
+      c.listener = null;
+    };
+  }, [onBench, applyScale, draw, jumpTo, labels, theme]);
 
   const setScroller = useCallback(
     (el: HTMLDivElement | null) => {
@@ -755,7 +945,7 @@ function CanvasStack({
       </div>
       <canvas ref={canvas} className="canvas-stack__canvas" aria-hidden="true" />
       {describeCentre && (
-        <p className="canvas-stack__tag">
+        <p ref={tagEl} className="canvas-stack__tag">
           <span ref={tagBook} className="canvas-stack__tag-book" />
           <span ref={tagTurned} className="canvas-stack__tag-turned" />
         </p>

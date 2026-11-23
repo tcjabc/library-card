@@ -1,7 +1,8 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { currentBuildInfo, formatVersionLine } from '../grownups/version';
 import { href } from '../router';
 import { bookRenders } from '../staircase/bookRenders';
-import type { CentreBook, CentreTag, DrawStats } from '../staircase/CanvasStack';
+import type { CentreBook, CentreTag, DrawStats, StackBench } from '../staircase/CanvasStack';
 import { generateFakeStack } from '../staircase/stackModel';
 import { MAX_TWIST_DEG, TWIST_DEG } from '../staircase/stackProjection';
 import { fmt, strings } from '../strings';
@@ -16,6 +17,9 @@ import {
   type Frame,
   type SampleStats,
 } from './frameStats';
+import { BenchControls, BenchResults, BenchRunning } from './StackBenchmarkPanel';
+import { useStackBenchmark } from './useStackBenchmark';
+import { formatBenchResult } from './stackBenchmark';
 import './StackDevPage.css';
 
 /**
@@ -46,6 +50,11 @@ const SCROLL_IDLE_MS = 150;
 const FPS_WINDOW_MS = 2000;
 const READOUT_EVERY_MS = 500;
 
+/** "Version 1.8.5 · abc1234 · built …", as in Settings > About: the first line of every result. */
+function versionLine(): string {
+  return formatVersionLine(currentBuildInfo(), Intl.DateTimeFormat().resolvedOptions().timeZone);
+}
+
 export default function StackDevPage() {
   const [count, setCount] = useState<number>(1000);
   const [mode, setMode] = useState<StackMode>('canvas');
@@ -59,6 +68,12 @@ export default function StackDevPage() {
   const onScroller = useCallback((el: HTMLDivElement | null) => {
     scroller.current = el;
   }, []);
+  const benchHandle = useRef<StackBench | null>(null);
+  const onBench = useCallback((handle: StackBench | null) => {
+    benchHandle.current = handle;
+  }, []);
+  const version = useMemo(() => versionLine(), []);
+  const benchmark = useStackBenchmark(benchHandle, version, reset);
 
   // A new pile starts its counts afresh.
   useEffect(() => reset(), [count, mode, twist, settle, raster, reset]);
@@ -89,6 +104,7 @@ export default function StackDevPage() {
             onScroll={meter.onScroll}
             measureRaster={raster}
             onDraw={meter.onDraw}
+            onBench={onBench}
           />
         ) : (
           <BookStack
@@ -102,20 +118,38 @@ export default function StackDevPage() {
           />
         )}
       </Suspense>
-      <MeasurePanel
-        count={count}
-        mode={mode}
-        twist={twist}
-        settle={settle}
-        onCount={setCount}
-        onMode={setMode}
-        onTwist={setTwist}
-        onSettle={setSettle}
-        raster={raster}
-        onRaster={setRaster}
-        readout={meter.readout}
-        onReset={reset}
-      />
+      {benchmark.state === 'running' ? (
+        <BenchRunning progress={benchmark.progress} onCancel={benchmark.cancel} />
+      ) : (
+        <MeasurePanel
+          version={version}
+          bench={
+            <BenchControls
+              canRun={mode === 'canvas'}
+              hasLast={benchmark.last !== null}
+              status={benchmark.status}
+              onStart={() => void benchmark.start()}
+              onOpenLast={benchmark.openLast}
+            />
+          }
+          benchText={benchmark.last ? formatBenchResult(benchmark.last) : null}
+          count={count}
+          mode={mode}
+          twist={twist}
+          settle={settle}
+          onCount={setCount}
+          onMode={setMode}
+          onTwist={setTwist}
+          onSettle={setSettle}
+          raster={raster}
+          onRaster={setRaster}
+          readout={meter.readout}
+          onReset={reset}
+        />
+      )}
+      {benchmark.state === 'results' && benchmark.shown && (
+        <BenchResults result={benchmark.shown} version={currentBuildInfo().version} onClose={benchmark.close} />
+      )}
     </main>
   );
 }
@@ -134,6 +168,10 @@ interface Readout {
   canvas: { width: number; height: number; scale: number } | null;
   /** Canvas, "Measure raster" on: the sampled flushes (ms) over the same 2 s. */
   raster: SampleStats | null;
+  /** Canvas only: average ms per frame in each part, and labels prepared per frame (same 2 s). */
+  breakdown: { labelMs: number; booksMs: number; overlayMs: number; cameraMs: number; labels: number } | null;
+  /** Label cache rebuilds this visit (the latest frame's count). */
+  rebuilds: number;
   dropped: number;
   /** null where the browser can't report long tasks. */
   longTasks: number | null;
@@ -148,7 +186,7 @@ function supportsLongTasks(): boolean {
 }
 
 function emptyReadout(): Readout {
-  return { fps: null, renders: null, draw: null, faces: null, ops: null, canvas: null, raster: null, dropped: 0, longTasks: supportsLongTasks() ? 0 : null, longTaskMs: 0, nodes: 0, viewport: '', dpr: 1 };
+  return { fps: null, renders: null, draw: null, faces: null, ops: null, canvas: null, raster: null, breakdown: null, rebuilds: 0, dropped: 0, longTasks: supportsLongTasks() ? 0 : null, longTaskMs: 0, nodes: 0, viewport: '', dpr: 1 };
 }
 
 /** Times every frame while the pile is scrolling, counts late frames and long tasks. */
@@ -160,6 +198,8 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
     /** Sampled raster flushes while the camera moves. */
     flushes: [] as DrawSample[],
     canvas: null as Readout['canvas'],
+    rebuilds: 0,
+    lastBreakdown: null as Readout['breakdown'],
     last: 0,
     /** bookRenders() at the last frame. */
     lastRenders: 0,
@@ -222,6 +262,18 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
       if (ops !== null) s.lastOps = ops;
       const raster = drawStats(s.flushes, now, FPS_WINDOW_MS);
       if (raster !== null) s.lastRaster = raster;
+      const part = (key: 'labelMs' | 'booksMs' | 'overlayMs' | 'cameraMs' | 'labels') =>
+        sampleStats(s.draws, now, FPS_WINDOW_MS, (d) => d[key])?.average ?? null;
+      const parts = { labelMs: part('labelMs'), booksMs: part('booksMs'), overlayMs: part('overlayMs'), cameraMs: part('cameraMs'), labels: part('labels') };
+      if (parts.booksMs !== null) {
+        s.lastBreakdown = {
+          labelMs: parts.labelMs ?? 0,
+          booksMs: parts.booksMs,
+          overlayMs: parts.overlayMs ?? 0,
+          cameraMs: parts.cameraMs ?? 0,
+          labels: parts.labels ?? 0,
+        };
+      }
       setReadout({
         fps: s.lastFps,
         renders: s.lastRendersPerSec,
@@ -230,6 +282,8 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
         ops: s.lastOps,
         canvas: s.canvas,
         raster: s.lastRaster,
+        breakdown: s.lastBreakdown,
+        rebuilds: s.rebuilds,
         dropped: s.dropped,
         longTasks: longTasks ? s.longTasks : null,
         longTaskMs: Math.round(s.longTaskMs),
@@ -255,8 +309,21 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
     const s = live.current;
     const now = performance.now();
     s.canvas = { width: stats.width, height: stats.height, scale: stats.scale };
+    s.rebuilds = stats.rebuilds;
     if (stats.raster !== undefined) s.flushes.push({ at: now, ms: stats.raster });
-    if (now <= s.scrollingUntil + FRAME_MS) s.draws.push({ at: now, ms: stats.ms, faces: stats.faces, ops: stats.ops });
+    if (now <= s.scrollingUntil + FRAME_MS) {
+      s.draws.push({
+        at: now,
+        ms: stats.ms,
+        faces: stats.faces,
+        ops: stats.ops,
+        labelMs: stats.labelMs,
+        booksMs: stats.booksMs,
+        overlayMs: stats.overlayMs,
+        cameraMs: stats.cameraMs,
+        labels: stats.labels,
+      });
+    }
   }, []);
 
   const reset = useCallback(() => {
@@ -268,6 +335,7 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
     s.lastFaces = null;
     s.lastOps = null;
     s.lastRaster = null;
+    s.lastBreakdown = null;
     s.dropped = 0;
     s.longTasks = 0;
     s.longTaskMs = 0;
@@ -305,6 +373,21 @@ function readoutLines(readout: Readout, count: number, mode: StackMode, twist: n
     [t.measureFps, readout.fps === null ? t.measureFpsNone : readout.fps.toFixed(1)],
     [t.measureRenders, readout.renders === null ? t.measureFpsNone : readout.renders.toFixed(1)],
     [t.measureDraw, draw],
+    [
+      t.measureBreakdown,
+      !canvas
+        ? only
+        : readout.breakdown === null
+          ? t.measureFpsNone
+          : fmt(t.measureBreakdownValue, {
+              labels: readout.breakdown.labelMs.toFixed(2),
+              books: readout.breakdown.booksMs.toFixed(2),
+              overlays: readout.breakdown.overlayMs.toFixed(2),
+              camera: readout.breakdown.cameraMs.toFixed(2),
+            }),
+    ],
+    [t.measureLabels, !canvas ? only : readout.breakdown === null ? t.measureFpsNone : readout.breakdown.labels.toFixed(2)],
+    [t.measureRebuilds, canvas ? String(readout.rebuilds) : only],
     [t.measureFaces, canvas ? perFrame(readout.faces) : only],
     [t.measureOps, canvas ? perFrame(readout.ops) : only],
     [
@@ -358,6 +441,12 @@ async function copyText(text: string): Promise<boolean> {
 }
 
 interface MeasurePanelProps {
+  /** The version line, first in the panel and in "Copy results". */
+  version: string;
+  /** The benchmark's controls, near the end of the panel. */
+  bench: ReactNode;
+  /** The last benchmark as text, added to "Copy results" when there is one. */
+  benchText: string | null;
   count: number;
   mode: StackMode;
   twist: number;
@@ -373,12 +462,30 @@ interface MeasurePanelProps {
 }
 
 /** Small and collapsible, over the pile: the controls, the live numbers and "Copy results". */
-function MeasurePanel({ count, mode, twist, settle, onCount, onMode, onTwist, onSettle, raster, onRaster, readout, onReset }: MeasurePanelProps) {
+function MeasurePanel({
+  version,
+  bench,
+  benchText,
+  count,
+  mode,
+  twist,
+  settle,
+  onCount,
+  onMode,
+  onTwist,
+  onSettle,
+  raster,
+  onRaster,
+  readout,
+  onReset,
+}: MeasurePanelProps) {
   const [copied, setCopied] = useState<boolean | null>(null);
   const lines = readoutLines(readout, count, mode, twist, settle, raster);
 
   const copy = async () => {
-    const text = [t.stackTitle, ...lines.map(([label, value]) => `${label}: ${value}`)].join('\n');
+    const parts = [version, t.stackTitle, ...lines.map(([label, value]) => `${label}: ${value}`)];
+    if (benchText) parts.push('', benchText);
+    const text = parts.join('\n');
     setCopied(await copyText(text));
   };
 
@@ -387,6 +494,7 @@ function MeasurePanel({ count, mode, twist, settle, onCount, onMode, onTwist, on
       <summary className="stack-dev__summary">
         {readout.fps === null ? t.measureHeading : fmt(t.measureSummary, { fps: readout.fps.toFixed(1), dropped: readout.dropped })}
       </summary>
+      <p className="stack-dev__version">{version}</p>
       <div className="stack-dev__controls">
         <div className="chip-row" role="group" aria-label={t.measureBooks}>
           {COUNTS.map((n) => (
@@ -445,6 +553,7 @@ function MeasurePanel({ count, mode, twist, settle, onCount, onMode, onTwist, on
       <p className="small muted" role="status">
         {copied === true ? t.measureCopied : copied === false ? t.measureCopyFailed : ''}
       </p>
+      {bench}
     </details>
   );
 }
