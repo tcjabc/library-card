@@ -6,7 +6,9 @@ import type { CentreBook, CentreTag, DrawStats, StackBench } from '../staircase/
 import { currentTimeZone } from '../lib/timezone';
 import { stackMarkers } from '../staircase/stackItems';
 import { useStackCovers, writeStackCovers } from '../staircase/coverSetting';
-import { fakeStackItems, generateFakeStack, spineHue } from '../staircase/stackModel';
+import { useStackGap, writeStackGap } from '../staircase/gapSetting';
+import { GAP_UP_PX, GAP_DOWN_PX } from '../staircase/eyeGap';
+import { GAP_DOWN, GAP_RAMP, GAP_UP, fakeStackItems, generateFakeStack, spineHue } from '../staircase/stackModel';
 import { MAX_TWIST_DEG, TWIST_DEG } from '../staircase/stackProjection';
 import { fmt, strings } from '../strings';
 import {
@@ -69,6 +71,7 @@ export default function StackDevPage() {
   const [raster, setRaster] = useState(false);
   const entries = useMemo(() => generateFakeStack(count, SEED), [count]);
   const covers = useStackCovers();
+  const gap = useStackGap();
   const pretendCovers = usePretendCovers(covers);
   const items = useMemo(() => {
     const plain = fakeStackItems(entries, SEED);
@@ -98,7 +101,7 @@ export default function StackDevPage() {
   const benchmark = useStackBenchmark(benchHandle, version, reset);
 
   // A new pile starts its counts afresh.
-  useEffect(() => reset(), [count, mode, twist, settle, raster, covers, reset]);
+  useEffect(() => reset(), [count, mode, twist, settle, raster, covers, gap, reset]);
   const label = fmt(t.stackLabel, { count: count.toLocaleString() });
 
   return (
@@ -129,6 +132,7 @@ export default function StackDevPage() {
             onDraw={meter.onDraw}
             onBench={onBench}
             covers={covers}
+            gap={gap}
           />
         ) : (
           <BookStack
@@ -169,6 +173,8 @@ export default function StackDevPage() {
           onRaster={setRaster}
           covers={covers}
           onCovers={writeStackCovers}
+          gap={gap}
+          onGap={writeStackGap}
           readout={meter.readout}
           onReset={reset}
         />
@@ -386,7 +392,16 @@ function perFrame(stats: SampleStats | null): string {
   return stats === null ? t.measureFpsNone : fmt(t.measurePerFrameValue, { average: stats.average.toFixed(1), max: Math.round(stats.max) });
 }
 
-function readoutLines(readout: Readout, count: number, mode: StackMode, twist: number, settle: boolean, raster: boolean, covers: boolean): [string, string][] {
+function readoutLines(
+  readout: Readout,
+  count: number,
+  mode: StackMode,
+  twist: number,
+  settle: boolean,
+  raster: boolean,
+  covers: boolean,
+  gap: boolean,
+): [string, string][] {
   const canvas = mode === 'canvas';
   const only = t.measureDrawCanvasOnly;
   const size = readout.canvas;
@@ -402,6 +417,20 @@ function readoutLines(readout: Readout, count: number, mode: StackMode, twist: n
     [t.measureTwist, canvas ? fmt(t.measureDegrees, { degrees: twist }) : t.measureDrawCanvasOnly],
     [t.measureSettle, canvas ? (settle ? t.measureOn : t.measureOff) : t.measureDrawCanvasOnly],
     [t.measureCovers, canvas ? (covers ? t.measureOn : t.measureOff) : t.measureDrawCanvasOnly],
+    [t.measureGap, canvas ? (gap ? t.measureOn : t.measureOff) : t.measureDrawCanvasOnly],
+    [
+      t.measureGapConstants,
+      canvas
+        ? fmt(t.measureGapConstantsValue, {
+            up: GAP_UP,
+            down: GAP_DOWN,
+            upPx: Math.round(GAP_UP_PX),
+            downPx: Math.round(GAP_DOWN_PX),
+            from: GAP_RAMP[0],
+            to: GAP_RAMP[1],
+          })
+        : t.measureDrawCanvasOnly,
+    ],
     [t.measureFps, readout.fps === null ? t.measureFpsNone : readout.fps.toFixed(1)],
     [t.measureRenders, readout.renders === null ? t.measureFpsNone : readout.renders.toFixed(1)],
     [t.measureDraw, draw],
@@ -503,6 +532,9 @@ interface MeasurePanelProps {
   /** "Covers on the stack": this device's setting, also used by the Family Staircase. */
   covers: boolean;
   onCovers: (covers: boolean) => void;
+  /** "Gap around the eye-line book": this device's setting, also used by the Family Staircase. */
+  gap: boolean;
+  onGap: (gap: boolean) => void;
   readout: Readout;
   onReset: () => void;
 }
@@ -524,12 +556,15 @@ function MeasurePanel({
   onRaster,
   covers,
   onCovers,
+  gap,
+  onGap,
   readout,
   onReset,
 }: MeasurePanelProps) {
   const [copied, setCopied] = useState<boolean | null>(null);
   const coversNoteId = useId();
-  const lines = readoutLines(readout, count, mode, twist, settle, raster, covers);
+  const gapNoteId = useId();
+  const lines = readoutLines(readout, count, mode, twist, settle, raster, covers, gap);
 
   const copy = async () => {
     const parts = [version, t.stackTitle, ...lines.map(([label, value]) => `${label}: ${value}`)];
@@ -586,6 +621,12 @@ function MeasurePanel({
           </button>
           <p id={coversNoteId} className="small muted">
             {t.measureCoversNote}
+          </p>
+          <button type="button" className="chip" aria-pressed={gap} aria-describedby={gapNoteId} onClick={() => onGap(!gap)}>
+            {t.measureGap}
+          </button>
+          <p id={gapNoteId} className="small muted">
+            {t.measureGapNote}
           </p>
         </div>
       )}

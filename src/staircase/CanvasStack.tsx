@@ -14,6 +14,7 @@ import { LruCache, backingSize, canvasScale, cssDuration, cssLength, fitWithElli
 import { CoverArt, type CoverFade, type CoverWish } from './coverArt';
 import { coverCrop } from './coverColour';
 import { coverJobs, showsPicture, travelOf, type Travel } from './coverPlan';
+import { bookLift, liftAbove, lineLift } from './eyeGap';
 import {
   DECIDE_AFTER_MS,
   FAN_CAP,
@@ -82,6 +83,11 @@ import './canvasStack.css';
  * as on a real book lying front up with its spine towards the reader. Both are loaded ahead of the
  * camera and measured in idle time, never while drawing; until then a book has its own colour,
  * and one arriving for a book on screen fades in (instantly with reduced motion).
+ *
+ * The gap (`gap`, eyeGap.ts): the books above the eye-line book lift away and the books below it
+ * drop a little, by their distance from the camera, so the gap travels with the camera and the
+ * book being looked at shows its top face and spine. Its markers move with their books; K leaves
+ * room for the lift.
  *
  * When the books change (a new read), the camera keeps the reader's book in front of them, or
  * moves up to the new newest book if they were looking at the newest (stackItems.followPile).
@@ -175,6 +181,8 @@ export interface CanvasStackProps {
   paused?: boolean;
   /** The books' real covers (each item's `cover`): their colour on the spines, their picture on the top faces up close. */
   covers?: boolean;
+  /** The gap around the eye-line book (eyeGap.ts): the books above lift away, the books below drop a little. */
+  gap?: boolean;
   /** The scroll area, for measuring. */
   onScroller?: (el: HTMLDivElement | null) => void;
   /** Each scroll by the reader (not the settle's own scroll). */
@@ -797,6 +805,7 @@ function CanvasStack({
   label,
   paused = false,
   covers = false,
+  gap = false,
   onScroller,
   onScroll,
   onDraw,
@@ -892,9 +901,9 @@ function CanvasStack({
   /** The real covers' loader, while `covers` is on. */
   const art = useRef<CoverArt | null>(null);
   // What the next frame draws: kept in a ref so scrolling never waits on React.
-  const scene = useRef({ items, shapes, centres, paints, covered, markers, onCentre, twist, settle, describeCentre, measureRaster, onDraw });
+  const scene = useRef({ items, shapes, centres, paints, covered, markers, onCentre, twist, gap, settle, describeCentre, measureRaster, onDraw });
   useLayoutEffect(() => {
-    scene.current = { items, shapes, centres, paints, covered, markers, onCentre, twist, settle, describeCentre, measureRaster, onDraw };
+    scene.current = { items, shapes, centres, paints, covered, markers, onCentre, twist, gap, settle, describeCentre, measureRaster, onDraw };
   });
   /** This frame's marker labels and month lines (reused every frame). */
   const placed = useRef({ sprites: [] as PlacedSprite[], lines: [] as number[] });
@@ -931,6 +940,7 @@ function CanvasStack({
       const { items, shapes, centres, paints, markers, onCentre, describeCentre, measureRaster, onDraw } = scene.current;
       const o = c.overrides;
       const twist = o ? o.twist : scene.current.twist;
+      const gapOn = scene.current.gap;
       const overlays = o ? o.overlays : true;
       if (paint.current.scale !== scale) {
         if (paint.current.scale !== 0) c.rebuilds += 1;
@@ -965,7 +975,7 @@ function CanvasStack({
         const projectAt = (i: number): ProjectedBook => {
           let book = books[i - base];
           if (!book) {
-            book = projectBook(fannedBook(i, items[i].step, shapes[i], centres, s, twist), view);
+            book = projectBook(fannedBook(i, items[i].step, shapes[i], centres, s, twist, bookLift(i, s, gapOn)), view);
             books[i - base] = book;
           }
           return book;
@@ -1010,7 +1020,7 @@ function CanvasStack({
           };
           for (let k = firstMarkerFrom(markers.months, from); k < markers.months.length && markers.months[k].index < to; k++) {
             const m = markers.months[k];
-            const y = spineLevels(m.index, shapes[m.index], centres, s, twist, originY).bottom;
+            const y = spineLevels(m.index, shapes[m.index], centres, s, twist, originY, lineLift(m.index, s, gapOn)).bottom;
             if (y < 0 || y > height) continue;
             marks.lines.push(y);
             const key = `m\u0000${m.big ? 1 : 0}\u0000${m.parts.map((p) => p.text).join('')}`;
@@ -1019,7 +1029,7 @@ function CanvasStack({
           }
           for (let k = firstMarkerFrom(markers.flags, from); k < markers.flags.length && markers.flags[k].index < to; k++) {
             const f = markers.flags[k];
-            const y = spineLevels(f.index, shapes[f.index], centres, s, twist, originY).middle;
+            const y = spineLevels(f.index, shapes[f.index], centres, s, twist, originY, bookLift(f.index, s, gapOn)).middle;
             const sp = sprite(`f\u0000${f.text}`, () =>
               renderSprite(
                 [
@@ -1240,7 +1250,7 @@ function CanvasStack({
       // book's scroll offset doesn't depend on it, so a resize or a turn keeps the reader's book.
       const cs = cam.current;
       const count = scene.current.items.length;
-      cs.k = eyeLineBooks(height, BIGGEST_BOOK, theme.restGap);
+      cs.k = eyeLineBooks(height, BIGGEST_BOOK, theme.restGap, liftAbove(scene.current.gap));
       if (sizer.current) sizer.current.style.height = `${scrollHeight(count, height)}px`;
       if (first) {
         // Opening: the base book if the pile fits above the eye line, else the newest.
@@ -1339,6 +1349,14 @@ function CanvasStack({
     media.addEventListener('change', onChange);
     return () => media.removeEventListener('change', onChange);
   }, []);
+
+  // The gap switched on or off: K for the new look (where a pile opens next time), and draw again
+  // where the camera is (the camera itself stays put).
+  useLayoutEffect(() => {
+    const c = cam.current;
+    c.k = eyeLineBooks(size.current.height, BIGGEST_BOOK, theme.restGap, liftAbove(gap));
+    if (!c.raf) draw(true);
+  }, [gap, draw, theme]);
 
   // A new twist, tag or inset: draw again where the camera is (unless a frame is coming anyway).
   useEffect(() => {

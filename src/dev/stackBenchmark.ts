@@ -183,6 +183,8 @@ export interface BenchResult {
   cancelled: boolean;
   /** "Covers on the stack" while it ran (missing in results from before 1.10.1). */
   covers?: boolean;
+  /** "Gap around the eye-line book" while it ran (missing in results from before 1.11.0). */
+  gap?: boolean;
 }
 
 const n1 = (v: number) => v.toFixed(1);
@@ -299,6 +301,7 @@ export function formatBenchResult(result: BenchResult): string {
     result.version,
     fmt(t.benchFinished, { at: localStamp(new Date(result.at)) }) + (result.cancelled ? ` ${t.benchWasCancelled}` : ''),
     ...(result.covers === undefined ? [] : [fmt(t.benchCovers, { state: result.covers ? t.measureOn : t.measureOff })]),
+    ...(result.gap === undefined ? [] : [fmt(t.benchGap, { state: result.gap ? t.measureOn : t.measureOff })]),
     ...deviceLines(result.device),
     fmt(t.benchCalibrationStart, { score: scoreText(result.calibration.start) }),
     fmt(t.benchCalibrationEnd, { score: scoreText(result.calibration.end) }),

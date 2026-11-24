@@ -74,6 +74,18 @@ export const BOOK_DEPTHS = [104, 118, 132] as const;
 export const BOOK_THICKNESSES = [28, 34, 42] as const;
 /** The thickest, widest and deepest book any pile can have (for room the pile must leave). */
 export const BIGGEST_BOOK = { thickness: Math.max(...BOOK_THICKNESSES), width: Math.max(...BOOK_WIDTHS), depth: Math.max(...BOOK_DEPTHS) };
+/**
+ * The gap around the eye-line book (eyeGap.ts): the books above it lift away and the books below
+ * it drop a little, so its top face and spine are clear. Measured in book heights, one book
+ * height being the thinnest book (28 px, the mock-up's book), so the gap scales with the books.
+ */
+export const GAP_BOOK_HEIGHT = Math.min(...BOOK_THICKNESSES);
+/** The books above lift this many book heights (the mock-up: 70 for a 28 book)… */
+export const GAP_UP = 2.5;
+/** …and the books below drop this many (the mock-up: 36). */
+export const GAP_DOWN = 1.3;
+/** A book's lift ramps in from this far from the eye line to this far (books). */
+export const GAP_RAMP: readonly [number, number] = [0.3, 1.0];
 /** The wobble's limits: yaw in degrees, x and z in px. */
 export const MAX_YAW = 6;
 export const MAX_NUDGE_X = 12;

@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react';
+import { deviceSwitch } from './deviceSwitch';
 
 /**
  * "Covers on the stack" (developer tools: the book stack page): real covers on the Family
@@ -9,38 +9,8 @@ import { useSyncExternalStore } from 'react';
 
 export const STACK_COVERS_KEY = 'library-card:stack-covers';
 
-const listeners = new Set<() => void>();
+const covers = deviceSwitch(STACK_COVERS_KEY);
 
-export function readStackCovers(): boolean {
-  try {
-    return window.localStorage.getItem(STACK_COVERS_KEY) !== 'off';
-  } catch {
-    return true;
-  }
-}
-
-export function writeStackCovers(on: boolean): void {
-  try {
-    if (on) window.localStorage.removeItem(STACK_COVERS_KEY);
-    else window.localStorage.setItem(STACK_COVERS_KEY, 'off');
-  } catch {
-    // No storage: the choice lasts until the page closes.
-  }
-  listeners.forEach((fn) => fn());
-}
-
-function subscribe(fn: () => void): () => void {
-  listeners.add(fn);
-  const onStorage = (event: StorageEvent) => {
-    if (event.key === STACK_COVERS_KEY || event.key === null) fn();
-  };
-  window.addEventListener('storage', onStorage);
-  return () => {
-    listeners.delete(fn);
-    window.removeEventListener('storage', onStorage);
-  };
-}
-
-export function useStackCovers(): boolean {
-  return useSyncExternalStore(subscribe, readStackCovers, () => true);
-}
+export const readStackCovers = covers.read;
+export const writeStackCovers = covers.write;
+export const useStackCovers = covers.use;

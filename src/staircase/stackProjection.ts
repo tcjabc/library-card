@@ -287,7 +287,8 @@ export function heightAt(centres: readonly number[], s: number): number {
 
 /**
  * Book `index` as the camera at `s` sees it: no sideways nudge, turned by its relative yaw, and
- * placed so the height at `s` is the camera's origin (the middle of the screen).
+ * placed so the height at `s` is the camera's origin (the middle of the screen). `lift` (px, up)
+ * moves it up or down the pile: the gap around the eye-line book (eyeGap.bookLift).
  */
 export function fannedBook(
   index: number,
@@ -296,8 +297,9 @@ export function fannedBook(
   centres: readonly number[],
   s: number,
   twist: number = TWIST_DEG,
+  lift = 0,
 ): PlacedBook {
-  const rise = centres[index] - heightAt(centres, s);
+  const rise = centres[index] - heightAt(centres, s) + lift;
   return { step, top: -rise - shape.thickness / 2, shape: { ...shape, x: 0, z: 0, yaw: relativeYaw(index, s, twist) } };
 }
 
@@ -309,18 +311,20 @@ const FAN_DROP = Math.sin(ELEVATION_DEG * RAD);
  * The resting rule's K: how many books fit between the eye line (the middle of the view, where
  * the base book's middle sits) and the top of the view, with `gap` (px) to spare. Worked out
  * from the thickest and largest book (`book`), so a pile of K + 1 books always fits whatever
- * its books' sizes and turns.
+ * its books' sizes and turns. `lifted` (px, in the pile) is the extra height the books above
+ * the eye line take when they lift away from it (eyeGap.liftAbove): it comes off the room.
  */
-export function eyeLineBooks(viewHeight: number, book: { thickness: number; width: number; depth: number }, gap: number): number {
+export function eyeLineBooks(viewHeight: number, book: { thickness: number; width: number; depth: number }, gap: number, lifted = 0): number {
   const pitch = FAN_RISE * Math.max(0, book.thickness);
   if (!(pitch > 0)) return 0;
-  return Math.max(0, Math.floor((viewHeight / 2 - eyeLineReach(book, gap)) / pitch));
+  return Math.max(0, Math.floor((viewHeight / 2 - eyeLineReach(book, gap) - FAN_RISE * Math.max(0, lifted)) / pitch));
 }
 
 /**
  * How far (px) a book at the eye line can reach above or below it, with `gap` to spare: half its
  * spine, and how far a turned cover can reach past its spine. The book sheet's half state stops
- * this far below the eye line, so the book there stays in view.
+ * this far below the eye line, so the book there stays in view. The gap around the eye-line book
+ * doesn't change it: that book doesn't move (the books above and below move away from it).
  */
 export function eyeLineReach(book: { thickness: number; width: number; depth: number }, gap: number): number {
   const pitch = FAN_RISE * Math.max(0, book.thickness);
@@ -331,6 +335,8 @@ export function eyeLineReach(book: { thickness: number; width: number; depth: nu
  * Book `index`'s spine on screen (y, px), as the camera at `s` sees it: the middle of its front
  * edge and its bottom edge (where it meets the book under it). Screen-aligned markers sit level
  * with these: a flag with the middle, a month line with the bottom of the month's first book.
+ * `lift` (px, up) as in fannedBook: a flag takes its book's, a month line the average of the
+ * two books it lies between (eyeGap.lineLift), so it sits in the middle of the gap.
  */
 export function spineLevels(
   index: number,
@@ -339,8 +345,9 @@ export function spineLevels(
   s: number,
   twist: number,
   originY: number,
+  lift = 0,
 ): { middle: number; bottom: number } {
-  const rise = centres[index] - heightAt(centres, s);
+  const rise = centres[index] - heightAt(centres, s) + lift;
   const front = (Math.cos(relativeYaw(index, s, twist) * RAD) * Math.max(0, shape.depth) * FAN_DROP) / 2;
   const middle = originY - FAN_RISE * rise + front;
   return { middle, bottom: middle + (FAN_RISE * Math.max(0, shape.thickness)) / 2 };

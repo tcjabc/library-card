@@ -32,8 +32,8 @@ names it.
   camera, settle and the arrow keys work the same for a short pile as for a tall one. With one book (or none)
   there is nothing to scroll.
 - **K** is how many books fit between the eye line and the top of the area, worked out from the area's height and
-  the pitch of the thickest book (so any K + 1 books fit, whatever their sizes and turns). K only decides where the
-  pile **starts**:
+  the pitch of the thickest book (so any K + 1 books fit, whatever their sizes and turns), less the room the gap's
+  lifted books take (below). K only decides where the pile **starts**:
   - **A pile that fits (N - 1 <= K)** opens on its base book (step 1) at the eye line, the pile rising above it and
     the lower half plain background. Scrolling up eases towards the newest book (the pile then sits below the eye
     line); scrolling back down returns to the base book.
@@ -42,6 +42,33 @@ names it.
   when the screen opens.
 - The screen is pinned to the viewport: the page behind it never scrolls or rubber-bands (iOS), and drags on the
   header don't move anything (drags on the bar move the book sheet).
+
+## The gap around the eye-line book
+
+The book at the eye line shows almost in full: the books above it lift away and the books below it drop a little,
+so its top face (with its cover) and its spine are clear. Code: `src/staircase/eyeGap.ts` (pure, unit-tested); the
+constants are in `src/staircase/stackModel.ts`.
+
+- **The rule**: for a book at `t = index - s` (s: the camera's continuous position, the same one the fan uses), its
+  lift is `GAP_UP * smoothstep(t, 0.3, 1.0) - GAP_DOWN * smoothstep(-t, 0.3, 1.0)`, with
+  `smoothstep(x, a, b) = u²(3 - 2u)` for `u = clamp((x - a) / (b - a), 0, 1)`. Books one or more above the camera
+  are fully lifted, books one or more below fully lowered, the eye-line book (t = 0, and up to 0.3 either way)
+  doesn't move, and between whole books the gap slides with the camera.
+- **The constants**, in book heights (one book height is the thinnest book, 28 px, the mock-up's book):
+  `GAP_UP` 2.5 (70 px), `GAP_DOWN` 1.3 (36 px), ramp 0.3 to 1.0. The lift is added to each book's height in the fan
+  (`stackProjection.fannedBook`), so the draw order is still by book index, bottom to top.
+- **K** leaves room for the lifted books: `GAP_UP` (times the camera's tilt) comes off the height above the eye
+  line before the books are counted, so a short pile opening on its base book still fits with its upper books
+  lifted. A pile that only just fitted before may now open on its newest book. `eyeLineReach` (where the half
+  sheet stops) is unchanged: the eye-line book itself doesn't move, the books below only drop away from it.
+- **Markers** move with their books: a flag takes its own book's lift; a month line lies between two books, so it
+  takes the average of their two lifts (in the middle of the gap when the gap is there).
+- Lifted books far above the top or lowered below the bottom are skipped as before (the visible range is worked
+  out from the books' projected positions); covers are asked for by book index, so their look-ahead is unchanged.
+- The gap only moves with the camera: no idle animation, and reduced motion is unchanged.
+- **The setting**: Developer tools → Book stack → "Gap around the eye-line book" (on by default) switches it off on
+  this device (localStorage `library-card:stack-gap`, cleared by "Reset this device"); the pile is then as it was
+  in 1.10.2. The page's readout shows the three constants, and a benchmark result says whether the gap was on.
 
 ## Markers
 
