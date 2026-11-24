@@ -1,13 +1,39 @@
 /* The Family Staircase's pile of books (FamilyStack.tsx). Every rule is under .family-stack. */
 
-/* The page fills the screen: the header, the pile (which scrolls inside itself), then the bar. */
+/*
+ * The page fills the screen: the header, the pile (which scrolls inside itself), then the bar.
+ * It is pinned to the viewport, so the page behind it has nothing to scroll; vertical drags only
+ * drive the pile's own scroller, and neither it nor the page bounces (iOS would otherwise pull the
+ * whole page, header and all, up and down at the ends of the pile).
+ */
 .family-stack {
+  position: fixed;
+  inset: 0;
   display: flex;
   flex-direction: column;
-  height: 100dvh;
   max-width: var(--content-max-wide);
   margin: 0 auto;
   padding-top: env(safe-area-inset-top);
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* While the pile is open the document itself never overscrolls (no rubber band behind it). */
+:root:has(.family-stack),
+:root:has(.family-stack) body {
+  overscroll-behavior: none;
+}
+
+/* Drags on the header and the bar don't pan anything (taps still work). */
+.family-stack__header,
+.family-stack__bar {
+  touch-action: none;
+}
+
+/* The pile's scroller takes vertical drags only, and keeps them to itself. */
+.family-stack .canvas-stack__scroller {
+  overscroll-behavior: none;
+  touch-action: pan-y;
 }
 
 .family-stack__header {

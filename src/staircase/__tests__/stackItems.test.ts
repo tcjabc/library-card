@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { assignReaderColors } from '../../journeys/staircase';
 import {
   clampPosition,
+  easeStep,
   pileFits,
   positionToScroll,
-  scrollBooks,
   scrollHeight,
   scrollToPosition,
   settleTarget,
+  startPosition,
+  stepCamera,
   stepTarget,
 } from '../camera';
 import {
@@ -16,7 +18,7 @@ import {
   bigYear,
   firstMarkerFrom,
   flagIndexes,
-  followResting,
+  followPile,
   followUpdate,
   isStackFlag,
   markerTop,
@@ -275,60 +277,107 @@ describe('the resting rule', () => {
     expect(pileFits(2, 0)).toBe(false);
   });
 
-  it('a pile that fits has the camera on its base book and nothing to scroll', () => {
-    for (const n of [1, 2, 7, K + 1]) {
-      const books = scrollBooks(n, pileFits(n, K));
-      expect(books).toBe(1);
-      expect(scrollHeight(books, H)).toBe(H); // no scrolling
-      for (const top of [0, 50, 5000]) expect(scrollToPosition(top, books)).toBe(0);
-      expect(positionToScroll(0, books)).toBe(0);
-      expect(settleTarget(scrollToPosition(120, books), books)).toBe(0);
-      expect(stepTarget(0, 1, books)).toBe(0); // arrow keys stay on it
-    }
-    expect(scrollBooks(0, true)).toBe(0);
-  });
-
-  it('a taller pile opens on the newest book and scrolls all the way down to the base book', () => {
-    for (const n of [K + 2, 40, 1000]) {
-      const books = scrollBooks(n, pileFits(n, K));
-      expect(books).toBe(n);
-      expect(scrollToPosition(0, books)).toBe(n - 1);
-      const bottom = scrollHeight(books, H) - H;
-      expect(scrollToPosition(bottom, books)).toBe(0);
-      expect(clampPosition(scrollToPosition(bottom + 500, books), n)).toBe(0);
+  it('the camera’s range is always the whole pile, [0, N - 1], short or tall', () => {
+    for (const n of [2, 7, K + 1, K + 2, 40]) {
+      const bottom = scrollHeight(n, H) - H;
+      expect(bottom).toBe(positionToScroll(0, n));
+      expect(bottom).toBeGreaterThan(0);
+      expect(scrollToPosition(0, n)).toBe(n - 1); // the top of the scroll: the newest book
+      expect(scrollToPosition(bottom, n)).toBe(0); // the bottom: the base book
+      expect(clampPosition(scrollToPosition(bottom + 500, n), n)).toBe(0);
     }
   });
 
-  it('turning the screen works the rule out again', () => {
+  it('has nothing to scroll for no books or one', () => {
+    for (const n of [0, 1]) {
+      expect(scrollHeight(n, H)).toBe(H);
+      expect(scrollToPosition(300, n)).toBe(0);
+      expect(stepTarget(0, 1, n)).toBe(0);
+    }
+  });
+
+  it('starts a pile that fits on its base book and a taller one on the newest', () => {
+    for (const n of [1, 2, 7, K + 1]) expect(startPosition(n, K)).toBe(0);
+    for (const n of [K + 2, 40, 1000]) expect(startPosition(n, K)).toBe(n - 1);
+    expect(startPosition(0, K)).toBe(0);
+    // The base book at the start is the bottom of the scroll range: scrolling up goes to the newer books.
+    expect(positionToScroll(startPosition(7, K), 7)).toBe(6 * 56);
+  });
+
+  it('scrolls a short pile from its base book up to the newest and back down, easing and settling on whole books', () => {
+    const n = Math.min(7, K + 1);
+    const bottom = positionToScroll(0, n);
+    // Halfway up: the eased camera heads there over a few frames, then settles on a whole book.
+    const target = scrollToPosition(bottom / 2, n);
+    expect(target).toBeCloseTo((n - 1) / 2, 6);
+    let shown = 0;
+    for (let frame = 0; frame < 200; frame++) {
+      const next = stepCamera(shown, target, 1000 / 60, false);
+      expect(next.shown).toBeGreaterThanOrEqual(shown);
+      shown = next.shown;
+      if (next.done) break;
+    }
+    expect(shown).toBe(target);
+    expect(Number.isInteger(settleTarget(target, n))).toBe(true);
+    expect(easeStep(0, n - 1, 16)).toBeGreaterThan(0);
+    expect(scrollToPosition(0, n)).toBe(n - 1); // all the way up: the newest
+    expect(scrollToPosition(bottom, n)).toBe(0); // and back down: the base
+    // Arrow keys walk the same range.
+    let s = 0;
+    for (let i = 0; i < n + 3; i++) s = stepTarget(s, 1, n);
+    expect(s).toBe(n - 1);
+    for (let i = 0; i < n + 3; i++) s = stepTarget(s, -1, n);
+    expect(s).toBe(0);
+  });
+
+  it('turning the screen changes K (where a pile would start), not the reader’s book or its scroll offset', () => {
     const tall = eyeLineBooks(1200, biggest, GAP);
     const short = eyeLineBooks(500, biggest, GAP);
     expect(tall).toBeGreaterThan(short);
     const n = short + 2;
-    expect(pileFits(n, tall)).toBe(true); // portrait: fits, rests on its base book
-    expect(pileFits(n, short)).toBe(false); // landscape: scrolls
+    expect(startPosition(n, tall)).toBe(0);
+    expect(startPosition(n, short)).toBe(n - 1);
+    // A book's scroll offset doesn't depend on the view's height, so a turn keeps it in front of the reader.
+    for (const position of [0, 3, n - 1]) {
+      const top = positionToScroll(position, n);
+      expect(scrollToPosition(top, n)).toBe(position);
+      expect(top).toBeLessThanOrEqual(scrollHeight(n, 500) - 500);
+      expect(top).toBeLessThanOrEqual(scrollHeight(n, 1200) - 1200);
+    }
   });
 });
 
-describe('live updates with the resting rule', () => {
+describe('live updates on the pile', () => {
+  const K = eyeLineBooks(760, { thickness: Math.max(...BOOK_THICKNESSES), width: Math.max(...BOOK_WIDTHS), depth: Math.max(...BOOK_DEPTHS) }, 24);
   const keys = (n: number) => Array.from({ length: n }, (_, i) => `k${i}`);
 
-  it('a pile that fits keeps the camera on its base book as it grows', () => {
-    expect(followResting(keys(3), keys(4), 0, 0, true, true)).toEqual({ target: 0, shown: 0 });
+  it('stays on the base book as the pile grows', () => {
+    expect(followPile(keys(3), keys(4), 0, 0)).toEqual({ target: 0, shown: 0 });
+    expect(followPile(keys(1), keys(2), 0, 0)).toEqual({ target: 0, shown: 0 });
   });
 
-  it('when a new book makes it stop fitting, the camera eases from the base book up to the newest', () => {
-    expect(followResting(keys(5), keys(6), 0, 0, true, false)).toEqual({ target: 5, shown: 0 });
+  it('follows the newest book up when the reader was at the newest', () => {
+    expect(followPile(keys(20), keys(21), 19, 19)).toEqual({ target: 20, shown: 19 });
+    expect(followPile(keys(5), keys(6), 4, 4)).toEqual({ target: 5, shown: 4 });
   });
 
-  it('a taller pile follows the normal rules: newest if at the newest, else the reader’s book stays', () => {
-    expect(followResting(keys(20), keys(21), 19, 19, false, false)).toEqual({ target: 20, shown: 19 });
-    expect(followResting(keys(20), keys(21), 7, 7, false, false)).toEqual({ target: 7, shown: 7 });
+  it('keeps the reader’s book in the middle of the pile', () => {
+    expect(followPile(keys(20), keys(21), 7, 7)).toEqual({ target: 7, shown: 7 });
+    // A read confirmed later, below the reader's book: the book moves up a place and so do they.
+    expect(followPile(['a', 'b', 'c', 'd'], ['a', 'x', 'b', 'c', 'd'], 2, 2)).toEqual({ target: 3, shown: 3 });
   });
 
-  it('when books go and the pile fits again, it goes back to its base book', () => {
-    const moved = followResting(keys(20), keys(5), 4, 4, false, true);
-    expect(moved.target).toBe(0);
-    expect(followResting(keys(1), [], 0, 0, true, true)).toEqual({ target: 0, shown: 0 });
+  it('crossing K changes nothing for the camera: no jump', () => {
+    const n = K + 1;
+    expect(pileFits(n, K)).toBe(true);
+    expect(pileFits(n + 1, K)).toBe(false);
+    expect(followPile(keys(n), keys(n + 1), 0, 0)).toEqual({ target: 0, shown: 0 }); // on the base
+    expect(followPile(keys(n), keys(n + 1), 2, 2)).toEqual({ target: 2, shown: 2 }); // in the middle
+  });
+
+  it('copes with books going, down to none', () => {
+    expect(followPile(keys(5), keys(3), 4, 4)).toEqual({ target: 2, shown: 2 });
+    expect(followPile(keys(1), [], 0, 0)).toEqual({ target: 0, shown: 0 });
   });
 });
 

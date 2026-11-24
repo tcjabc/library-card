@@ -2,12 +2,11 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import {
   SETTLE_IDLE_MS,
   clampPosition,
-  pileFits,
   positionToScroll,
-  scrollBooks,
   scrollHeight,
   scrollToPosition,
   settleTarget,
+  startPosition,
   stepCamera,
   stepTarget,
 } from './camera';
@@ -25,7 +24,7 @@ import {
   type InsetState,
   type StackOverrides,
 } from './drawBudget';
-import { READER_COLOURS, firstMarkerFrom, followResting, markerTop, type LabelPart, type StackItem, type StackMarkers } from './stackItems';
+import { READER_COLOURS, firstMarkerFrom, followPile, markerTop, type LabelPart, type StackItem, type StackMarkers } from './stackItems';
 import { BOOK_DEPTHS, BOOK_THICKNESSES, BOOK_WIDTHS, bookShape, spineHue } from './stackModel';
 import {
   FAN_CAMERA,
@@ -52,9 +51,10 @@ import './canvasStack.css';
  * the twist per book (stackProjection.ts), so the books near the middle of the screen are always
  * readable. The book at the eye line (the middle of the view) is the one being looked at.
  *
- * The resting rule (camera.pileFits): a pile short enough to fit above the eye line stays put
- * with its base book at the eye line and nothing to scroll; a taller pile opens on the newest
- * book and scrolls down to the base book, which then sits at the eye line too.
+ * The camera's range is always the whole pile, [0, N - 1]: every pile scrolls, flicks, eases
+ * and settles. Where it starts (camera.startPosition): a pile short enough to fit above the eye
+ * line opens on its base book, with the pile rising above it; a taller pile opens on the newest
+ * book. Either way, scrolling down all the way brings the base book to the eye line.
  *
  * A native scroll area with a sized spacer keeps the browser's own (inertia) scrolling, and sets
  * where the camera is going; the drawn position eases towards it (camera.ts). When scrolling
@@ -75,8 +75,8 @@ import './canvasStack.css';
  * (markerTop in stackItems.ts).
  *
  * When the books change (a new read), the camera keeps the reader's book in front of them, or
- * moves up to the new newest book if they were looking at the newest (stackItems.followResting).
- * Resizing or turning the screen works the rule out again.
+ * moves up to the new newest book if they were looking at the newest (stackItems.followPile).
+ * Resizing or turning the screen keeps the reader's book.
  * Arrow Up and Down step one book, with the same ease.
  */
 
@@ -234,7 +234,7 @@ interface BookTheme {
   dash: number;
   dashGap: number;
   gutter: number;
-  /** Room left above a pile that fits over the eye line (px). */
+  /** Room left above a pile that fits over the eye line, for where it starts (px). */
   restGap: number;
 }
 
@@ -738,9 +738,8 @@ function CanvasStack({
     inset: null as InsetState | null,
     /** The book in the middle at the last frame (for onCentre), -1 before the first. */
     centre: -1,
-    /** The resting rule: books that fit above the eye line in this view, and whether the pile does. */
+    /** Books that fit above the eye line in this view (where a pile starts: camera.startPosition). */
     k: 0,
-    fits: false,
     /** Camera work (ease, scroll handling, resolution) since the last frame (ms). */
     cameraMs: 0,
     /** Label cache rebuilds this visit. */
@@ -755,8 +754,6 @@ function CanvasStack({
   useLayoutEffect(() => {
     scene.current = { items, shapes, centres, paints, markers, onCentre, twist, settle, describeCentre, measureRaster, onDraw };
   });
-  /** How many books the scroll offset spans now (one when the pile fits: camera.scrollBooks). */
-  const scrollCount = () => scrollBooks(scene.current.items.length, cam.current.fits);
   /** This frame's marker labels and month lines (reused every frame). */
   const placed = useRef({ sprites: [] as PlacedSprite[], lines: [] as number[] });
 
@@ -1023,7 +1020,7 @@ function CanvasStack({
       if (c.settling) {
         c.settling = false;
         const el = scroller.current;
-        const top = positionToScroll(c.shown, scrollBooks(scene.current.items.length, c.fits));
+        const top = positionToScroll(c.shown, scene.current.items.length);
         if (el && Math.abs(c.scrollTop - top) >= OWN_SCROLL_SLACK / 2) ownScroll(c, el, top);
       }
     };
@@ -1034,7 +1031,7 @@ function CanvasStack({
   const settleNow = useCallback(() => {
     const c = cam.current;
     if (!(c.overrides ? c.overrides.settle : scene.current.settle)) return;
-    const total = scrollBooks(scene.current.items.length, c.fits);
+    const total = scene.current.items.length;
     c.target = settleTarget(scrollToPosition(c.scrollTop, total), total);
     c.settling = true;
     run();
@@ -1056,23 +1053,16 @@ function CanvasStack({
       c.style.width = `${width}px`;
       c.style.height = `${height}px`;
       applyScale(Math.min(canvasScale(window.devicePixelRatio), cam.current.scaleCap));
-      // The resting rule, for this view's height.
+      // K for this view's height. The scroll range is the whole pile whatever the height, and a
+      // book's scroll offset doesn't depend on it, so a resize or a turn keeps the reader's book.
       const cs = cam.current;
       const count = scene.current.items.length;
       cs.k = eyeLineBooks(height, BIGGEST_BOOK, theme.restGap);
-      const fits = pileFits(count, cs.k);
-      const changed = fits !== cs.fits;
-      cs.fits = fits;
-      if (sizer.current) sizer.current.style.height = `${scrollHeight(scrollBooks(count, fits), height)}px`;
-      if (first || changed) {
-        // Opening, or a resize that changed the rule: the base book if the pile fits, else the newest.
-        cancelAnimationFrame(cs.raf);
-        cs.raf = 0;
-        cs.last = 0;
-        cs.settling = false;
-        window.clearTimeout(cs.settleTimer);
-        cs.target = cs.shown = fits ? 0 : Math.max(0, count - 1);
-        ownScroll(cs, el, 0);
+      if (sizer.current) sizer.current.style.height = `${scrollHeight(count, height)}px`;
+      if (first) {
+        // Opening: the base book if the pile fits above the eye line, else the newest.
+        cs.target = cs.shown = startPosition(count, cs.k);
+        ownScroll(cs, el, positionToScroll(cs.target, count));
       }
       draw(true);
     };
@@ -1129,7 +1119,7 @@ function CanvasStack({
       return;
     }
     c.expected = null;
-    c.target = scrollToPosition(c.scrollTop, scrollCount());
+    c.target = scrollToPosition(c.scrollTop, scene.current.items.length);
     c.settling = false;
     window.clearTimeout(c.settleTimer);
     if (c.overrides ? c.overrides.settle : scene.current.settle) c.settleTimer = window.setTimeout(settleNow, SETTLE_IDLE_MS);
@@ -1152,15 +1142,14 @@ function CanvasStack({
       c.settling = false;
       window.clearTimeout(c.settleTimer);
       ownScroll(c, el, top);
-      c.target = c.shown = scrollToPosition(top, scrollBooks(scene.current.items.length, c.fits));
+      c.target = c.shown = scrollToPosition(top, scene.current.items.length);
       draw(true);
     },
     [draw],
   );
 
-  // New books (or fewer): keep the reader's book in front of them, or follow the newest book up
-  // if that's where they were, and keep a pile that fits on its base book (stackItems.followResting),
-  // without a jump.
+  // New books (or fewer): keep the reader's book in front of them, stay on the base book, or
+  // follow the newest book up if that's where they were (stackItems.followPile), without a jump.
   const keys = useRef<string[] | null>(null);
   useLayoutEffect(() => {
     const next = items.map((item) => item.key);
@@ -1177,10 +1166,8 @@ function CanvasStack({
       if (!c.raf) draw(true);
       return;
     }
-    const fitsBefore = c.fits;
-    c.fits = pileFits(next.length, c.k);
-    const moved = followResting(prev, next, c.target, c.shown, fitsBefore, c.fits);
-    const books = scrollBooks(next.length, c.fits);
+    const moved = followPile(prev, next, c.target, c.shown);
+    const books = next.length;
     if (sizer.current) sizer.current.style.height = `${scrollHeight(books, size.current.height)}px`;
     window.clearTimeout(c.settleTimer);
     c.settling = false;
@@ -1198,7 +1185,7 @@ function CanvasStack({
     const by = event.key === 'ArrowUp' ? 1 : event.key === 'ArrowDown' ? -1 : 0;
     const el = scroller.current;
     const c = cam.current;
-    const total = scrollCount();
+    const total = scene.current.items.length;
     if (!by || !el || total === 0) return;
     event.preventDefault();
     window.clearTimeout(c.settleTimer);

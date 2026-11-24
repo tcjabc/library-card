@@ -297,23 +297,21 @@ export function followUpdate(
 }
 
 /**
- * followUpdate with the resting rule (camera.pileFits): a pile that fits (`fitsNow`) keeps the
- * camera on its base book (position 0), growing upwards. When a new book makes it stop fitting,
- * the reader counts as at the newest book (they could see the whole pile), so the camera eases
- * from the base book up to the newest. A pile that didn't fit and still doesn't follows
- * followUpdate. Positions are book indexes, oldest first.
+ * followUpdate for the pile as the screen uses it. A one-book pile opens on its base book, so
+ * as it grows the camera stays on that book; otherwise followUpdate's rules apply: on the base
+ * book it stays there, at the newest it follows the newest, anywhere else the reader's book stays
+ * in front of them (also when the pile grows too tall to fit above the eye line: no jump).
  */
-export function followResting(
+export function followPile(
   prevKeys: readonly string[],
   nextKeys: readonly string[],
   target: number,
   shown: number,
-  fitsBefore: boolean,
-  fitsNow: boolean,
 ): { target: number; shown: number } {
-  if (nextKeys.length === 0) return { target: 0, shown: 0 };
-  if (fitsNow) return { target: 0, shown: fitsBefore ? 0 : followUpdate(prevKeys, nextKeys, target, shown).shown };
-  if (fitsBefore) return followUpdate(prevKeys, nextKeys, prevKeys.length - 1, 0);
+  if (prevKeys.length === 1) {
+    const at = nextKeys.indexOf(prevKeys[0]);
+    if (at >= 0) return { target: at, shown: at };
+  }
   return followUpdate(prevKeys, nextKeys, target, shown);
 }
 

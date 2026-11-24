@@ -27,12 +27,20 @@ Developer tools, until it's retired.
 The book at the **eye line** (the middle of the pile's area) is the one being looked at; the bar under the pile
 names it.
 
+- **The camera's range is always [0, N - 1]**, for every pile of two or more books: scrolling, flicks, the eased
+  camera, settle and the arrow keys work the same for a short pile as for a tall one. With one book (or none)
+  there is nothing to scroll.
 - **K** is how many books fit between the eye line and the top of the area, worked out from the area's height and
-  the pitch of the thickest book (so any K + 1 books fit, whatever their sizes and turns).
-- **A pile that fits (N - 1 <= K)** rests with its base book (step 1) at the eye line and doesn't scroll: the pile
-  rises above it and the lower half is plain background.
-- **A taller pile** opens on the newest book; scrolling down all the way brings the base book to the eye line.
-- Resizing or turning the screen works K out again (a pile that fits in portrait may scroll in landscape).
+  the pitch of the thickest book (so any K + 1 books fit, whatever their sizes and turns). K only decides where the
+  pile **starts**:
+  - **A pile that fits (N - 1 <= K)** opens on its base book (step 1) at the eye line, the pile rising above it and
+    the lower half plain background. Scrolling up eases towards the newest book (the pile then sits below the eye
+    line); scrolling back down returns to the base book.
+  - **A taller pile** opens on the newest book; scrolling down all the way brings the base book to the eye line.
+- Resizing or turning the screen works K out again and keeps the reader's book; the starting rule only applies
+  when the screen opens.
+- The screen is pinned to the viewport: the page behind it never scrolls or rubber-bands (iOS), and drags on the
+  header and the bar don't move anything.
 
 ## Markers
 
@@ -57,9 +65,9 @@ is a November book even though it's still 31 October in UTC, and daylight saving
 
 The pile follows new reads as they happen (also from another tab or device, through sync):
 
-- A pile that fits stays on its base book as it grows. When a new book makes it stop fitting, the camera eases
-  from the base book up to the new newest book.
+- On the base book, the camera stays on the base book as the pile grows.
 - If the reader is at the newest book, the camera eases up to the new newest book.
+- A pile growing taller than K doesn't move the camera (no jump).
 - Anywhere else, the book in front of them stays in front of them; if it has gone (an undo), the nearest older
   book that's still there takes its place.
 

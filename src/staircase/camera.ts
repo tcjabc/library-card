@@ -72,20 +72,17 @@ export function stepTarget(target: number, by: number, count: number): number {
 }
 
 /**
- * The resting rule: a pile of `count` books fits when all of it is in view above the eye line
- * with its base book there (count - 1 <= k, k from stackProjection.eyeLineBooks). Then the camera
- * stays on the base book and there's nothing to scroll; otherwise the pile scrolls from the
- * newest book (scroll offset 0) down to the base book at the eye line.
+ * The resting rule (where the camera starts, and nothing else): a pile of `count` books fits
+ * when all of it is in view above the eye line with its base book there (count - 1 <= k, k from
+ * stackProjection.eyeLineBooks). The camera's range is always the whole pile, [0, count - 1],
+ * whatever its size.
  */
 export function pileFits(count: number, k: number): boolean {
   return Math.floor(count) - 1 <= Math.max(0, Math.floor(k));
 }
 
-/**
- * How many books the scroll offset spans: all of them, or one when the pile fits (so every
- * scroll mapping above gives the base book, position 0, and the scroll area doesn't scroll).
- */
-export function scrollBooks(count: number, fits: boolean): number {
-  const n = Math.max(0, Math.floor(count));
-  return fits ? Math.min(1, n) : n;
+/** Where the camera starts when the pile opens: the base book (0) if the pile fits, else the newest. */
+export function startPosition(count: number, k: number): number {
+  const last = Math.max(0, Math.floor(count) - 1);
+  return pileFits(count, k) ? 0 : last;
 }
