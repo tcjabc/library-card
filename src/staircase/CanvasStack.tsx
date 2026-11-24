@@ -16,6 +16,23 @@ import { coverCrop } from './coverColour';
 import { coverJobs, showsPicture, travelOf, type Travel } from './coverPlan';
 import { bookLift, liftAbove, lineLift } from './eyeGap';
 import {
+  addFallers,
+  dropActive,
+  dropCamera,
+  dropLift,
+  dropSpin,
+  highlightAlpha,
+  HIGHLIGHT_MS,
+  landedCount,
+  markerAlpha,
+  squashScale,
+  startDrop,
+  stepDrop,
+  waiting,
+  type DropWorld,
+} from './dropMotion';
+import { MAX_DROP } from './stackSeen';
+import {
   DECIDE_AFTER_MS,
   FAN_CAP,
   faceSpan,
@@ -28,7 +45,7 @@ import {
   type InsetState,
   type StackOverrides,
 } from './drawBudget';
-import { READER_COLOURS, firstMarkerFrom, followPile, markerTop, type LabelPart, type StackItem, type StackMarkers } from './stackItems';
+import { READER_COLOURS, atNewest, firstMarkerFrom, followPile, markerTop, type LabelPart, type StackItem, type StackMarkers } from './stackItems';
 import { BIGGEST_BOOK, BOOK_DEPTHS, BOOK_WIDTHS, bookShape, spineHue } from './stackModel';
 import {
   FAN_CAMERA,
@@ -89,6 +106,12 @@ import './canvasStack.css';
  * book being looked at shows its top face and spine. Its markers move with their books; K leaves
  * room for the lift.
  *
+ * New books falling (`drop`, dropMotion.ts): the newest books fall onto the pile one after
+ * another, the pile springs, dust puffs; the camera starts where it would for the pile without
+ * them and ends at the normal opening place, following the landed books up a tall pile. With
+ * `liveDrops`, books arriving while the camera follows the newest fall the same way. Drawing runs
+ * only while something moves. Highlights (reduced motion, too many books) are a calm outline pulse.
+ *
  * When the books change (a new read), the camera keeps the reader's book in front of them, or
  * moves up to the new newest book if they were looking at the newest (stackItems.followPile).
  * Resizing or turning the screen keeps the reader's book.
@@ -134,6 +157,28 @@ export interface DrawStats {
   rebuilds: number;
   /** With covers on: the cover pictures kept and their memory (bytes). */
   covers?: { pictures: number; bytes: number };
+}
+
+/** New books to greet: `count` of the newest fall, or are highlighted. */
+export interface StackDrop {
+  id: number;
+  count: number;
+  kind: 'fall' | 'highlight';
+}
+
+/** A drop running: the world, where its books start (the pile before them), and whether the camera follows. */
+interface DropRun {
+  world: DropWorld;
+  base: number;
+  follow: boolean;
+  last: number;
+}
+
+/** A highlight running: books [start, end), since `from` (performance.now()). */
+interface HighlightRun {
+  start: number;
+  end: number;
+  from: number;
 }
 
 /** The benchmark's handle on the stack (developer tools): fixed set-ups, jumps and label control. */
@@ -183,6 +228,14 @@ export interface CanvasStackProps {
   covers?: boolean;
   /** The gap around the eye-line book (eyeGap.ts): the books above lift away, the books below drop a little. */
   gap?: boolean;
+  /** New books to greet (dropMotion.ts): the newest `count` fall onto the pile, or show with a brief outline. A new `id` starts one. */
+  drop?: StackDrop | null;
+  /** Books arriving at the top while the camera follows the newest fall too (highlighted with reduced motion). */
+  liveDrops?: boolean;
+  /** A falling book landed (its first landing): for the thud and the vibration. */
+  onLanding?: (landing: { mass: number; impulse: number }) => void;
+  /** A drop or highlight finished (or was cut short by the pile changing). */
+  onDropEnd?: () => void;
   /** The scroll area, for measuring. */
   onScroller?: (el: HTMLDivElement | null) => void;
   /** Each scroll by the reader (not the settle's own scroll). */
@@ -485,6 +538,8 @@ interface PlacedSprite {
   sprite: Sprite;
   x: number;
   y: number;
+  /** Less than 1 while its book's markers fade in after landing. */
+  alpha: number;
 }
 
 interface Paint {
@@ -537,6 +592,19 @@ function spineLabel(book: BookPaint, kit: FaceKit, own = false): HTMLCanvasEleme
     kit.prep.count += 1;
   }
   return spine;
+}
+
+/** A face's two lower corners on screen (px), left then right: where a landing book's dust puffs from. */
+function lowerCorners(face: ProjectedFace): { left: { x: number; y: number }; right: { x: number; y: number } } {
+  const { origin: o, u, v } = face;
+  const pts = [
+    { x: o.x, y: o.y },
+    { x: o.x + u.x, y: o.y + u.y },
+    { x: o.x + v.x, y: o.y + v.y },
+    { x: o.x + u.x + v.x, y: o.y + u.y + v.y },
+  ].sort((a, b) => b.y - a.y);
+  const [a, b] = pts;
+  return a.x <= b.x ? { left: a, right: b } : { left: b, right: a };
 }
 
 /** A face's parallelogram as a path, in screen px (the context set to `scale`). */
@@ -806,6 +874,10 @@ function CanvasStack({
   paused = false,
   covers = false,
   gap = false,
+  drop = null,
+  liveDrops = false,
+  onLanding,
+  onDropEnd,
   onScroller,
   onScroll,
   onDraw,
@@ -897,16 +969,57 @@ function CanvasStack({
     /** The frame asked for while a cover fades in (when the camera isn't moving anyway), and what it does. */
     fadeRaf: 0,
     fadeFrame: () => {},
+    /** New books falling, or highlighted, and the frame asked for them. */
+    drop: null as DropRun | null,
+    highlight: null as HighlightRun | null,
+    dropRaf: 0,
+    dropFrame: (now: number) => void now,
   });
   /** The real covers' loader, while `covers` is on. */
   const art = useRef<CoverArt | null>(null);
   // What the next frame draws: kept in a ref so scrolling never waits on React.
-  const scene = useRef({ items, shapes, centres, paints, covered, markers, onCentre, twist, gap, settle, describeCentre, measureRaster, onDraw });
+  const scene = useRef({
+    items,
+    shapes,
+    centres,
+    paints,
+    covered,
+    markers,
+    onCentre,
+    twist,
+    gap,
+    settle,
+    describeCentre,
+    measureRaster,
+    onDraw,
+    drop,
+    liveDrops,
+    onLanding,
+    onDropEnd,
+  });
   useLayoutEffect(() => {
-    scene.current = { items, shapes, centres, paints, covered, markers, onCentre, twist, gap, settle, describeCentre, measureRaster, onDraw };
+    scene.current = {
+      items,
+      shapes,
+      centres,
+      paints,
+      covered,
+      markers,
+      onCentre,
+      twist,
+      gap,
+      settle,
+      describeCentre,
+      measureRaster,
+      onDraw,
+      drop,
+      liveDrops,
+      onLanding,
+      onDropEnd,
+    };
   });
   /** This frame's marker labels and month lines (reused every frame). */
-  const placed = useRef({ sprites: [] as PlacedSprite[], lines: [] as number[] });
+  const placed = useRef({ sprites: [] as PlacedSprite[], lines: [] as number[], lineAlpha: [] as number[] });
 
   /** Size the canvases' backing stores for the scroll area at `scale` (no layout reads). */
   const applyScale = useCallback((scale: number) => {
@@ -972,10 +1085,22 @@ function CanvasStack({
         const books = scratch.current;
         books.fill(null);
         const base = centre - FAN_CAP;
+        const dw = c.drop?.world ?? null;
+        /** A book's lift from the drop (in the air, less the pile's push), 0 without a drop. */
+        const fall = (i: number) => (dw ? dropLift(dw, i) : 0);
         const projectAt = (i: number): ProjectedBook => {
           let book = books[i - base];
           if (!book) {
-            book = projectBook(fannedBook(i, items[i].step, shapes[i], centres, s, twist, bookLift(i, s, gapOn)), view);
+            let shape = shapes[i];
+            let lift = bookLift(i, s, gapOn) + fall(i);
+            const sq = dw?.squash.get(i);
+            if (sq) {
+              // Squashed on landing: thinner and a little wider, its bottom where it was.
+              const k = squashScale(sq);
+              shape = { ...shape, thickness: shape.thickness * k.thickness, width: shape.width * k.footprint, depth: shape.depth * k.footprint };
+              lift -= (shapes[i].thickness - shape.thickness) / 2;
+            }
+            book = projectBook(fannedBook(i, items[i].step, shape, centres, s, twist, lift, dw ? dropSpin(dw, i) : 0), view);
             books[i - base] = book;
           }
           return book;
@@ -1000,6 +1125,7 @@ function CanvasStack({
         const marks = placed.current;
         marks.sprites.length = 0;
         marks.lines.length = 0;
+        marks.lineAlpha.length = 0;
         if (markers) {
           // Only markers by books in the window. One that would cover the middle book moves above or below it.
           const middle = faceBox(projectAt(centre).faces);
@@ -1014,22 +1140,29 @@ function CanvasStack({
             }
             return got;
           };
-          const put = (sp: Sprite, x: number, y: number) => {
+          const put = (sp: Sprite, x: number, y: number, alpha: number) => {
             const top = markerTop({ x, y, width: sp.width, height: sp.height }, middle, height, theme.padY);
-            marks.sprites.push({ sprite: sp, x: Math.round(x * scale) / scale, y: Math.round(top * scale) / scale });
+            marks.sprites.push({ sprite: sp, x: Math.round(x * scale) / scale, y: Math.round(top * scale) / scale, alpha });
           };
           for (let k = firstMarkerFrom(markers.months, from); k < markers.months.length && markers.months[k].index < to; k++) {
             const m = markers.months[k];
-            const y = spineLevels(m.index, shapes[m.index], centres, s, twist, originY, lineLift(m.index, s, gapOn)).bottom;
+            // A falling book's markers wait until it lands, then fade in.
+            const alpha = dw ? markerAlpha(dw, m.index) : 1;
+            if (alpha <= 0) continue;
+            const between = m.index > 0 ? (fall(m.index) + fall(m.index - 1)) / 2 : fall(m.index);
+            const y = spineLevels(m.index, shapes[m.index], centres, s, twist, originY, lineLift(m.index, s, gapOn) + between).bottom;
             if (y < 0 || y > height) continue;
             marks.lines.push(y);
+            marks.lineAlpha.push(alpha);
             const key = `m\u0000${m.big ? 1 : 0}\u0000${m.parts.map((p) => p.text).join('')}`;
             const sp = sprite(key, () => renderSprite(monthParts(m.parts, m.big, theme), theme.surface, theme.text, theme.border, theme, scale));
-            put(sp, width - theme.gutter - sp.width, y - theme.padY - sp.height);
+            put(sp, width - theme.gutter - sp.width, y - theme.padY - sp.height, alpha);
           }
           for (let k = firstMarkerFrom(markers.flags, from); k < markers.flags.length && markers.flags[k].index < to; k++) {
             const f = markers.flags[k];
-            const y = spineLevels(f.index, shapes[f.index], centres, s, twist, originY, bookLift(f.index, s, gapOn)).middle;
+            const alpha = dw ? markerAlpha(dw, f.index) : 1;
+            if (alpha <= 0) continue;
+            const y = spineLevels(f.index, shapes[f.index], centres, s, twist, originY, bookLift(f.index, s, gapOn) + fall(f.index)).middle;
             const sp = sprite(`f\u0000${f.text}`, () =>
               renderSprite(
                 [
@@ -1044,41 +1177,93 @@ function CanvasStack({
               ),
             );
             if (y + sp.height / 2 < 0 || y - sp.height / 2 > height) continue;
-            put(sp, theme.gutter, y - sp.height / 2);
+            put(sp, theme.gutter, y - sp.height / 2, alpha);
           }
         }
         const drawSprites = (list: readonly PlacedSprite[]) => {
           if (list.length === 0) return;
           ctx.setTransform(scale, 0, 0, scale, 0, 0);
-          for (const { sprite: sp, x, y } of list) {
+          for (const { sprite: sp, x, y, alpha } of list) {
+            ctx.globalAlpha = alpha;
             ctx.drawImage(sp.canvas, x, y, sp.width, sp.height);
             ops += 1;
           }
+          ctx.globalAlpha = 1;
         };
         // Bottom of the pile first: index order is painter's order (stackProjection's drawOrder).
+        const hl = c.highlight;
+        const pulse = hl ? highlightAlpha(started - hl.from) : 0;
         for (let i = from; i < to; i++) {
+          // A new book not yet let go isn't there yet.
+          if (dw && waiting(dw, i)) continue;
           const book = projectAt(i);
           // Ready each spine as its book comes into the window, even facing away, so a turn of
           // the fan never has many spines to draw in one frame.
           spineLabel(paints[i], kit);
           for (const face of book.faces) drawFace(ctx, face, paints[i], i - s, kit);
           faces += book.faces.length;
+          if (hl && pulse > 0 && i >= hl.start && i < hl.end) {
+            // A new book shown without falling: a calm outline pulse.
+            ctx.setTransform(scale, 0, 0, scale, 0, 0);
+            ctx.globalAlpha = pulse;
+            ctx.strokeStyle = theme.milestone;
+            ctx.lineWidth = theme.borderThick;
+            for (const face of book.faces) {
+              tracePath(ctx, face);
+              ctx.stroke();
+            }
+            ctx.globalAlpha = 1;
+            ops += book.faces.length;
+          }
+        }
+        if (dw && dw.dust.length > 0) {
+          // Dust from the landing books' lower corners: small circles, fading.
+          ctx.setTransform(scale, 0, 0, scale, 0, 0);
+          ctx.fillStyle = theme.pages;
+          const corners = new Map<number, { left: { x: number; y: number }; right: { x: number; y: number } } | null>();
+          for (const d of dw.dust) {
+            if (d.index < from || d.index >= to) continue;
+            let at = corners.get(d.index);
+            if (at === undefined) {
+              const front = projectAt(d.index).faces.find((f) => f.side === 'front');
+              at = front ? lowerCorners(front) : null;
+              corners.set(d.index, at);
+            }
+            if (!at) continue;
+            const corner = d.side < 0 ? at.left : at.right;
+            ctx.globalAlpha = Math.max(0, 1 - d.age / d.life) * 0.8;
+            ctx.beginPath();
+            ctx.arc(corner.x + d.x, corner.y + d.y, d.r, 0, Math.PI * 2);
+            ctx.fill();
+            ops += 1;
+          }
+          ctx.globalAlpha = 1;
         }
         if (marks.lines.length > 0) {
-          // Month lines across the pile, in one dashed stroke.
+          // Month lines across the pile, in one dashed stroke (a landing book's fading in on its own).
           ctx.setTransform(scale, 0, 0, scale, 0, 0);
-          ctx.beginPath();
-          for (const y of marks.lines) {
-            const at = (Math.round(y * scale) + 0.5) / scale;
-            ctx.moveTo(theme.gutter, at);
-            ctx.lineTo(width - theme.gutter, at);
-          }
           ctx.setLineDash([theme.dash, theme.dashGap]);
           ctx.strokeStyle = theme.insetLine;
           ctx.lineWidth = theme.borderThin;
+          const line = (y: number) => {
+            const at = (Math.round(y * scale) + 0.5) / scale;
+            ctx.moveTo(theme.gutter, at);
+            ctx.lineTo(width - theme.gutter, at);
+          };
+          ctx.beginPath();
+          marks.lines.forEach((y, k) => marks.lineAlpha[k] >= 1 && line(y));
           ctx.stroke();
-          ctx.setLineDash([]);
           ops += 1;
+          marks.lines.forEach((y, k) => {
+            if (marks.lineAlpha[k] >= 1) return;
+            ctx.globalAlpha = marks.lineAlpha[k];
+            ctx.beginPath();
+            line(y);
+            ctx.stroke();
+            ops += 1;
+          });
+          ctx.globalAlpha = 1;
+          ctx.setLineDash([]);
         }
         drawSprites(marks.sprites);
         if (centre !== c.centre) {
@@ -1254,7 +1439,9 @@ function CanvasStack({
       if (sizer.current) sizer.current.style.height = `${scrollHeight(count, height)}px`;
       if (first) {
         // Opening: the base book if the pile fits above the eye line, else the newest.
-        cs.target = cs.shown = startPosition(count, cs.k);
+        // A drop starts where the pile would open without its new books.
+        const opening = scene.current.drop;
+        cs.target = cs.shown = opening?.kind === 'fall' ? dropCamera(count - Math.min(count, opening.count), cs.k) : startPosition(count, cs.k);
         ownScroll(cs, el, positionToScroll(cs.target, count));
       }
       draw(true);
@@ -1279,6 +1466,8 @@ function CanvasStack({
       media?.removeEventListener('change', onScale);
       cancelAnimationFrame(camState.raf);
       camState.raf = 0;
+      cancelAnimationFrame(camState.dropRaf);
+      camState.dropRaf = 0;
       window.clearTimeout(camState.settleTimer);
       window.clearTimeout(camState.expectedTimer);
     };
@@ -1339,6 +1528,47 @@ function CanvasStack({
     };
   }, [draw]);
 
+  // The drop's frames: step the physics, follow the landings with the camera, draw; stop when still.
+  useEffect(() => {
+    const c = cam.current;
+    c.dropFrame = (now: number) => {
+      c.dropRaf = 0;
+      const { shapes: sh, items: list, onLanding: landed, onDropEnd: ended } = scene.current;
+      const d = c.drop;
+      if (d) {
+        const dt = d.last ? Math.min(50, now - d.last) : 1000 / 60;
+        d.last = now;
+        const impacts = stepDrop(d.world, dt, (i) => sh[i]?.thickness ?? sh[0]?.thickness ?? 28);
+        let first = false;
+        for (const hit of impacts) {
+          if (!hit.first) continue;
+          first = true;
+          landed?.({ mass: hit.mass, impulse: hit.impulse });
+        }
+        const el = scroller.current;
+        if (first && d.follow && el) {
+          const target = dropCamera(d.base + landedCount(d.world), c.k);
+          if (target !== c.target) {
+            c.target = target;
+            ownScroll(c, el, positionToScroll(target, list.length));
+            run();
+          }
+        }
+        if (!dropActive(d.world)) {
+          c.drop = null;
+          ended?.();
+        }
+      }
+      const h = c.highlight;
+      if (h && now - h.from >= HIGHLIGHT_MS) {
+        c.highlight = null;
+        if (!c.drop) ended?.();
+      }
+      if (!c.raf) draw(true);
+      if (c.drop || c.highlight) c.dropRaf = requestAnimationFrame(c.dropFrame);
+    };
+  }, [draw, run]);
+
   // prefers-reduced-motion: no easing (followed live).
   useEffect(() => {
     const c = cam.current;
@@ -1375,6 +1605,8 @@ function CanvasStack({
       return;
     }
     c.expected = null;
+    // The reader scrolls: the camera is theirs; a drop carries on without moving it.
+    if (c.drop) c.drop.follow = false;
     c.target = scrollToPosition(c.scrollTop, scene.current.items.length);
     c.settling = false;
     window.clearTimeout(c.settleTimer);
@@ -1404,6 +1636,33 @@ function CanvasStack({
     [draw],
   );
 
+  // A drop or highlight asked for (a new `id`): the camera starts where the pile without the new
+  // books would open, and the books fall from there.
+  const dropId = drop?.id ?? null;
+  useEffect(() => {
+    const req = scene.current.drop;
+    if (dropId === null || !req) return;
+    const c = cam.current;
+    const total = scene.current.items.length;
+    const n = Math.min(total, Math.max(0, Math.floor(req.count)));
+    if (n === 0) return;
+    const start = total - n;
+    if (req.kind === 'fall') {
+      jumpTo(positionToScroll(dropCamera(start, c.k), total));
+      c.highlight = null;
+      c.drop = { world: startDrop(start, total), base: start, follow: true, last: 0 };
+    } else {
+      c.drop = null;
+      c.highlight = { start, end: total, from: performance.now() };
+    }
+    cancelAnimationFrame(c.dropRaf);
+    c.dropRaf = requestAnimationFrame(c.dropFrame);
+    return () => {
+      cancelAnimationFrame(c.dropRaf);
+      c.dropRaf = 0;
+    };
+  }, [dropId, jumpTo]);
+
   // New books (or fewer): keep the reader's book in front of them, stay on the base book, or
   // follow the newest book up if that's where they were (stackItems.followPile), without a jump.
   const keys = useRef<string[] | null>(null);
@@ -1421,6 +1680,37 @@ function CanvasStack({
     const el = scroller.current;
     const same = prev.length === next.length && prev.every((key, i) => key === next[i]);
     if (same || !el) {
+      if (!c.raf) draw(true);
+      return;
+    }
+    const grown = next.length > prev.length && prev.every((key, i) => key === next[i]);
+    if (c.drop && !grown) {
+      // The pile changed under a drop: stop it, books where they are.
+      cancelAnimationFrame(c.dropRaf);
+      c.dropRaf = 0;
+      c.drop = null;
+      scene.current.onDropEnd?.();
+    }
+    if (grown && scene.current.liveDrops && atNewest(c.target, prev.length)) {
+      // New books at the top while following the newest: they fall (or are highlighted).
+      if (sizer.current) sizer.current.style.height = `${scrollHeight(next.length, size.current.height)}px`;
+      window.clearTimeout(c.settleTimer);
+      c.settling = false;
+      const start = prev.length;
+      if (c.reduced || next.length - start > MAX_DROP) {
+        const moved = followPile(prev, next, c.target, c.shown);
+        c.target = moved.target;
+        ownScroll(c, el, positionToScroll(moved.target, next.length));
+        c.highlight = { start, end: next.length, from: performance.now() };
+        if (!c.dropRaf) c.dropRaf = requestAnimationFrame(c.dropFrame);
+        run();
+        return;
+      }
+      // The camera stays on the old newest book and follows them up as they land.
+      ownScroll(c, el, positionToScroll(c.target, next.length));
+      if (c.drop) addFallers(c.drop.world, start, next.length);
+      else c.drop = { world: startDrop(start, next.length), base: start, follow: true, last: 0 };
+      if (!c.dropRaf) c.dropRaf = requestAnimationFrame(c.dropFrame);
       if (!c.raf) draw(true);
       return;
     }

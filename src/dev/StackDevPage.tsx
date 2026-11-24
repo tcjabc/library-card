@@ -2,7 +2,11 @@ import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useStat
 import { currentBuildInfo, formatVersionLine } from '../grownups/version';
 import { href } from '../router';
 import { bookRenders } from '../staircase/bookRenders';
-import type { CentreBook, CentreTag, DrawStats, StackBench } from '../staircase/CanvasStack';
+import type { CentreBook, CentreTag, DrawStats, StackBench, StackDrop } from '../staircase/CanvasStack';
+import { thud, vibrationMs } from '../staircase/dropMotion';
+import { playThud, vibrateLanding } from '../staircase/dropSound';
+import { useActiveReader } from '../session/activeReader';
+import { MAX_DROP, pretendAway } from '../staircase/stackSeen';
 import { currentTimeZone } from '../lib/timezone';
 import { stackMarkers } from '../staircase/stackItems';
 import { useStackCovers, writeStackCovers } from '../staircase/coverSetting';
@@ -50,7 +54,9 @@ function describeCentre({ title, avatar, degrees }: CentreBook): CentreTag {
 }
 
 const t = strings.dev;
-const COUNTS = [100, 1000, 3000] as const;
+const COUNTS = [7, 40, 100, 1000, 3000] as const;
+/** "Replay new-book drop": 1 to this many books. */
+const MAX_REPLAY = 50;
 const SEED = 'dev-book-stack';
 /** A scroll counts as going on this long after its last scroll event (ms). */
 const SCROLL_IDLE_MS = 150;
@@ -99,6 +105,18 @@ export default function StackDevPage() {
   }, []);
   const version = useMemo(() => versionLine(), []);
   const benchmark = useStackBenchmark(benchHandle, version, reset);
+  const [drop, setDrop] = useState<StackDrop | null>(null);
+  const { watch } = meter;
+  const replay = useCallback(
+    (count: number) => {
+      const n = Math.min(MAX_REPLAY, Math.max(1, Math.floor(count)));
+      const reduced = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      // Measure the drop's frames like a scroll's.
+      watch(5000);
+      setDrop((d) => ({ id: (d?.id ?? 0) + 1, count: n, kind: reduced || n > MAX_DROP ? 'highlight' : 'fall' }));
+    },
+    [watch],
+  );
 
   // A new pile starts its counts afresh.
   useEffect(() => reset(), [count, mode, twist, settle, raster, covers, gap, reset]);
@@ -133,6 +151,8 @@ export default function StackDevPage() {
             onBench={onBench}
             covers={covers}
             gap={gap}
+            drop={drop}
+            onLanding={landed}
           />
         ) : (
           <BookStack
@@ -175,6 +195,7 @@ export default function StackDevPage() {
           onCovers={writeStackCovers}
           gap={gap}
           onGap={writeStackGap}
+          onReplay={replay}
           readout={meter.readout}
           onReset={reset}
         />
@@ -336,6 +357,12 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
     };
   }, [scroller]);
 
+  /** Count frames and draws for the next `ms` (a replayed drop), as while scrolling. */
+  const watch = useCallback((ms: number) => {
+    const s = live.current;
+    s.scrollingUntil = Math.max(s.scrollingUntil, performance.now() + ms);
+  }, []);
+
   const onScroll = useCallback(() => {
     live.current.scrollingUntil = performance.now() + SCROLL_IDLE_MS;
   }, []);
@@ -380,7 +407,66 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
     s.lastRendersPerSec = null;
   }, []);
 
-  return { readout, onScroll, onDraw, reset };
+  return { readout, onScroll, onDraw, reset, watch };
+}
+
+/** A landing on this page's pile: the same thud and vibration as on the Family Staircase. */
+function landed({ mass, impulse }: { mass: number; impulse: number }): void {
+  playThud(thud(mass, impulse));
+  vibrateLanding(vibrationMs(impulse));
+}
+
+function storage(): Storage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+/** "Replay new-book drop" (this page's pile) and "Pretend I've been away" (the open card's reader, on the Family Staircase). */
+function DropControls({ onReplay }: { onReplay: (count: number) => void }) {
+  const id = useId();
+  const [count, setCount] = useState(3);
+  const [done, setDone] = useState<string | null>(null);
+  const { reader } = useActiveReader();
+  const n = Math.min(MAX_REPLAY, Math.max(1, Math.floor(count) || 1));
+  const away = () => {
+    const store = storage();
+    if (!reader || !store) return;
+    pretendAway(store, reader.id, n);
+    setDone(fmt(t.dropAwayDone, { name: reader.display_name, count: n }));
+  };
+  return (
+    <div className="stack-dev__controls">
+      <p className="small">
+        <strong>{t.dropHeading}</strong> {t.dropIntro}
+      </p>
+      <label className="stack-dev__slider" htmlFor={id}>
+        <span>{t.dropCount}</span>
+        <input
+          id={id}
+          className="input"
+          type="number"
+          inputMode="numeric"
+          min={1}
+          max={MAX_REPLAY}
+          value={count}
+          onChange={(e) => setCount(Number(e.target.value))}
+        />
+      </label>
+      <button type="button" className="chip" onClick={() => onReplay(n)}>
+        {t.dropReplay}
+      </button>
+      <p className="small muted">{t.dropReplayNote}</p>
+      <button type="button" className="chip" disabled={!reader} onClick={away}>
+        {t.dropAway}
+      </button>
+      <p className="small muted" role="status">
+        {done ?? (reader ? t.dropAwayNote : t.dropAwayNoReader)}
+      </p>
+    </div>
+  );
 }
 
 function modeName(mode: StackMode): string {
@@ -535,6 +621,8 @@ interface MeasurePanelProps {
   /** "Gap around the eye-line book": this device's setting, also used by the Family Staircase. */
   gap: boolean;
   onGap: (gap: boolean) => void;
+  /** "Replay new-book drop": the newest books fall onto the pile here again. */
+  onReplay: (count: number) => void;
   readout: Readout;
   onReset: () => void;
 }
@@ -558,6 +646,7 @@ function MeasurePanel({
   onCovers,
   gap,
   onGap,
+  onReplay,
   readout,
   onReset,
 }: MeasurePanelProps) {
@@ -630,6 +719,7 @@ function MeasurePanel({
           </p>
         </div>
       )}
+      {mode === 'canvas' && <DropControls onReplay={onReplay} />}
       <dl className="stack-dev__readout">
         {lines.map(([label, value]) => (
           <div key={label} className="stack-dev__line">

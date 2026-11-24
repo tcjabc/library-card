@@ -5,9 +5,13 @@ import { useToday } from '../../lib/clock';
 import { currentTimeZone, onTimeZoneChange } from '../../lib/timezone';
 import { familyPart } from '../../staircase/bookFamily';
 import { cssLength } from '../../staircase/canvasHelpers';
-import CanvasStack from '../../staircase/CanvasStack';
+import CanvasStack, { type StackDrop } from '../../staircase/CanvasStack';
+import { thud, vibrationMs } from '../../staircase/dropMotion';
+import { playThud, vibrateLanding } from '../../staircase/dropSound';
 import { useStackCovers } from '../../staircase/coverSetting';
 import { useStackGap } from '../../staircase/gapSetting';
+import { useStackSounds, writeStackSounds } from '../../staircase/soundSetting';
+import { SeenTracker, arrival, parseSeen, seenKey, type Arrival, type Seen } from '../../staircase/stackSeen';
 import { isExpanded, sheetBook, sheetHeights, type SheetHeights, type SheetState } from '../../staircase/sheetState';
 import { stackItems, stackListText, stackMarkers, type StackItem } from '../../staircase/stackItems';
 import { BIGGEST_BOOK } from '../../staircase/stackModel';
@@ -25,6 +29,10 @@ import './familyStack.css';
  * and opens into a sheet about it (BookDetailsSheet.tsx): the family's own data first, then the
  * web's details. The sheet lies over the pile, so the pile never changes size.
  *
+ * New books since the reader's last visit on this device (stackSeen.ts) fall onto the pile when
+ * it opens (dropMotion.ts), with a thud and a tiny vibration unless "Stack sounds" is off (the
+ * 🔊 button in the header, or Grown-ups → Settings); with reduced motion they're highlighted.
+ *
  * Counting is the same as the old staircase (#/staircase/old, from developer tools): the read
  * summaries in staircaseOrder. The pile follows new reads as they happen (useDataQuery).
  * Screen readers get the whole pile as a list, newest first. Loaded on its own (App.tsx).
@@ -32,6 +40,36 @@ import './familyStack.css';
 
 const t = strings.staircase;
 const locale = strings.app.locale;
+
+/** The "new books" announcement waits this long after the screen opens, so screen readers hear it (ms). */
+const ANNOUNCE_AFTER_MS = 600;
+
+function storage(): Storage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+/** This reader's stored count on this device (null: their first visit here, or no storage). */
+function readSeen(readerId: string): Seen {
+  try {
+    return parseSeen(storage()?.getItem(seenKey(readerId)) ?? null);
+  } catch {
+    return null;
+  }
+}
+
+function reducedMotion(): boolean {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+/** A landing: its thud and vibration (each checks "Stack sounds" and that the page is visible). */
+function landed({ mass, impulse }: { mass: number; impulse: number }): void {
+  playThud(thud(mass, impulse));
+  vibrateLanding(vibrationMs(impulse));
+}
 
 /** While the half-open sheet follows the pile, a book is looked up once it has been at the eye line this long (ms). */
 const LOOKUP_SETTLE_MS = 350;
@@ -75,6 +113,7 @@ export default function FamilyStack({ reader }: { reader: Reader }) {
   const today = useToday();
   const covers = useStackCovers();
   const gap = useStackGap();
+  const sounds = useStackSounds();
 
   const items = useMemo(
     () =>
@@ -93,6 +132,44 @@ export default function FamilyStack({ reader }: { reader: Reader }) {
   const markers = useMemo(() => stackMarkers(items, zone, { locale, first: t.stackFlagFirst, number: t.stackFlagNumber }), [items, zone]);
   const names = useMemo(() => new Map((data?.readers ?? []).map((r) => [r.id, r.display_name])), [data]);
   const count = items.length;
+
+  // Since the last visit: decided once, when the pile first loads (reading only; the count is
+  // written in effects). Books that fall start the pile where it was without them.
+  const tracker = useMemo(() => new SeenTracker(storage(), reader.id), [reader.id]);
+  const [greeted, setGreeted] = useState<{ arrival: Arrival; drop: StackDrop | null } | null>(null);
+  if (data && !greeted) {
+    const a = arrival(count, readSeen(reader.id), reducedMotion());
+    setGreeted({ arrival: a, drop: a.count > 0 ? { id: 1, count: a.count, kind: a.kind === 'drop' ? 'fall' : 'highlight' } : null });
+  }
+  const total = useRef(count);
+  useLayoutEffect(() => {
+    total.current = count;
+  }, [count]);
+  const [announce, setAnnounce] = useState('');
+  useEffect(() => {
+    if (!greeted) return;
+    // Nothing to drop (first visit, nothing new) or a highlight: the reader has seen the pile now.
+    if (greeted.arrival.kind !== 'drop') tracker.record(total.current);
+    const n = greeted.arrival.count;
+    if (n <= 0) return;
+    const timer = window.setTimeout(() => setAnnounce(n === 1 ? t.stackNewOne : fmt(t.stackNewMany, { count: n.toLocaleString(locale) })), ANNOUNCE_AFTER_MS);
+    return () => window.clearTimeout(timer);
+  }, [greeted, tracker]);
+  // Leaving the screen or hiding the app: the pile as it is now has been seen (so an interrupted
+  // drop doesn't replay everything next time).
+  const loaded = !!data;
+  useEffect(() => {
+    if (!loaded) return;
+    const onHide = () => {
+      if (document.visibilityState === 'hidden') tracker.record(total.current);
+    };
+    document.addEventListener('visibilitychange', onHide);
+    return () => {
+      document.removeEventListener('visibilitychange', onHide);
+      tracker.record(total.current);
+    };
+  }, [loaded, tracker]);
+  const onDropEnd = useCallback(() => tracker.record(total.current), [tracker]);
 
   // The book sheet: collapsed (the bar), half or full. While half open it follows the book at
   // the eye line; full keeps the book it had (the pile is covered and not drawn).
@@ -209,7 +286,20 @@ export default function FamilyStack({ reader }: { reader: Reader }) {
             <span className="family-stack__total">{count === 1 ? t.stackTotalOne : fmt(t.stackTotal, { count: count.toLocaleString(locale) })}</span>
           )}
         </h1>
+        <button
+          type="button"
+          className="btn btn--quiet family-stack__sound"
+          aria-pressed={sounds}
+          aria-label={t.stackSounds}
+          title={sounds ? t.stackSoundsOnHint : t.stackSoundsOffHint}
+          onClick={() => writeStackSounds(!sounds)}
+        >
+          <span aria-hidden="true">{sounds ? '🔊' : '🔇'}</span>
+        </button>
       </header>
+      <p className="visually-hidden" role="status" aria-live="polite">
+        {announce}
+      </p>
 
       {loading || !data ? (
         <p className="muted family-stack__message">{strings.common.loading}</p>
@@ -232,6 +322,10 @@ export default function FamilyStack({ reader }: { reader: Reader }) {
             paused={sheet === 'full'}
             covers={covers}
             gap={gap}
+            drop={greeted?.drop ?? null}
+            liveDrops
+            onLanding={landed}
+            onDropEnd={onDropEnd}
           />
           <div ref={dock} className="family-stack__dock" aria-hidden="true" />
           <BookDetailsSheet

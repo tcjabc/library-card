@@ -288,7 +288,8 @@ export function heightAt(centres: readonly number[], s: number): number {
 /**
  * Book `index` as the camera at `s` sees it: no sideways nudge, turned by its relative yaw, and
  * placed so the height at `s` is the camera's origin (the middle of the screen). `lift` (px, up)
- * moves it up or down the pile: the gap around the eye-line book (eyeGap.bookLift).
+ * moves it up or down the pile: the gap around the eye-line book (eyeGap.bookLift), and a new
+ * book falling (dropMotion.dropLift). `spin` (degrees) turns it further: a falling book's spin-in.
  */
 export function fannedBook(
   index: number,
@@ -298,9 +299,10 @@ export function fannedBook(
   s: number,
   twist: number = TWIST_DEG,
   lift = 0,
+  spin = 0,
 ): PlacedBook {
   const rise = centres[index] - heightAt(centres, s) + lift;
-  return { step, top: -rise - shape.thickness / 2, shape: { ...shape, x: 0, z: 0, yaw: relativeYaw(index, s, twist) } };
+  return { step, top: -rise - shape.thickness / 2, shape: { ...shape, x: 0, z: 0, yaw: relativeYaw(index, s, twist) + spin } };
 }
 
 /** How much a height in the pile, and a step towards the reader, move a point down the screen (px per px). */

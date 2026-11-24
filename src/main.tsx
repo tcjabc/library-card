@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { registerSW } from 'virtual:pwa-register';
 import { App } from './App';
 import { requestPersistentStorage } from './lib/persist';
+import { installStackAudioUnlock } from './staircase/dropSound';
 import { getSyncService, SYNC_ENABLED } from './sync/app';
 import './theme.css';
 import './ui/base.css';
@@ -12,6 +13,8 @@ registerSW({ immediate: true });
 void requestPersistentStorage();
 // Sync runs whenever the app is open (only in builds with the sync adapter and a relay).
 if (SYNC_ENABLED) void getSyncService();
+// The Family Staircase's thud may sound only after a tap: the one that opens it counts (dropSound.ts).
+installStackAudioUnlock();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

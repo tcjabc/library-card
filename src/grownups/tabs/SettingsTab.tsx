@@ -13,6 +13,7 @@ import { deviceTimeZone, isTimeZone, listTimeZones } from '../../lib/timezone';
 import { href, navigate } from '../../router';
 import { clearActiveReader, getActiveReaderId } from '../../session/activeReader';
 import { fmt, strings } from '../../strings';
+import { useStackSounds, writeStackSounds } from '../../staircase/soundSetting';
 import { SYNC_ENABLED } from '../../sync/app';
 import { useSync } from '../../sync/useSync';
 import { ChoiceButton } from '../../ui/ChoiceButton';
@@ -44,6 +45,25 @@ function clearAppStorage(): void {
 }
 
 /** Grown-ups > Settings: household name, backup and restore, reset, developer tools. */
+/** "Family Staircase sounds": the thud (and Android's little buzz) as new books land. This device only. */
+function StackSoundsSection() {
+  const t = strings.grownups.settings;
+  const noteId = useId();
+  const sounds = useStackSounds();
+  return (
+    <section className="stack card">
+      <h2>{t.soundsHeading}</h2>
+      <label className="grownups__check">
+        <input type="checkbox" checked={sounds} aria-describedby={noteId} onChange={() => writeStackSounds(!sounds)} />
+        {t.stackSounds}
+      </label>
+      <p id={noteId} className="small muted">
+        {t.stackSoundsNote}
+      </p>
+    </section>
+  );
+}
+
 export function SettingsTab({ store, household }: TabProps) {
   const toast = useToast();
   const pin = usePinGuard();
@@ -282,6 +302,8 @@ export function SettingsTab({ store, household }: TabProps) {
           </p>
         )}
       </section>
+
+      <StackSoundsSection />
 
       <section className="stack card">
         <h2>{t.resetHeading}</h2>

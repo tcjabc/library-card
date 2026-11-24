@@ -150,16 +150,70 @@ is a November book even though it's still 31 October in UTC, and daylight saving
 The pile follows new reads as they happen (also from another tab or device, through sync):
 
 - On the base book, the camera stays on the base book as the pile grows.
-- If the reader is at the newest book, the camera eases up to the new newest book.
+- If the reader is at the newest book, the new books **fall** onto the pile (below) and the camera follows them
+  up as they land (with reduced motion, or more than 40 at once, they appear with the outline pulse instead).
 - A pile growing taller than K doesn't move the camera (no jump).
 - Anywhere else, the book in front of them stays in front of them; if it has gone (an undo), the nearest older
   book that's still there takes its place.
+
+## New books since your last visit
+
+Each time a reader opens the Family Staircase, the books added since **their** last visit on **this** device fall
+onto the top of the pile, one after another, with weight. Code: `src/staircase/stackSeen.ts` (the rule and the
+count), `src/staircase/dropMotion.ts` (every constant and the physics, pure and unit-tested), `dropSound.ts` (the
+thud), `CanvasStack.tsx` (running and drawing it). Nothing changes in the data, sync or the fan model.
+
+- **The count**: per reader, on this device only, in localStorage `library-card:stack-seen:<readerId>`: the number
+  of stack books (the confirmed household first reads the pile shows) they had seen. Never synced, not in backups,
+  cleared by "Reset this device" with the app's other `library-card:` keys (restoring a backup keeps it). It is
+  written when the drop ends, when the reader leaves the screen and when the page is hidden (so an interrupted drop
+  doesn't replay everything), always as the pile is then.
+- **The rule**: New = the pile now minus the count. First visit for that reader on this device (no count): nothing
+  falls, the count is recorded. New <= 0 (or the pile shrank): nothing falls. Up to 40: the newest New books (the
+  pile's own order: first read, reader, ISBN) fall. More than 40: they show in place with the outline pulse. Pending
+  reads don't count until confirmed; a backdated read arriving by sync may not be among the newest (accepted).
+- **The drop** (the approved mock-up's defaults): weight 5, so gravity 700 + 300 × 5 = 2,200 units/s² (the 28-unit
+  book is the unit); each book falls from 420 above its place (0.62 s, landing at about 1,360 units/s), turned in by
+  up to 60° × height / 420, unwinding as it falls; the first is let go after 120 ms, then one every 260 ms. With
+  more than 8, all but the last 8 go in a 50 ms burst first; the plan is squeezed so it all lands within about 4 s.
+  A later book is never let go before the one under it, and never passes through it (tested at every step).
+- **Landing**: impulse = min(1.4, speed / 1,400) × mass, mass = clamp(thickness / 28, 0.45, 2.5) × weight / 5. A book
+  bounces at 0.15 × its impact speed if that is over 130 (once, off a settled surface), then stops. The landing kicks
+  the pile's spring (k 300, damping 18) down by 14 × 17 × impulse: books above the landing book move with it, books
+  below by exp(-depth / 3.5); it settles to exactly zero. The book squashes (thickness × (1 − 0.45 × sq), footprint
+  × (1 + 0.1 × sq), sq = min(1, impulse) × 0.5, fading by exp(-12 t)); 5–10 specks of dust puff from its lower
+  corners for 0.5–0.85 s. A falling book's flag and month line wait until it lands, then fade in.
+- **Sound** (Web Audio, synthesised, no files): a sine from clamp(190 − 11 × weight − 14 × mass, 60, 200) Hz down to
+  40 Hz over 0.2 s (6 ms attack, silent by 0.3 s), plus a 90 ms noise burst through a 500 Hz low-pass at 0.6 × its
+  gain; gain = min(1, impulse) × 0.6. One per landing (not for the bounce). The audio context is created or resumed
+  by a tap: the tap that opens the staircase counts; without one (a reload straight onto it) the thud is skipped
+  silently. **Vibration**: 15–25 ms by impulse where the device has it (Android; iOS has none), once the page has
+  been tapped (Chrome refuses it before). Both only while the page is visible.
+- **The camera**: it starts where the pile without the new books would open, and as each book lands it goes where a
+  pile of the landed books would open: on the base book while the pile fits (the books fall onto the top, above the
+  eye line), on the highest landed book once it's tall (easing up with the pile), moving from the base to the newest
+  (eased, no jump) if the pile grows past K during the drop. The gap (above) applies to falling books like any other.
+  Scrolling takes the camera over; the drop carries on. Nothing blocks Back or the bar.
+- **Live updates**: books arriving while the reader is at the newest book fall the same way (added to a drop under
+  way); anywhere else they simply appear (as before).
+- **No idle loop**: the drop's frames run only while a book waits or falls, or the spring, a squash or dust moves;
+  covers keep loading as usual.
+- **Settings**: "Stack sounds", on by default, per device (localStorage `library-card:stack-sounds`): Grown-ups →
+  Settings → Sounds, and the 🔊/🔇 button (56 px) at the end of the header row, beside Back and the title (it fits
+  there on a 360 px wide phone). Muted, the books still fall, silently, without vibrating.
+- **Reduced motion**: nothing falls, no spring, dust or sound; the new books appear with one calm outline pulse
+  (600 ms) and the count is recorded.
+- **Developer tools → Book stack**: "Replay new-book drop" (1–50) replays the newest books falling on that page's
+  pile (now with 7- and 40-book piles too); "Pretend I've been away" sets the open card's reader's count back by
+  that many, so their next visit to the Family Staircase drops them.
 
 ## Accessibility
 
 - Screen readers get a hidden list of every book, newest first: "Step N, title, read by reader, date".
 - Arrow Up and Down step one book (with the same ease); the pile shows a focus ring when focused from the keyboard.
-- With reduced motion, the camera moves without easing.
+- With reduced motion, the camera moves without easing, and new books appear with an outline pulse instead of
+  falling (no spring, dust or sound).
+- A polite live region says "3 new books added since your last visit" when the screen opens with new books.
 - The bar under the pile is a button that opens the book sheet (below); the sheet's panel is a dialog while open.
 
 ## The book sheet
