@@ -1,12 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { assignReaderColors } from '../../journeys/staircase';
-import { stepTarget } from '../camera';
+import {
+  clampPosition,
+  pileFits,
+  positionToScroll,
+  scrollBooks,
+  scrollHeight,
+  scrollToPosition,
+  settleTarget,
+  stepTarget,
+} from '../camera';
 import {
   READER_COLOURS,
   atNewest,
   bigYear,
   firstMarkerFrom,
   flagIndexes,
+  followResting,
   followUpdate,
   isStackFlag,
   markerTop,
@@ -21,7 +31,8 @@ import {
   type StackItem,
 } from '../stackItems';
 import { FAKE_DATES_FROM, FAKE_DATES_YEARS, FAKE_READERS, bookShape, fakeFirstReadAt, fakeStackItems, generateFakeStack } from '../stackModel';
-import { FAN_CAMERA, TWIST_DEG, fanOriginY, fannedBook, heightAt, pileCentres, projectBook, spineLevels } from '../stackProjection';
+import { FAN_CAMERA, ELEVATION_DEG, TWIST_DEG, eyeLineBooks, fannedBook, pileCentres, projectBook, projectPoint, spineLevels } from '../stackProjection';
+import { BOOK_DEPTHS, BOOK_THICKNESSES, BOOK_WIDTHS } from '../stackModel';
 
 // The Family Staircase's pile on real reads (src/staircase/stackItems.ts) and where its markers sit.
 
@@ -220,25 +231,104 @@ describe('where markers sit', () => {
     expect(level.bottom).toBeLessThan(below.origin.y + below.v.y);
   });
 
-  it('keeps a long pile in the middle of the view and rests a short one near the bottom', () => {
-    const h = 600;
-    expect(fanOriginY(h, centres, 25, 132, 24)).toBe(h / 2);
-    const one = pileCentres([34]);
-    const origin = fanOriginY(h, one, 0, 132, 24);
-    expect(origin).toBeGreaterThan(h / 2);
-    // The one book's front edge ends close above the floor gap.
-    const bottom = spineLevels(0, { thickness: 34, depth: 132 }, one, 0, TWIST_DEG, origin).bottom;
-    expect(bottom).toBeLessThanOrEqual(h - 24 + 0.001);
-    expect(bottom).toBeGreaterThan(h - 24 - 10);
-    // Moving down a pile, the origin lowers smoothly (no jump) as the bottom comes into view.
-    let previous = fanOriginY(h, centres, 29, 132, 24);
-    for (let s = 29; s >= 0; s -= 0.25) {
-      const now = fanOriginY(h, centres, s, 132, 24);
-      expect(now).toBeGreaterThanOrEqual(previous - 1e-9);
-      expect(now - previous).toBeLessThan(10);
-      previous = now;
+});
+
+describe('the resting rule', () => {
+  const biggest = { thickness: Math.max(...BOOK_THICKNESSES), width: Math.max(...BOOK_WIDTHS), depth: Math.max(...BOOK_DEPTHS) };
+  const GAP = 24;
+  // A phone's stack area (412 × 915 less the header and the bar).
+  const H = 760;
+  const K = eyeLineBooks(H, biggest, GAP);
+
+  it('works out K, the books that fit above the eye line, from the view height and the book pitch', () => {
+    const pitch = Math.cos((ELEVATION_DEG * Math.PI) / 180) * biggest.thickness;
+    expect(K).toBeGreaterThan(3);
+    expect(K).toBeLessThan(H / 2 / pitch);
+    // Taller views fit more books, never fewer; a tiny view fits none.
+    let previous = 0;
+    for (let h = 0; h <= 2000; h += 20) {
+      const k = eyeLineBooks(h, biggest, GAP);
+      expect(k).toBeGreaterThanOrEqual(previous);
+      previous = k;
     }
-    expect(heightAt(centres, 0)).toBeGreaterThan(0);
+    expect(eyeLineBooks(100, biggest, GAP)).toBe(0);
+    expect(eyeLineBooks(H, { ...biggest, thickness: 0 }, GAP)).toBe(0);
+  });
+
+  it('a pile of K + 1 of the biggest books, turned any way, stays in view above the eye line', () => {
+    const shapes = Array.from({ length: K + 1 }, () => ({ ...biggest, yaw: 0, x: 0, z: 0 }));
+    const centres = pileCentres(shapes.map((sh) => sh.thickness));
+    for (const twist of [0, TWIST_DEG, 15]) {
+      const top = projectBook(fannedBook(K, K + 1, shapes[K], centres, 0, twist), { camera: FAN_CAMERA, originX: 200, originY: H / 2 });
+      for (const f of top.faces) for (const y of [f.origin.y, f.origin.y + f.u.y, f.origin.y + f.v.y, f.origin.y + f.u.y + f.v.y]) expect(y).toBeGreaterThanOrEqual(GAP - 0.001);
+    }
+    // With the camera on the base book (position 0), its middle is at the camera's origin: the eye line.
+    const base = fannedBook(0, 1, shapes[0], centres, 0, TWIST_DEG);
+    const middle = projectPoint({ x: 0, y: base.top + shapes[0].thickness / 2, z: 0 }, { camera: FAN_CAMERA, originX: 200, originY: H / 2 });
+    expect(middle.y).toBeCloseTo(H / 2, 6);
+  });
+
+  it('fits a pile of N books when N - 1 <= K: N = 0, 1, 2, 7, K + 1 fit; K + 2, 40 and 1,000 don’t', () => {
+    for (const n of [0, 1, 2, Math.min(7, K + 1), K + 1]) expect(pileFits(n, K)).toBe(true);
+    for (const n of [K + 2, 40, 1000]) expect(pileFits(n, K)).toBe(false);
+    expect(pileFits(1, 0)).toBe(true);
+    expect(pileFits(2, 0)).toBe(false);
+  });
+
+  it('a pile that fits has the camera on its base book and nothing to scroll', () => {
+    for (const n of [1, 2, 7, K + 1]) {
+      const books = scrollBooks(n, pileFits(n, K));
+      expect(books).toBe(1);
+      expect(scrollHeight(books, H)).toBe(H); // no scrolling
+      for (const top of [0, 50, 5000]) expect(scrollToPosition(top, books)).toBe(0);
+      expect(positionToScroll(0, books)).toBe(0);
+      expect(settleTarget(scrollToPosition(120, books), books)).toBe(0);
+      expect(stepTarget(0, 1, books)).toBe(0); // arrow keys stay on it
+    }
+    expect(scrollBooks(0, true)).toBe(0);
+  });
+
+  it('a taller pile opens on the newest book and scrolls all the way down to the base book', () => {
+    for (const n of [K + 2, 40, 1000]) {
+      const books = scrollBooks(n, pileFits(n, K));
+      expect(books).toBe(n);
+      expect(scrollToPosition(0, books)).toBe(n - 1);
+      const bottom = scrollHeight(books, H) - H;
+      expect(scrollToPosition(bottom, books)).toBe(0);
+      expect(clampPosition(scrollToPosition(bottom + 500, books), n)).toBe(0);
+    }
+  });
+
+  it('turning the screen works the rule out again', () => {
+    const tall = eyeLineBooks(1200, biggest, GAP);
+    const short = eyeLineBooks(500, biggest, GAP);
+    expect(tall).toBeGreaterThan(short);
+    const n = short + 2;
+    expect(pileFits(n, tall)).toBe(true); // portrait: fits, rests on its base book
+    expect(pileFits(n, short)).toBe(false); // landscape: scrolls
+  });
+});
+
+describe('live updates with the resting rule', () => {
+  const keys = (n: number) => Array.from({ length: n }, (_, i) => `k${i}`);
+
+  it('a pile that fits keeps the camera on its base book as it grows', () => {
+    expect(followResting(keys(3), keys(4), 0, 0, true, true)).toEqual({ target: 0, shown: 0 });
+  });
+
+  it('when a new book makes it stop fitting, the camera eases from the base book up to the newest', () => {
+    expect(followResting(keys(5), keys(6), 0, 0, true, false)).toEqual({ target: 5, shown: 0 });
+  });
+
+  it('a taller pile follows the normal rules: newest if at the newest, else the reader’s book stays', () => {
+    expect(followResting(keys(20), keys(21), 19, 19, false, false)).toEqual({ target: 20, shown: 19 });
+    expect(followResting(keys(20), keys(21), 7, 7, false, false)).toEqual({ target: 7, shown: 7 });
+  });
+
+  it('when books go and the pile fits again, it goes back to its base book', () => {
+    const moved = followResting(keys(20), keys(5), 4, 4, false, true);
+    expect(moved.target).toBe(0);
+    expect(followResting(keys(1), [], 0, 0, true, true)).toEqual({ target: 0, shown: 0 });
   });
 });
 
@@ -260,6 +350,11 @@ describe('markerTop', () => {
   it('uses the side that fits in the view', () => {
     expect(markerTop(label(12, 470), middle, 520, 4)).toBe(400 - 4 - 30); // no room below
     expect(markerTop(label(12, 20), { ...middle, top: 10 }, 800, 4)).toBe(500 + 4); // no room above
+  });
+
+  it('never leaves a label off the view, even when neither side has room', () => {
+    expect(markerTop(label(12, 450), { ...middle, top: 10, bottom: 790 }, 800, 4)).toBe(0);
+    expect(markerTop(label(12, 450), { ...middle, top: 10, bottom: 790 }, 800, 4)).toBeGreaterThanOrEqual(0);
   });
 });
 

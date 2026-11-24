@@ -306,14 +306,17 @@ const FAN_RISE = Math.cos(ELEVATION_DEG * RAD);
 const FAN_DROP = Math.sin(ELEVATION_DEG * RAD);
 
 /**
- * Where the camera's origin sits on screen (y, px). Normally the middle of the view; but when
- * the rest of the pile under the camera is shorter than half the view (a small pile, or the
- * bottom of a big one) the pile is lowered so its bottom rests `floorGap` above the view's
- * bottom, rather than floating with empty space under it. `depth` is the deepest book (px).
+ * The resting rule's K: how many books fit between the eye line (the middle of the view, where
+ * the base book's middle sits) and the top of the view, with `gap` (px) to spare. Worked out
+ * from the thickest and largest book (`book`), so a pile of K + 1 books always fits whatever
+ * its books' sizes and turns.
  */
-export function fanOriginY(viewHeight: number, centres: readonly number[], s: number, depth: number, floorGap: number): number {
-  const below = FAN_RISE * heightAt(centres, s) + (FAN_DROP * Math.max(0, depth)) / 2;
-  return Math.max(viewHeight / 2, viewHeight - Math.max(0, floorGap) - below);
+export function eyeLineBooks(viewHeight: number, book: { thickness: number; width: number; depth: number }, gap: number): number {
+  const pitch = FAN_RISE * Math.max(0, book.thickness);
+  if (!(pitch > 0)) return 0;
+  // The top book's top half, and how far a turned cover can reach up behind its spine.
+  const top = pitch / 2 + (FAN_DROP * Math.hypot(book.width, book.depth)) / 2 + Math.max(0, gap);
+  return Math.max(0, Math.floor((viewHeight / 2 - top) / pitch));
 }
 
 /**

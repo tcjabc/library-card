@@ -22,6 +22,18 @@ Developer tools, until it's retired.
   `--reader-1` … `--reader-8`, assigned as on the old staircase). A missing title shows "A book"; covers aren't used.
 - Counting elsewhere (milestones, the hub's total, journeys) is unchanged: no data, DataStore or sync changes.
 
+## Where the pile sits
+
+The book at the **eye line** (the middle of the pile's area) is the one being looked at; the bar under the pile
+names it.
+
+- **K** is how many books fit between the eye line and the top of the area, worked out from the area's height and
+  the pitch of the thickest book (so any K + 1 books fit, whatever their sizes and turns).
+- **A pile that fits (N - 1 <= K)** rests with its base book (step 1) at the eye line and doesn't scroll: the pile
+  rises above it and the lower half is plain background.
+- **A taller pile** opens on the newest book; scrolling down all the way brings the base book to the eye line.
+- Resizing or turning the screen works K out again (a pile that fits in portrait may scroll in landscape).
+
 ## Markers
 
 - **Month lines**: a thin dashed line under the first book of each calendar month, with a label at the right
@@ -31,7 +43,8 @@ Developer tools, until it's retired.
   (200, 300, …). These are separate from the old staircase's milestones (10, 25, 50, 100, every 100), which are
   unchanged.
 - Only markers next to books in the draw window are drawn, and their labels are drawn once and reused. A label
-  that would cover the book in the middle of the view (the one being looked at) moves just above or below it.
+  that would cover the book in the middle of the view (the one being looked at) moves just above or below it,
+  always inside the pile's area (never under the bar).
 
 ## Time zone
 
@@ -44,6 +57,8 @@ is a November book even though it's still 31 October in UTC, and daylight saving
 
 The pile follows new reads as they happen (also from another tab or device, through sync):
 
+- A pile that fits stays on its base book as it grows. When a new book makes it stop fitting, the camera eases
+  from the base book up to the new newest book.
 - If the reader is at the newest book, the camera eases up to the new newest book.
 - Anywhere else, the book in front of them stays in front of them; if it has gone (an undo), the nearest older
   book that's still there takes its place.

@@ -70,3 +70,22 @@ export function settleTarget(s: number, count: number): number {
 export function stepTarget(target: number, by: number, count: number): number {
   return settleTarget(Math.round(clampPosition(target, count)) + Math.sign(by), count);
 }
+
+/**
+ * The resting rule: a pile of `count` books fits when all of it is in view above the eye line
+ * with its base book there (count - 1 <= k, k from stackProjection.eyeLineBooks). Then the camera
+ * stays on the base book and there's nothing to scroll; otherwise the pile scrolls from the
+ * newest book (scroll offset 0) down to the base book at the eye line.
+ */
+export function pileFits(count: number, k: number): boolean {
+  return Math.floor(count) - 1 <= Math.max(0, Math.floor(k));
+}
+
+/**
+ * How many books the scroll offset spans: all of them, or one when the pile fits (so every
+ * scroll mapping above gives the base book, position 0, and the scroll area doesn't scroll).
+ */
+export function scrollBooks(count: number, fits: boolean): number {
+  const n = Math.max(0, Math.floor(count));
+  return fits ? Math.min(1, n) : n;
+}

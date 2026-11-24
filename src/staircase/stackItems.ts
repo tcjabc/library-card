@@ -233,9 +233,11 @@ export function markerTop(
   const fitsAbove = above >= 0;
   const fitsBelow = below + label.height <= viewHeight;
   const nearerAbove = label.y + label.height / 2 <= (middle.top + middle.bottom) / 2;
+  const inView = (top: number) => Math.min(Math.max(0, viewHeight - label.height), Math.max(0, top));
   if (fitsAbove && fitsBelow) return nearerAbove ? above : below;
   if (fitsBelow) return below;
-  return above;
+  // Neither side has room: as near above it as the view allows, never off the view.
+  return inView(above);
 }
 
 /** The first of `markers` (sorted by index) at or after `index`: drawing starts there and stops at the window's end. */
@@ -292,6 +294,27 @@ export function followUpdate(
   const nextShown = carry(shown);
   if (atNewest(target, prevKeys.length)) return { target: max, shown: nextShown };
   return { target: carry(target), shown: nextShown };
+}
+
+/**
+ * followUpdate with the resting rule (camera.pileFits): a pile that fits (`fitsNow`) keeps the
+ * camera on its base book (position 0), growing upwards. When a new book makes it stop fitting,
+ * the reader counts as at the newest book (they could see the whole pile), so the camera eases
+ * from the base book up to the newest. A pile that didn't fit and still doesn't follows
+ * followUpdate. Positions are book indexes, oldest first.
+ */
+export function followResting(
+  prevKeys: readonly string[],
+  nextKeys: readonly string[],
+  target: number,
+  shown: number,
+  fitsBefore: boolean,
+  fitsNow: boolean,
+): { target: number; shown: number } {
+  if (nextKeys.length === 0) return { target: 0, shown: 0 };
+  if (fitsNow) return { target: 0, shown: fitsBefore ? 0 : followUpdate(prevKeys, nextKeys, target, shown).shown };
+  if (fitsBefore) return followUpdate(prevKeys, nextKeys, prevKeys.length - 1, 0);
+  return followUpdate(prevKeys, nextKeys, target, shown);
 }
 
 // ---- The screen reader list ----
