@@ -198,6 +198,8 @@ interface Readout {
   breakdown: { labelMs: number; booksMs: number; overlayMs: number; cameraMs: number; labels: number } | null;
   /** Label cache rebuilds this visit (the latest frame's count). */
   rebuilds: number;
+  /** Covers on: the cover pictures kept and their memory (bytes), at the latest frame. */
+  coverPictures: { pictures: number; bytes: number } | null;
   dropped: number;
   /** null where the browser can't report long tasks. */
   longTasks: number | null;
@@ -212,7 +214,7 @@ function supportsLongTasks(): boolean {
 }
 
 function emptyReadout(): Readout {
-  return { fps: null, renders: null, draw: null, faces: null, ops: null, canvas: null, raster: null, breakdown: null, rebuilds: 0, dropped: 0, longTasks: supportsLongTasks() ? 0 : null, longTaskMs: 0, nodes: 0, viewport: '', dpr: 1 };
+  return { fps: null, renders: null, draw: null, faces: null, ops: null, canvas: null, raster: null, breakdown: null, rebuilds: 0, coverPictures: null, dropped: 0, longTasks: supportsLongTasks() ? 0 : null, longTaskMs: 0, nodes: 0, viewport: '', dpr: 1 };
 }
 
 /** Times every frame while the pile is scrolling, counts late frames and long tasks. */
@@ -225,6 +227,7 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
     flushes: [] as DrawSample[],
     canvas: null as Readout['canvas'],
     rebuilds: 0,
+    coverPictures: null as Readout['coverPictures'],
     lastBreakdown: null as Readout['breakdown'],
     last: 0,
     /** bookRenders() at the last frame. */
@@ -310,6 +313,7 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
         raster: s.lastRaster,
         breakdown: s.lastBreakdown,
         rebuilds: s.rebuilds,
+        coverPictures: s.coverPictures,
         dropped: s.dropped,
         longTasks: longTasks ? s.longTasks : null,
         longTaskMs: Math.round(s.longTaskMs),
@@ -336,6 +340,7 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
     const now = performance.now();
     s.canvas = { width: stats.width, height: stats.height, scale: stats.scale };
     s.rebuilds = stats.rebuilds;
+    s.coverPictures = stats.covers ?? null;
     if (stats.raster !== undefined) s.flushes.push({ at: now, ms: stats.raster });
     if (now <= s.scrollingUntil + FRAME_MS) {
       s.draws.push({
@@ -415,6 +420,17 @@ function readoutLines(readout: Readout, count: number, mode: StackMode, twist: n
     ],
     [t.measureLabels, !canvas ? only : readout.breakdown === null ? t.measureFpsNone : readout.breakdown.labels.toFixed(2)],
     [t.measureRebuilds, canvas ? String(readout.rebuilds) : only],
+    [
+      t.measureCoverPictures,
+      !canvas
+        ? only
+        : readout.coverPictures === null
+          ? t.measureFpsNone
+          : fmt(t.measureCoverPicturesValue, {
+              count: readout.coverPictures.pictures,
+              size: (readout.coverPictures.bytes / (1024 * 1024)).toFixed(2),
+            }),
+    ],
     [t.measureFaces, canvas ? perFrame(readout.faces) : only],
     [t.measureOps, canvas ? perFrame(readout.ops) : only],
     [

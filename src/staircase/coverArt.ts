@@ -1,4 +1,3 @@
-import { LruCache } from './canvasHelpers';
 import {
   COLOUR_SAMPLE_PX,
   COLOURS_KEY,
@@ -18,31 +17,35 @@ import {
   type BookColours,
   type StoredColours,
 } from './coverColour';
+import { evictions, fadeProgress, fadeStart, sliceHasRoom, worthKeeping } from './coverPlan';
 
 /**
  * Loads the Family Staircase's real covers, away from the draw loop (CanvasStack asks for the
- * books near the camera; this fetches, decodes and measures them in idle time, then asks for a
- * redraw). Two things per cover:
+ * books near the camera in coverPlan.coverJobs' order; this fetches and decodes them, measures
+ * them in idle time, then asks for a redraw). Two things per cover:
  *
  * - its colour, for the spine: read from a 16 × 16 copy, kept for every cover in the device's
  *   colour cache (localStorage "library-card:cover-colours": never synced or backed up, cleared
  *   by "Reset this device"), so the next visit has it at once;
- * - a small picture (about 128 px on its longest side) for the books close enough to show their
- *   top face, at most BITMAP_CACHE of them, released when their books scroll far away.
+ * - a small picture (about 128 px on its longest side) for the top faces, about PICTURE_CAP of
+ *   them, released only beyond KEEP_DISTANCE from the camera once over the cap (coverPlan.evictions).
  *
  * Pixels only ever come through CORS (coverColour.pixelSource) or the app's own photos (blob:
  * URLs), so neither the small canvases nor the pile's canvas is ever tainted. A cover that fails
- * is tried again later, a few times a visit at most (coverColour.afterFailure).
+ * is tried again later, a few times a visit at most (coverColour.afterFailure). A cover arriving
+ * for a book on screen fades in (coverPlan.fadeStart); the pile draws the fade.
  */
 
-/** Pictures kept decoded. */
-export const BITMAP_CACHE = 24;
 /** Covers loading at once. */
 const CONCURRENT = 2;
+/** Covers measured (drawn small, colour read) in one idle slice at most. */
+const MEASURES_PER_SLICE = 2;
+/** Stored colours turned into spine colours in one idle slice at most (cheap: arithmetic). */
+const TINTS_PER_SLICE = 40;
+/** Without requestIdleCallback (Safari): a slice just after a frame, of at most this long (ms). */
+const FALLBACK_SLICE_MS = 6;
 /** The colour cache is written this long after the last new colour (ms). */
 const SAVE_AFTER_MS = 1000;
-/** Pictures of books further than this from the camera (books) are released. */
-export const RELEASE_DISTANCE = 12;
 
 export interface CoverPicture {
   image: CanvasImageSource;
@@ -50,13 +53,21 @@ export interface CoverPicture {
   height: number;
 }
 
-/** A book the pile would like covered: `picture` when its top face is close enough to show it. */
+/** A book the pile would like covered: `picture` when its top face may show it soon. */
 export interface CoverWish {
   url: string;
   isbn: string;
   picture: boolean;
-  /** Books from the camera (nearest first). */
-  distance: number;
+}
+
+/** What the pile asks for after a frame. */
+export interface CoverAsk {
+  /** Most wanted first (coverPlan.coverJobs). */
+  wishes: readonly CoverWish[];
+  /** The covers of the books drawn now (never released; a cover arriving for one fades in). */
+  drawn: ReadonlySet<string>;
+  /** A cover's nearest book's distance from the camera (books), Infinity if it's not in the pile. */
+  distanceOf: (url: string) => number;
 }
 
 // The device's colour cache, read once per page and shared by every pile.
@@ -106,8 +117,15 @@ async function sha256(blob: Blob): Promise<string> {
   return Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** A blob as something drawable, by createImageBitmap or (older browsers) an <img> of its own blob: URL. */
-async function decode(blob: Blob): Promise<{ source: CanvasImageSource; width: number; height: number; done: () => void }> {
+interface Decoded {
+  source: CanvasImageSource;
+  width: number;
+  height: number;
+  done: () => void;
+}
+
+/** A blob as something drawable, by createImageBitmap (decoded off the main thread) or an <img> of its own blob: URL. */
+async function decode(blob: Blob): Promise<Decoded> {
   if (typeof createImageBitmap === 'function') {
     const bitmap = await createImageBitmap(blob);
     return { source: bitmap, width: bitmap.width, height: bitmap.height, done: () => bitmap.close() };
@@ -130,34 +148,85 @@ class HttpError extends Error {
   }
 }
 
-const idle = (fn: () => void): void => {
-  const ric = (window as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback;
-  if (ric) ric(fn, { timeout: 300 });
-  else window.setTimeout(fn, 30);
-};
+type Slice = (timeRemaining: () => number) => void;
+type IdleCallback = (cb: (deadline: { timeRemaining: () => number }) => void, opts?: { timeout: number }) => number;
+
+/** Run `fn` in idle time: requestIdleCallback, or (Safari) a short slice just after the next frame. */
+function idle(fn: Slice): void {
+  const ric = (window as { requestIdleCallback?: IdleCallback }).requestIdleCallback;
+  if (ric) {
+    ric((deadline) => fn(() => deadline.timeRemaining()), { timeout: 300 });
+    return;
+  }
+  const later = () =>
+    window.setTimeout(() => {
+      const started = performance.now();
+      fn(() => FALLBACK_SLICE_MS - (performance.now() - started));
+    }, 0);
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(later);
+  else later();
+}
+
+/** A cover fetched and decoded, waiting for an idle slice to be measured. */
+interface Measure {
+  wish: CoverWish;
+  key: string;
+  decoded: Decoded;
+}
+
+interface Kept {
+  picture: CoverPicture;
+  used: number;
+}
+
+/** When a cover's colour and picture started fading in (performance.now()). */
+interface Fade {
+  colour?: number;
+  picture?: number;
+}
+
+export interface CoverFade {
+  colour: number;
+  picture: number;
+}
+
+const FADED: CoverFade = { colour: 1, picture: 1 };
 
 export class CoverArt {
   /** Cover URL -> colour cache key (a photo's needs its bytes hashed first). */
   private readonly keys = new Map<string, string | null>();
   /** Colour cache key -> spine colours for this ink (null: no usable colour). */
   private readonly tints = new Map<string, BookColours | null>();
-  private readonly pictures = new LruCache<string, CoverPicture>(BITMAP_CACHE, release);
+  private readonly pictures = new Map<string, Kept>();
   private readonly attempts = new Map<string, Attempts>();
   private readonly loading = new Set<string>();
-  private queue: CoverWish[] = [];
-  private keep = new Set<string>();
+  /** Covers fetched and decoded, waiting to be measured (not fetched again meanwhile). */
+  private readonly arrived = new Set<string>();
+  private readonly fades = new Map<string, Fade>();
+  private measures: Measure[] = [];
+  private queue: readonly CoverWish[] = [];
+  /** Where the next look for work in `queue` starts (everything before it is taken or not needed now). */
+  private cursor = 0;
+  private tintCursor = 0;
+  private drawn: ReadonlySet<string> = new Set();
+  private distanceOf: (url: string) => number = () => Infinity;
+  private used = 0;
   private pumping = false;
   private changed = false;
   private disposed = false;
   private readonly ink: string;
   private readonly onChange: () => void;
+  private readonly reduced: () => boolean;
+  private readonly fadeMs: number;
 
-  constructor(options: { ink: string; onChange: () => void }) {
+  constructor(options: { ink: string; onChange: () => void; reduced?: () => boolean; fadeMs?: number }) {
     this.ink = options.ink;
     this.onChange = options.onChange;
+    this.reduced = options.reduced ?? (() => false);
+    this.fadeMs = options.fadeMs ?? 0;
   }
 
-  /** The spine colours for a cover, if known (no work here: a lookup). */
+  /** The spine colours for a cover, if known (a lookup, or a little arithmetic once). */
   colour(url: string | null): BookColours | null {
     if (!url) return null;
     const key = this.keys.get(url) ?? (isPhotoUrl(url) ? null : coverKey(url));
@@ -172,56 +241,121 @@ export class CoverArt {
     return tint;
   }
 
-  /** The cover's small picture, if decoded (no work here: a lookup). */
+  /** The cover's small picture, if decoded (a lookup). */
   picture(url: string | null): CoverPicture | null {
-    return url ? (this.pictures.get(url) ?? null) : null;
+    if (!url) return null;
+    const kept = this.pictures.get(url);
+    if (!kept) return null;
+    kept.used = ++this.used;
+    return kept.picture;
+  }
+
+  /** How far the cover's colour and picture have faded in (0–1 each; 1 when there's no fade). */
+  fade(url: string | null, now: number): CoverFade {
+    const f = url ? this.fades.get(url) : undefined;
+    if (!url || !f) return FADED;
+    const reduced = this.reduced();
+    const colour = fadeProgress(f.colour, now, this.fadeMs, reduced);
+    const picture = fadeProgress(f.picture, now, this.fadeMs, reduced);
+    if (colour >= 1 && picture >= 1) {
+      this.fades.delete(url);
+      return FADED;
+    }
+    return { colour, picture };
+  }
+
+  /** Pictures kept and their memory (bytes, 4 a pixel), for the developer tools. */
+  stats(): { pictures: number; bytes: number } {
+    let bytes = 0;
+    for (const { picture } of this.pictures.values()) bytes += picture.width * picture.height * 4;
+    return { pictures: this.pictures.size, bytes };
   }
 
   /**
-   * The books near the camera, nearest first. Replaces what was asked before; pictures of books
-   * no longer near are released. Loading happens later, in idle time.
+   * The books near the camera, most wanted first. Replaces what was asked before; pictures are
+   * released by coverPlan.evictions. Loading and measuring happen later, in idle time.
    */
-  want(wishes: readonly CoverWish[]): void {
+  want(ask: CoverAsk): void {
     if (this.disposed) return;
-    this.keep = new Set(wishes.filter((w) => w.distance <= RELEASE_DISTANCE).map((w) => w.url));
-    for (const url of this.pictures.keys()) if (!this.keep.has(url)) this.pictures.delete(url);
-    this.queue = [...wishes].sort((a, b) => Number(b.picture) - Number(a.picture) || a.distance - b.distance);
+    this.queue = ask.wishes;
+    this.cursor = 0;
+    this.tintCursor = 0;
+    this.drawn = ask.drawn;
+    this.distanceOf = ask.distanceOf;
+    this.trim();
     this.pump();
   }
 
   dispose(): void {
     this.disposed = true;
     this.queue = [];
+    for (const m of this.measures) m.decoded.done();
+    this.measures = [];
+    this.arrived.clear();
+    for (const { picture } of this.pictures.values()) release(picture);
     this.pictures.clear();
+    this.fades.clear();
+  }
+
+  private trim(): void {
+    const gone = evictions(
+      Array.from(this.pictures, ([key, kept]) => ({ key, distance: this.distanceOf(key), drawn: this.drawn.has(key), used: kept.used })),
+    );
+    for (const key of gone) {
+      const kept = this.pictures.get(key);
+      if (kept) release(kept.picture);
+      this.pictures.delete(key);
+      this.fades.delete(key);
+    }
+  }
+
+  private keyOf(url: string): string | null | undefined {
+    return this.keys.get(url) ?? (isPhotoUrl(url) ? undefined : coverKey(url));
   }
 
   private needs(w: CoverWish): boolean {
-    if (this.loading.has(w.url) || !mayTry(this.attempts.get(w.url), Date.now())) return false;
-    const key = this.keys.get(w.url) ?? (isPhotoUrl(w.url) ? undefined : coverKey(w.url));
+    if (this.loading.has(w.url) || this.arrived.has(w.url) || !mayTry(this.attempts.get(w.url), Date.now())) return false;
+    const key = this.keyOf(w.url);
     const known = key ? colours().has(key) : false;
-    return !known || (w.picture && !this.pictures.has(w.url));
+    return !known || (w.picture && !this.pictures.has(w.url) && worthKeeping(this.distanceOf(w.url)));
   }
 
   private pump(): void {
     if (this.pumping || this.disposed) return;
     this.pumping = true;
-    idle(() => {
+    idle((timeRemaining) => {
       this.pumping = false;
-      while (!this.disposed && this.loading.size < CONCURRENT) {
-        const next = this.queue.find((w) => this.needs(w));
-        if (!next) break;
-        this.queue = this.queue.filter((w) => w !== next);
-        this.loading.add(next.url);
-        void this.load(next).finally(() => {
-          this.loading.delete(next.url);
+      if (this.disposed) return;
+      // 1. Measure what has arrived: a couple a slice, and only while the slice has time.
+      for (let n = 0; this.measures.length > 0 && sliceHasRoom(n, MEASURES_PER_SLICE, timeRemaining()); n++) {
+        this.measure(this.measures.shift() as Measure);
+      }
+      // 2. Spine colours already stored on this device, made ready before their books come into view.
+      for (let n = 0; this.tintCursor < this.queue.length && sliceHasRoom(n, TINTS_PER_SLICE, timeRemaining()); this.tintCursor++) {
+        const url = this.queue[this.tintCursor].url;
+        const key = this.keyOf(url);
+        if (key && !this.tints.has(key) && colours().has(key)) {
+          this.colour(url);
+          n++;
+        }
+      }
+      // 3. Start loading the next covers, two at a time.
+      while (this.loading.size < CONCURRENT && this.cursor < this.queue.length) {
+        const w = this.queue[this.cursor++];
+        if (!this.needs(w)) continue;
+        this.loading.add(w.url);
+        void this.load(w).finally(() => {
+          this.loading.delete(w.url);
           this.pump();
         });
       }
+      if (this.measures.length > 0 || this.tintCursor < this.queue.length) this.pump();
     });
   }
 
-  private note(): void {
-    if (this.changed) return;
+  /** A cover arrived: draw again if its book is on screen (one off screen is drawn when it comes into view). */
+  private note(url: string): void {
+    if (this.changed || !this.drawn.has(url)) return;
     this.changed = true;
     window.setTimeout(() => {
       this.changed = false;
@@ -229,6 +363,15 @@ export class CoverArt {
     }, 0);
   }
 
+  private startFade(url: string, part: keyof Fade): void {
+    const at = fadeStart(this.drawn.has(url), this.reduced(), performance.now());
+    if (at === undefined) return;
+    const f = this.fades.get(url) ?? {};
+    f[part] = at;
+    this.fades.set(url, f);
+  }
+
+  /** Fetch and decode (no drawing here: that waits for an idle slice, in measure()). */
   private async load(w: CoverWish): Promise<void> {
     try {
       let blob: Blob | null = null;
@@ -240,7 +383,10 @@ export class CoverArt {
         if (key === undefined) {
           key = `photo:${await sha256(blob)}`;
           this.keys.set(w.url, key);
-          if (colours().has(key)) this.note();
+          if (colours().has(key)) {
+            this.startFade(w.url, 'colour');
+            this.note(w.url);
+          }
         }
       } else if (key === undefined) {
         key = coverKey(w.url);
@@ -250,9 +396,7 @@ export class CoverArt {
         this.attempts.set(w.url, afterFailure(undefined, Date.now(), true));
         return;
       }
-      const wantColour = !colours().has(key);
-      const wantPicture = w.picture && this.keep.has(w.url);
-      if (!wantColour && !wantPicture) return;
+      if (colours().has(key) && !(w.picture && worthKeeping(this.distanceOf(w.url)))) return;
       if (!blob) {
         const source = pixelSource(w.url, w.isbn);
         if (!source) {
@@ -267,35 +411,55 @@ export class CoverArt {
         blob = await response.blob();
       }
       const decoded = await decode(blob);
-      try {
-        if (this.disposed) return;
-        const size = bitmapSize(decoded.width, decoded.height);
-        const small = document.createElement('canvas');
-        small.width = size.width;
-        small.height = size.height;
-        small.getContext('2d')?.drawImage(decoded.source, 0, 0, size.width, size.height);
-        if (wantColour) {
-          const sample = document.createElement('canvas');
-          sample.width = COLOUR_SAMPLE_PX;
-          sample.height = COLOUR_SAMPLE_PX;
-          const ctx = sample.getContext('2d', { willReadFrequently: true });
-          if (ctx) {
-            ctx.drawImage(small, 0, 0, COLOUR_SAMPLE_PX, COLOUR_SAMPLE_PX);
-            rememberColour(colours(), key, dominantColour(ctx.getImageData(0, 0, COLOUR_SAMPLE_PX, COLOUR_SAMPLE_PX).data));
-            this.tints.delete(key);
-            saveSoon();
-          }
-        }
-        if (wantPicture && this.keep.has(w.url)) this.pictures.set(w.url, { image: small, width: size.width, height: size.height });
-        else release({ image: small, width: 0, height: 0 });
-        this.note();
-      } finally {
+      if (this.disposed) {
         decoded.done();
+        return;
       }
+      this.measures.push({ wish: w, key, decoded });
+      this.arrived.add(w.url);
     } catch (error) {
       // Offline, CORS refused, a 403/429/5xx, or a file that isn't a picture: back off, a few tries a visit.
       const final = error instanceof HttpError ? isFinalStatus(error.status) : false;
       this.attempts.set(w.url, afterFailure(this.attempts.get(w.url), Date.now(), final));
+    }
+  }
+
+  /** In an idle slice: draw an arrived cover small, read its colour if it's new, keep the picture if it's still near. */
+  private measure({ wish: w, key, decoded }: Measure): void {
+    try {
+      const wantColour = !colours().has(key);
+      const wantPicture = w.picture && !this.pictures.has(w.url) && worthKeeping(this.distanceOf(w.url));
+      if (!wantColour && !wantPicture) return;
+      const size = bitmapSize(decoded.width, decoded.height);
+      const small = document.createElement('canvas');
+      small.width = size.width;
+      small.height = size.height;
+      small.getContext('2d')?.drawImage(decoded.source, 0, 0, size.width, size.height);
+      if (wantColour) {
+        const sample = document.createElement('canvas');
+        sample.width = COLOUR_SAMPLE_PX;
+        sample.height = COLOUR_SAMPLE_PX;
+        const ctx = sample.getContext('2d', { willReadFrequently: true });
+        if (ctx) {
+          ctx.drawImage(small, 0, 0, COLOUR_SAMPLE_PX, COLOUR_SAMPLE_PX);
+          const colour = dominantColour(ctx.getImageData(0, 0, COLOUR_SAMPLE_PX, COLOUR_SAMPLE_PX).data);
+          rememberColour(colours(), key, colour);
+          this.tints.delete(key);
+          saveSoon();
+          if (colour) this.startFade(w.url, 'colour');
+        }
+      }
+      if (wantPicture) {
+        this.pictures.set(w.url, { picture: { image: small, width: size.width, height: size.height }, used: ++this.used });
+        this.startFade(w.url, 'picture');
+        this.trim();
+      } else release({ image: small, width: 0, height: 0 });
+      this.note(w.url);
+    } catch {
+      this.attempts.set(w.url, afterFailure(this.attempts.get(w.url), Date.now(), false));
+    } finally {
+      decoded.done();
+      this.arrived.delete(w.url);
     }
   }
 }

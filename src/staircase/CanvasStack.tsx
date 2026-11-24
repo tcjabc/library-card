@@ -10,13 +10,13 @@ import {
   stepCamera,
   stepTarget,
 } from './camera';
-import { LruCache, backingSize, canvasScale, cssLength, fitWithEllipsis, graphemes } from './canvasHelpers';
-import { CoverArt, type CoverWish } from './coverArt';
+import { LruCache, backingSize, canvasScale, cssDuration, cssLength, fitWithEllipsis, graphemes } from './canvasHelpers';
+import { CoverArt, type CoverFade, type CoverWish } from './coverArt';
 import { coverCrop } from './coverColour';
+import { coverJobs, showsPicture, travelOf, type Travel } from './coverPlan';
 import {
   DECIDE_AFTER_MS,
   FAN_CAP,
-  LOD_DISTANCE,
   faceSpan,
   faceThickness,
   insetDue,
@@ -77,10 +77,11 @@ import './canvasStack.css';
  * cover the book in the middle (the one being looked at) moves just above or below it instead
  * (markerTop in stackItems.ts).
  *
- * Covers (`covers`, coverArt.ts): a book with a cover takes its spine's colour from it, and the
- * books close enough to show their top face in detail (the page edges' LOD) draw the cover's
- * picture there, as on a real book lying front up with its spine towards the reader. Both are
- * loaded and measured in idle time, never while drawing; until then a book has its own colour.
+ * Covers (`covers`, coverArt.ts, coverPlan.ts): a book with a cover takes its spine's colour from
+ * it, and every drawn book whose top face is big enough on screen draws the cover's picture there,
+ * as on a real book lying front up with its spine towards the reader. Both are loaded ahead of the
+ * camera and measured in idle time, never while drawing; until then a book has its own colour,
+ * and one arriving for a book on screen fades in (instantly with reduced motion).
  *
  * When the books change (a new read), the camera keeps the reader's book in front of them, or
  * moves up to the new newest book if they were looking at the newest (stackItems.followPile).
@@ -125,6 +126,8 @@ export interface DrawStats {
   labels: number;
   /** Times the label cache was emptied and rebuilt this visit (a resolution step, or the benchmark). */
   rebuilds: number;
+  /** With covers on: the cover pictures kept and their memory (bytes). */
+  covers?: { pictures: number; bytes: number };
 }
 
 /** The benchmark's handle on the stack (developer tools): fixed set-ups, jumps and label control. */
@@ -248,6 +251,8 @@ interface BookTheme {
   gutter: number;
   /** Room left above a pile that fits over the eye line, for where it starts (px). */
   restGap: number;
+  /** A cover arriving for a book on screen fades in over this long (ms). */
+  crossfadeMs: number;
 }
 
 function readTheme(): BookTheme {
@@ -297,6 +302,7 @@ function readTheme(): BookTheme {
     dashGap: px('--space-1'),
     gutter: px('--space-3'),
     restGap: px('--space-5'),
+    crossfadeMs: cssDuration(v('--duration-crossfade')) || 0,
   };
 }
 
@@ -491,11 +497,28 @@ interface FaceKit {
   prep: { ms: number; count: number };
   /** The real covers' colours and pictures, or null with covers off. */
   art: CoverArt | null;
+  /** This frame's time (performance.now()), for the covers' fades. */
+  now: number;
+  /** Set when a cover drawn this frame is still fading in (another frame is wanted). */
+  fading: boolean;
 }
 
-/** A spine label from the cache, prepared (and timed) if it isn't there. A cover's colour arriving makes it a new label. */
-function spineLabel(book: BookPaint, kit: FaceKit): HTMLCanvasElement {
-  const tint = kit.art?.colour(book.coverUrl) ?? null;
+const NO_FADE: CoverFade = { colour: 1, picture: 1 };
+
+/** A book's cover fade this frame (noting in the kit when one is still running). */
+function coverFade(book: BookPaint, kit: FaceKit): CoverFade {
+  if (!kit.art || !book.coverUrl) return NO_FADE;
+  const f = kit.art.fade(book.coverUrl, kit.now);
+  if (f.colour < 1 || f.picture < 1) kit.fading = true;
+  return f;
+}
+
+/**
+ * A spine label from the cache, prepared (and timed) if it isn't there. A cover's colour arriving
+ * makes it a new label; `own` asks for the book's own colour (the label a fade starts from).
+ */
+function spineLabel(book: BookPaint, kit: FaceKit, own = false): HTMLCanvasElement {
+  const tint = own ? null : (kit.art?.colour(book.coverUrl) ?? null);
   const key = tint ? `${book.labelKey}\u0000${tint.spine}` : book.labelKey;
   let spine = kit.labels.get(key);
   if (!spine) {
@@ -523,30 +546,52 @@ function tracePath(ctx: CanvasRenderingContext2D, face: ProjectedFace) {
 function drawFace(ctx: CanvasRenderingContext2D, face: ProjectedFace, book: BookPaint, fromCamera: number, kit: FaceKit) {
   const { scale, theme, paint } = kit;
   if (face.side === 'front') {
+    const fade = coverFade(book, kit);
     const spine = spineLabel(book, kit);
     ctx.setTransform(...faceTransform(face, scale));
+    if (fade.colour < 1) {
+      // A cover's colour arriving on screen: the book's own spine, the new one fading in over it.
+      ctx.drawImage(spineLabel(book, kit, true), 0, 0, face.width, face.height);
+      ctx.globalAlpha = fade.colour;
+      ops += 1;
+    }
     ctx.drawImage(spine, 0, 0, face.width, face.height);
+    ctx.globalAlpha = 1;
     ops += 1;
   } else if (face.side === 'top' || face.side === 'bottom') {
     const { origin: o, u, v } = face;
-    // Up close (the page edges' LOD), the real cover's picture: one affine drawImage, which maps
-    // its crop exactly onto the face. The cover's top is at the spine's left end and its spine
-    // edge towards the reader (v), as on a real book lying front up: image x runs from the spine
-    // edge to the back (-v), image y along the spine (u). A turn, not a mirror.
-    const picture =
-      face.side === 'top' && kit.art && pageDetail(fromCamera, faceThickness(face)) === 'striped' ? kit.art.picture(book.coverUrl) : null;
+    const fade = coverFade(book, kit);
+    // Every drawn book's top face shows the real cover's picture, unless the face is too thin on
+    // screen (coverPlan.showsPicture): one affine drawImage, which maps its crop exactly onto the
+    // face. The cover's top is at the spine's left end and its spine edge towards the reader (v),
+    // as on a real book lying front up: image x runs from the spine edge to the back (-v), image
+    // y along the spine (u). A turn, not a mirror.
+    const picture = face.side === 'top' && kit.art && showsPicture(faceThickness(face)) ? kit.art.picture(book.coverUrl) : null;
+    // In the face's unit square, so the one cover gradient fits every book.
+    const unit = () => ctx.setTransform(u.x * scale, u.y * scale, v.x * scale, v.y * scale, o.x * scale, o.y * scale);
+    unit();
+    if (!picture || fade.picture < 1) {
+      // The flat cover: the book's own colour, or its cover's (fading in over it as it arrives).
+      const tint = kit.art?.colour(book.coverUrl) ?? null;
+      if (tint && fade.colour < 1) {
+        ctx.fillStyle = book.cover;
+        ctx.fillRect(0, 0, 1, 1);
+        ctx.globalAlpha = fade.colour;
+        ops += 1;
+      }
+      ctx.fillStyle = tint?.cover ?? book.cover;
+      ctx.fillRect(0, 0, 1, 1);
+      ctx.globalAlpha = 1;
+      ops += 1;
+    }
     if (picture) {
       const crop = coverCrop(picture.width, picture.height, book.width, book.depth);
       ctx.setTransform(-v.x * scale, -v.y * scale, u.x * scale, u.y * scale, (o.x + v.x) * scale, (o.y + v.y) * scale);
+      ctx.globalAlpha = fade.picture;
       ctx.drawImage(picture.image, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, 1, 1);
+      ctx.globalAlpha = 1;
       ops += 1;
-    }
-    // In the face's unit square, so the one cover gradient fits every book.
-    ctx.setTransform(u.x * scale, u.y * scale, v.x * scale, v.y * scale, o.x * scale, o.y * scale);
-    if (!picture) {
-      ctx.fillStyle = kit.art?.colour(book.coverUrl)?.cover ?? book.cover;
-      ctx.fillRect(0, 0, 1, 1);
-      ops += 1;
+      unit();
     }
     if (face.side === 'top' && paint.coverShade) {
       ctx.fillStyle = paint.coverShade;
@@ -691,22 +736,48 @@ function ownScroll(c: CameraState, el: HTMLDivElement, top: number) {
   c.scrollTop = top;
 }
 
-/** Colours are fetched for this many books beyond the drawn ones each way. */
-const COLOUR_SPARE = 10;
-/** Pictures are decoded for the books whose top face shows in detail, and one more each way. */
-const PICTURE_REACH = LOD_DISTANCE + 1;
+/** Each cover's books (indexes, oldest first): a cover can be on more than one book (two readers' copies). */
+function coverIndexes(items: readonly StackItem[]): Map<string, number[]> {
+  const out = new Map<string, number[]>();
+  items.forEach((item, i) => {
+    if (!item.cover) return;
+    const list = out.get(item.cover);
+    if (list) list.push(i);
+    else out.set(item.cover, [i]);
+  });
+  return out;
+}
 
-/** Ask the loader for the covers of the books near the camera, nearest first. */
-function askCovers(loader: CoverArt | null, items: readonly StackItem[], centre: number, from: number, to: number) {
+/**
+ * Ask the loader for covers (coverPlan.coverJobs): the drawn books first, then pictures ahead
+ * of the camera, then colours outwards from it.
+ */
+function askCovers(
+  loader: CoverArt | null,
+  items: readonly StackItem[],
+  indexes: ReadonlyMap<string, readonly number[]>,
+  centre: number,
+  from: number,
+  to: number,
+  travel: Travel,
+) {
   if (!loader) return;
   const wishes: CoverWish[] = [];
-  for (let i = Math.max(0, from - COLOUR_SPARE); i < Math.min(items.length, to + COLOUR_SPARE); i++) {
-    const url = items[i].cover;
-    if (!url) continue;
-    const distance = Math.abs(i - centre);
-    wishes.push({ url, isbn: items[i].isbn, picture: distance <= PICTURE_REACH, distance });
+  for (const job of coverJobs(centre, from, to, items.length, travel)) {
+    const item = items[job.index];
+    if (item.cover) wishes.push({ url: item.cover, isbn: item.isbn, picture: job.picture });
   }
-  loader.want(wishes);
+  const drawn = new Set<string>();
+  for (let i = Math.max(0, from); i < Math.min(items.length, to); i++) {
+    const url = items[i].cover;
+    if (url) drawn.add(url);
+  }
+  const distanceOf = (url: string) => {
+    let best = Infinity;
+    for (const i of indexes.get(url) ?? []) best = Math.min(best, Math.abs(i - centre));
+    return best;
+  };
+  loader.want({ wishes, drawn, distanceOf });
 }
 
 function prefersReducedMotion(): boolean {
@@ -756,6 +827,7 @@ function CanvasStack({
       }),
     [items, shapes, theme],
   );
+  const covered = useMemo(() => coverIndexes(items), [items]);
   const labels = useMemo(() => new LruCache<string, HTMLCanvasElement>(LABEL_CACHE_SIZE), []);
   const sprites = useMemo(() => new LruCache<string, Sprite>(SPRITE_CACHE_SIZE), []);
 
@@ -812,13 +884,17 @@ function CanvasStack({
     /** The window the covers were last asked for (centre, from, to), and the pending ask. */
     coverAsk: '',
     coverTimer: 0,
+    coverWindow: { ask: '', centre: 0, from: 0, to: 0, travel: 0 as Travel },
+    /** The frame asked for while a cover fades in (when the camera isn't moving anyway), and what it does. */
+    fadeRaf: 0,
+    fadeFrame: () => {},
   });
   /** The real covers' loader, while `covers` is on. */
   const art = useRef<CoverArt | null>(null);
   // What the next frame draws: kept in a ref so scrolling never waits on React.
-  const scene = useRef({ items, shapes, centres, paints, markers, onCentre, twist, settle, describeCentre, measureRaster, onDraw });
+  const scene = useRef({ items, shapes, centres, paints, covered, markers, onCentre, twist, settle, describeCentre, measureRaster, onDraw });
   useLayoutEffect(() => {
-    scene.current = { items, shapes, centres, paints, markers, onCentre, twist, settle, describeCentre, measureRaster, onDraw };
+    scene.current = { items, shapes, centres, paints, covered, markers, onCentre, twist, settle, describeCentre, measureRaster, onDraw };
   });
   /** This frame's marker labels and month lines (reused every frame). */
   const placed = useRef({ sprites: [] as PlacedSprite[], lines: [] as number[] });
@@ -877,6 +953,7 @@ function CanvasStack({
       let from = 0;
       let to = 0;
       const prep = { ms: 0, count: 0 };
+      let kit: FaceKit | null = null;
       const booksStart = performance.now();
       const centre = total > 0 ? Math.round(clampPosition(s, total)) : -1;
       if (centre >= 0) {
@@ -899,7 +976,17 @@ function CanvasStack({
         });
         from = range.start;
         to = range.end;
-        const kit: FaceKit = { scale, labels, theme, paint: paint.current, plainAvatars: o?.plainAvatars ?? false, prep, art: art.current };
+        kit = {
+          scale,
+          labels,
+          theme,
+          paint: paint.current,
+          plainAvatars: o?.plainAvatars ?? false,
+          prep,
+          art: art.current,
+          now: started,
+          fading: false,
+        };
         const marks = placed.current;
         marks.sprites.length = 0;
         marks.lines.length = 0;
@@ -989,14 +1076,25 @@ function CanvasStack({
           onCentre?.(items[centre], centre);
         }
         // The covers near the camera are asked for after this frame (never loaded in it).
-        const ask = `${centre}:${from}:${to}`;
+        const travel = travelOf(c.shown, c.target);
+        const ask = `${centre}:${from}:${to}:${travel}`;
+        c.coverWindow = { ask, centre, from, to, travel };
         if (art.current && ask !== c.coverAsk && !c.coverTimer) {
-          c.coverAsk = ask;
           c.coverTimer = window.setTimeout(() => {
+            // The latest frame's window (frames drawn meanwhile included).
             c.coverTimer = 0;
-            askCovers(art.current, scene.current.items, centre, from, to);
+            const w = c.coverWindow;
+            c.coverAsk = w.ask;
+            askCovers(art.current, scene.current.items, scene.current.covered, w.centre, w.from, w.to, w.travel);
           }, 0);
         }
+      }
+      // A cover still fading in: one more frame (the camera's own frames draw it while it moves).
+      if (kit?.fading && !c.fadeRaf) {
+        c.fadeRaf = requestAnimationFrame(() => {
+          c.fadeRaf = 0;
+          c.fadeFrame();
+        });
       }
 
       const booksMs = performance.now() - booksStart - prep.ms;
@@ -1054,6 +1152,7 @@ function CanvasStack({
         cameraMs: c.cameraMs,
         labels: prep.count,
         rebuilds: c.rebuilds,
+        covers: onDraw || c.listener ? art.current?.stats() : undefined,
       };
       c.cameraMs = 0;
       onDraw?.(stats);
@@ -1203,6 +1302,8 @@ function CanvasStack({
       onChange: () => {
         if (!c.raf) draw(true);
       },
+      reduced: () => c.reduced,
+      fadeMs: theme.crossfadeMs,
     });
     art.current = loader;
     c.coverAsk = '';
@@ -1213,10 +1314,20 @@ function CanvasStack({
       window.clearTimeout(c.coverTimer);
       c.coverTimer = 0;
       c.coverAsk = '';
+      cancelAnimationFrame(c.fadeRaf);
+      c.fadeRaf = 0;
       labels.clear();
       if (!c.raf) draw(true);
     };
   }, [covers, draw, theme, labels]);
+
+  // A cover's fade frame: a draw where the camera is, unless the camera's own frame is coming.
+  useEffect(() => {
+    const c = cam.current;
+    c.fadeFrame = () => {
+      if (!c.raf) draw(true);
+    };
+  }, [draw]);
 
   // prefers-reduced-motion: no easing (followed live).
   useEffect(() => {
@@ -1372,6 +1483,8 @@ function CanvasStack({
           plainAvatars: c.overrides?.plainAvatars ?? false,
           prep: { ms: 0, count: 0 },
           art: art.current,
+          now: performance.now(),
+          fading: false,
         };
         for (let i = Math.max(0, from); i < Math.min(items.length, to); i++) spineLabel(paints[i], kit);
       },

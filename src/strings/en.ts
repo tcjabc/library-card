@@ -613,6 +613,8 @@ export const en = {
     measureBreakdownValue: 'labels {labels} · books {books} · overlays {overlays} · camera {camera}',
     measureLabels: 'Labels prepared per frame (same 2 s)',
     measureRebuilds: 'Label cache rebuilds (this visit)',
+    measureCoverPictures: 'Cover pictures kept',
+    measureCoverPicturesValue: '{count} · {size} MB',
 
     benchHeading: 'Benchmark',
     benchIntro: 'Scrolls the pile by itself through 14 set-ups (scale, labels, overlays) and measures each, with a device check at the start and end. Canvas mode only.',

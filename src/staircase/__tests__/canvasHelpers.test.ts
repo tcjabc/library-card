@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ELLIPSIS, LruCache, backingSize, canvasScale, cssLength, fitWithEllipsis, graphemes } from '../canvasHelpers';
+import { ELLIPSIS, LruCache, backingSize, canvasScale, cssDuration, cssLength, fitWithEllipsis, graphemes } from '../canvasHelpers';
 
 // Small helpers for the canvas book stack (src/staircase/canvasHelpers.ts).
 
@@ -22,6 +22,19 @@ describe('canvasScale and backingSize', () => {
     expect(backingSize(33.3, 2)).toBe(67);
     expect(backingSize(0, 2)).toBe(1);
     expect(backingSize(-10, 2)).toBe(1);
+  });
+});
+
+describe('cssDuration', () => {
+  it('reads ms and s', () => {
+    expect(cssDuration('160ms')).toBe(160);
+    expect(cssDuration(' 0.16s ')).toBeCloseTo(160);
+  });
+
+  it('is NaN for anything else', () => {
+    expect(cssDuration('')).toBeNaN();
+    expect(cssDuration('160')).toBeNaN();
+    expect(cssDuration('var(--x)')).toBeNaN();
   });
 });
 

@@ -20,6 +20,14 @@ export function cssLength(value: string, remPx: number): number {
   return m[2] === 'rem' ? n * remPx : n;
 }
 
+/** A CSS time from a custom property ("160ms", "0.16s") in ms; NaN if it can't be read. */
+export function cssDuration(value: string): number {
+  const m = /^\s*([\d.]+)\s*(ms|s)\s*$/.exec(value);
+  if (!m) return Number.NaN;
+  const n = Number(m[1]);
+  return m[2] === 's' ? n * 1000 : n;
+}
+
 /** A string's characters as the reader sees them (an emoji or a CJK character is one), never half a pair. */
 export function graphemes(text: string): string[] {
   const Segmenter = (Intl as { Segmenter?: typeof Intl.Segmenter }).Segmenter;
