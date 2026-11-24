@@ -72,6 +72,8 @@ export const FAKE_TITLES: readonly string[] = [
 export const BOOK_WIDTHS = [176, 194, 212, 230] as const;
 export const BOOK_DEPTHS = [104, 118, 132] as const;
 export const BOOK_THICKNESSES = [28, 34, 42] as const;
+/** The thickest, widest and deepest book any pile can have (for room the pile must leave). */
+export const BIGGEST_BOOK = { thickness: Math.max(...BOOK_THICKNESSES), width: Math.max(...BOOK_WIDTHS), depth: Math.max(...BOOK_DEPTHS) };
 /** The wobble's limits: yaw in degrees, x and z in px. */
 export const MAX_YAW = 6;
 export const MAX_NUDGE_X = 12;

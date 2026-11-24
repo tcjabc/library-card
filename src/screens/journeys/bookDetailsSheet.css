@@ -1,0 +1,334 @@
+/* The Family Staircase's book sheet (BookDetailsSheet.tsx). Every rule is under .stack-sheet. */
+
+/*
+ * The sheet lies over the bottom of the pile's page; the pile keeps its size underneath (the
+ * page's dock holds the bar's place). Its height is set from the script for each state, and
+ * eases between them.
+ */
+.stack-sheet {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: var(--z-sticky);
+  display: flex;
+  flex-direction: column;
+  height: calc(var(--stack-bar-height) + env(safe-area-inset-bottom));
+  /* clip, not just hidden: focus or "scroll into view" mustn't scroll the bar out of the sheet. */
+  overflow: hidden;
+  overflow: clip;
+  border-top: var(--border-thin) solid var(--color-border);
+  border-radius: 0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  transition:
+    height var(--duration-sheet) ease-out,
+    border-radius var(--duration-sheet) ease-out,
+    box-shadow var(--duration-sheet) ease-out;
+}
+
+.stack-sheet:not(.stack-sheet--collapsed) {
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  box-shadow: var(--shadow-raised);
+}
+
+/* While the finger holds it, it follows the finger. */
+.stack-sheet.stack-sheet--dragging {
+  transition: none;
+}
+
+/* The bar: the drag handle, then the book at the eye line. It takes its own drags (no panning). */
+.stack-sheet__bar {
+  appearance: none;
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  height: var(--stack-bar-height);
+  min-height: var(--tap-target);
+  margin: 0;
+  padding: var(--space-3) var(--space-4) var(--space-2);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: var(--weight-bold);
+  text-align: start;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.stack-sheet__bar:focus-visible {
+  outline: var(--border-thick) solid var(--color-focus);
+  outline-offset: calc(-1 * var(--border-thick));
+}
+
+.stack-sheet__handle {
+  position: absolute;
+  top: var(--space-1);
+  left: 50%;
+  width: var(--stack-sheet-handle-width);
+  height: var(--stack-sheet-handle-height);
+  border-radius: var(--radius-full);
+  background: var(--color-border);
+  transform: translateX(-50%);
+}
+
+.stack-sheet__bar-avatar {
+  flex: none;
+  font-family: var(--font-emoji);
+  font-size: var(--text-xl);
+  line-height: 1;
+}
+
+.stack-sheet__bar-title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--text-md);
+}
+
+/* The panel scrolls inside itself and keeps its drags (nothing passes to the page). */
+.stack-sheet__panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  padding: 0 var(--space-4) max(var(--space-5), env(safe-area-inset-bottom));
+}
+
+.stack-sheet__panel:focus {
+  outline: none;
+}
+
+/* Collapsed: only the bar shows (the panel hides once the sheet has finished closing). */
+.stack-sheet--collapsed .stack-sheet__panel {
+  visibility: hidden;
+  transition: visibility 0s linear var(--duration-sheet);
+}
+
+/* One book's content; a new book fades in. */
+.stack-sheet__book {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding-top: var(--space-2);
+  animation: stack-sheet-fade var(--duration-crossfade) ease-out;
+}
+
+@keyframes stack-sheet-fade {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.stack-sheet__top {
+  display: grid;
+  grid-template-columns: var(--stack-sheet-cover) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.stack-sheet__cover {
+  width: var(--stack-sheet-cover);
+}
+
+.stack-sheet__names {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.stack-sheet__title {
+  margin: 0;
+  font-size: var(--text-lg);
+  overflow-wrap: anywhere;
+}
+
+.stack-sheet__subtitle,
+.stack-sheet__authors {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The family's part. */
+.stack-sheet__family {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stack-sheet__family > li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.stack-sheet__icon {
+  flex: none;
+  font-family: var(--font-emoji);
+  font-size: var(--text-lg);
+  line-height: var(--line-height);
+}
+
+.stack-sheet__reader {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  font-weight: var(--weight-bold);
+}
+
+.stack-sheet__reader-avatar {
+  font-family: var(--font-emoji);
+}
+
+.stack-sheet__reads {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  margin-top: var(--space-1);
+}
+
+.stack-sheet__read {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.stack-sheet__count {
+  color: var(--color-text-muted);
+}
+
+.stack-sheet__loan {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+}
+
+/* About this book (the web details). */
+.stack-sheet__about {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: var(--border-thin) solid var(--color-border);
+}
+
+.stack-sheet__heading {
+  margin: 0;
+  font-size: var(--text-lg);
+}
+
+.stack-sheet__description {
+  align-self: stretch;
+}
+
+.stack-sheet__description > p {
+  margin: 0 0 var(--space-2);
+}
+
+.stack-sheet__description > p:last-child {
+  margin-bottom: 0;
+}
+
+/* About six lines, the last ones fading out (so no line shows cut in half). */
+.stack-sheet__description--clamped {
+  max-height: calc(var(--stack-sheet-description-lines) * var(--line-height) * 1em);
+  overflow: hidden;
+  overflow: clip;
+  -webkit-mask-image: linear-gradient(to bottom, black calc(100% - var(--stack-sheet-description-fade)), transparent);
+  mask-image: linear-gradient(to bottom, black calc(100% - var(--stack-sheet-description-fade)), transparent);
+}
+
+.stack-sheet__facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+}
+
+.stack-sheet__facts > div {
+  display: contents;
+}
+
+.stack-sheet__facts dt {
+  color: var(--color-text-muted);
+}
+
+.stack-sheet__facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.stack-sheet__link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap-target);
+  color: var(--color-brand);
+  font-weight: var(--weight-bold);
+}
+
+.stack-sheet__nothing {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.stack-sheet__nothing > p {
+  margin: 0;
+}
+
+/* "Looking for more…": three grey lines that pulse. */
+.stack-sheet__skeleton {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  gap: var(--space-2);
+}
+
+.stack-sheet__skeleton > span[aria-hidden] {
+  display: block;
+  height: var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+  animation: stack-sheet-pulse var(--duration-bounce) ease-in-out infinite;
+}
+
+.stack-sheet__skeleton > span[aria-hidden]:last-child {
+  width: var(--stack-sheet-skeleton-short);
+}
+
+@keyframes stack-sheet-pulse {
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stack-sheet,
+  .stack-sheet--collapsed .stack-sheet__panel {
+    transition: none;
+  }
+
+  .stack-sheet__book,
+  .stack-sheet__skeleton > span[aria-hidden] {
+    animation: none;
+  }
+}

@@ -5,7 +5,8 @@ newest on top. The screen opens on the newest book; scrolling down goes back in 
 
 Code: `src/screens/journeys/FamilyStack.tsx` (the screen, loaded on its own), `src/staircase/CanvasStack.tsx`
 (the canvas renderer, shared with the developer tools' pretend piles at `#/dev/stack`) and the pure helpers in
-`src/staircase/stackItems.ts` (unit-tested). The old zig-zag staircase is still at `#/staircase/old`, linked from
+`src/staircase/stackItems.ts` (unit-tested). The bar under the pile opens the book sheet
+(`src/screens/journeys/BookDetailsSheet.tsx`; see "The book sheet" below). The old zig-zag staircase is still at `#/staircase/old`, linked from
 Developer tools, until it's retired.
 
 ## What's on the pile
@@ -40,7 +41,7 @@ names it.
 - Resizing or turning the screen works K out again and keeps the reader's book; the starting rule only applies
   when the screen opens.
 - The screen is pinned to the viewport: the page behind it never scrolls or rubber-bands (iOS), and drags on the
-  header and the bar don't move anything.
+  header don't move anything (drags on the bar move the book sheet).
 
 ## Markers
 
@@ -76,3 +77,77 @@ The pile follows new reads as they happen (also from another tab or device, thro
 - Screen readers get a hidden list of every book, newest first: "Step N, title, read by reader, date".
 - Arrow Up and Down step one book (with the same ease); the pile shows a focus ring when focused from the keyboard.
 - With reduced motion, the camera moves without easing.
+- The bar under the pile is a button that opens the book sheet (below); the sheet's panel is a dialog while open.
+
+## The book sheet
+
+The bar under the pile (the eye-line book's avatar and title, with a small drag handle on top) opens into a sheet
+about that book. Code: `src/screens/journeys/BookDetailsSheet.tsx` and `bookDetailsSheet.css`; the rules are pure
+and unit-tested in `src/staircase/sheetState.ts` (states), `src/staircase/bookFamily.ts` (the family part),
+`src/books/details.ts` (the web details) and `src/books/detailsCache.ts` (the cache).
+
+### States
+
+- **Collapsed**: the bar, as before. **Half**: over the lower part of the screen, stopping just below the book at
+  the eye line (`stackProjection.eyeLineReach`: half the thickest book's spine plus how far a turned cover reaches,
+  plus `--space-3`), so that book stays in view; on screens too short for that it still shows
+  `--stack-sheet-min-half` over the bar. **Full**: the whole area under the header.
+- A tap on the bar opens collapsed to half, and closes half or full. Dragging the bar moves the sheet with the
+  finger; on release it goes to the nearest state, or after a flick (0.4 px/ms or faster) on to the next state in
+  that direction. Escape and the browser's Back close it: opening pushes a history entry (same URL), closing
+  another way takes it off again.
+- The sheet **lies over the pile**: the pile keeps its size (the page's dock keeps the bar's place), so K and the
+  camera never change when it opens. While **half** open the pile above still scrolls and the sheet follows the
+  book at the eye line, its content fading in (no fade with reduced motion). While **full** the pile isn't drawn at
+  all (`CanvasStack`'s `paused`); it catches up when the sheet closes.
+- Accessibility: the bar is a real button with `aria-expanded`; the open panel is a (non-modal) dialog named
+  "About <title>", which takes the focus, and the focus goes back to the bar when it closes. Arrow keys on the pile
+  work as before while it's collapsed. Buttons are kid-sized (56 px). Reduced motion: no easing, fade or pulse.
+
+### What it shows
+
+1. The cover (bigger), title, subtitle (when the web has one the title doesn't already include) and authors.
+2. **The family's part**, from data the app already keeps (no new tables, no DataStore or sync changes):
+   - "First read by <avatar + name> on <date>": the **pile book's own reader** (the stack item the sheet is open
+     on) and their first confirmed read of it, the same pile book as "Book #N". When two readers have read the
+     same title, each one's pile book names them, not whoever read the title first. The date is in the
+     household's time zone.
+   - "Book #N on the Family Staircase": the stack item's own step.
+   - "Read N times", with every reader's avatar and count (earliest reader first): the read summaries, which only
+     count confirmed reads.
+   - A home book ("A home book, on your shelf"), and any loan out now (not returned): the library's name, who
+     borrowed it and its due chip. Returned loans don't show.
+   - Its collection and number, when it's in one.
+   - "After a book" notes are **not** shown: a note is for a reader's next new book, not linked to any book, so
+     there is no note for a given book to show.
+3. **About this book** (the web details), only for books with an ISBN (`noisbn-` books show the family part only):
+   the description (plain paragraphs, about six lines with "Read more"), publisher, year, pages, language,
+   an age rating only when Google Books marks the book as mature ("Google Books rating: For grown-ups"; nothing
+   for Google's default NOT_MATURE or a missing label), and "More on Google Books" or
+   "More on Open Library" (the provider that found the book; new tab, `rel="noopener noreferrer"`). Only fields
+   that exist show; with nothing found: "No more details found for this book."
+
+### The web lookup
+
+- By ISBN, from the same providers in the same order as adding a book (`src/books/lookup.ts`, whose URL builders
+  and `fetchJson` are shared): Taiwanese prefixes (978957, 978986, 978626) Google Books first, everything else Open
+  Library first; the second provider only fills the gaps. Open Library's Books API (`jscmd=details`) is used, and
+  the edition's work for a description when the edition has none. `VITE_GOOGLE_BOOKS_API_KEY` is used when set.
+- Provider answers are untrusted: only fields of the expected type are kept, HTML is stripped to plain text
+  (rendered as text, never as HTML), and links are kept only when they're https on the provider's own site.
+- **Only when the sheet is open on the book**: the first book straight away, then each book the half-open sheet
+  stays on for 350 ms (not every book scrolling past). Nothing is fetched while it's closed.
+- **Never blocking**: the family part shows at once; "About this book" shows a small placeholder while it looks.
+  The providers get 8 s between them. Offline, after a failure or at the timeout, it shows the "No more details"
+  message with **Try again**; back online it asks again by itself.
+
+### The cache
+
+- In **localStorage** on this device, one key per book: `library-card:book-details:<isbn>`. Chosen as the lightest
+  store that fits: answers are small (descriptions are cut at 6,000 characters) and capped at 300 books (the
+  oldest go first, and half go if the browser is full), and the app's `library-card:` keys are already **cleared
+  by "Reset this device"**. It needs no IndexedDB version bump, and it is never synced, never in a backup and not
+  in the records or outbox stores.
+- A cached answer (details, or "not found") shows at once; when it's older than **30 days** it still shows and is
+  asked again quietly (a failed refresh keeps the old answer). **Failures are never cached**, and neither is an
+  answer cut short by the timeout.

@@ -25,7 +25,7 @@ import {
   type StackOverrides,
 } from './drawBudget';
 import { READER_COLOURS, firstMarkerFrom, followPile, markerTop, type LabelPart, type StackItem, type StackMarkers } from './stackItems';
-import { BOOK_DEPTHS, BOOK_THICKNESSES, BOOK_WIDTHS, bookShape, spineHue } from './stackModel';
+import { BIGGEST_BOOK, BOOK_DEPTHS, BOOK_WIDTHS, bookShape, spineHue } from './stackModel';
 import {
   FAN_CAMERA,
   TWIST_DEG,
@@ -160,6 +160,8 @@ export interface CanvasStackProps {
   measureRaster?: boolean;
   /** The scroll area's name. */
   label: string;
+  /** Draw nothing while true (something covers the pile); catch up when it's false again. */
+  paused?: boolean;
   /** The scroll area, for measuring. */
   onScroller?: (el: HTMLDivElement | null) => void;
   /** Each scroll by the reader (not the settle's own scroll). */
@@ -634,7 +636,6 @@ function faceBox(faces: readonly ProjectedFace[]): { left: number; right: number
 }
 
 /** The biggest book (px), for how many books fit above the eye line (stackProjection.eyeLineBooks). */
-const BIGGEST_BOOK = { thickness: Math.max(...BOOK_THICKNESSES), width: Math.max(...BOOK_WIDTHS), depth: Math.max(...BOOK_DEPTHS) };
 /** Marker labels kept ready to draw. */
 const SPRITE_CACHE_SIZE = 64;
 
@@ -670,6 +671,7 @@ function CanvasStack({
   describeCentre,
   measureRaster = false,
   label,
+  paused = false,
   onScroller,
   onScroll,
   onDraw,
@@ -748,6 +750,9 @@ function CanvasStack({
     overrides: null as StackOverrides | null,
     saved: null as { scale: number; scaleCap: number; scrollTop: number } | null,
     listener: null as ((stats: DrawStats) => void) | null,
+    /** Drawing is paused (the pile is covered); `missed`: a frame was skipped meanwhile. */
+    paused,
+    missed: false,
   });
   // What the next frame draws: kept in a ref so scrolling never waits on React.
   const scene = useRef({ items, shapes, centres, paints, markers, onCentre, twist, settle, describeCentre, measureRaster, onDraw });
@@ -776,6 +781,10 @@ function CanvasStack({
   /** One frame. `settled`: the camera has stopped, so the overlays catch up whatever their throttle. */
   const draw = useCallback(
     (settled: boolean) => {
+      if (cam.current.paused) {
+        cam.current.missed = true;
+        return;
+      }
       const ctx = context2d(canvas.current, true);
       if (!ctx) return;
       const started = performance.now();
@@ -987,6 +996,11 @@ function CanvasStack({
   const run = useCallback(() => {
     const c = cam.current;
     if (c.raf) return;
+    if (c.paused) {
+      // Nothing is drawn while paused: the camera catches up when drawing resumes.
+      c.missed = true;
+      return;
+    }
     const tick = (now: number) => {
       const cameraStart = performance.now();
       c.raf = 0;
@@ -1090,6 +1104,24 @@ function CanvasStack({
       window.clearTimeout(camState.expectedTimer);
     };
   }, [applyScale, draw, theme]);
+
+  // Paused (covered by the book sheet): no frames at all; on resuming, catch up with whatever
+  // changed meanwhile (new books, a resize), easing as usual.
+  useLayoutEffect(() => {
+    const c = cam.current;
+    if (c.paused === paused) return;
+    c.paused = paused;
+    if (paused) {
+      cancelAnimationFrame(c.raf);
+      c.raf = 0;
+      c.last = 0;
+      return;
+    }
+    if (c.missed || c.target !== c.shown) {
+      c.missed = false;
+      run();
+    }
+  }, [paused, run]);
 
   // prefers-reduced-motion: no easing (followed live).
   useEffect(() => {

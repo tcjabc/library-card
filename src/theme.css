@@ -221,11 +221,26 @@
   --stair-step: 5rem;
   --stair-width: 62%;
   --stair-cover: 2.25rem;
+  /* The Family Staircase's book sheet: the bar under the pile (a drag handle over a 56px tap
+     target), its handle, the bigger cover, the least the half state shows over the bar, and how
+     many lines of a description show before "Read more". */
+  --stack-bar-height: 4.75rem;
+  --stack-sheet-handle-width: 2.5rem;
+  --stack-sheet-handle-height: 0.3125rem;
+  --stack-sheet-cover: 8rem;
+  --stack-sheet-min-half: 10rem;
+  --stack-sheet-description-lines: 6;
+  --stack-sheet-description-fade: 3em;
+  /* The last, shorter line of the "Looking for more…" placeholder. */
+  --stack-sheet-skeleton-short: 60%;
 
   /* Motion */
   --duration-fast: 120ms;
   --duration-confetti: 900ms;
   --duration-bounce: 1.6s;
+  /* The book sheet opening and closing, and its content changing to the next book. */
+  --duration-sheet: 240ms;
+  --duration-crossfade: 160ms;
 
   /* Layering */
   --z-sheet: 50;

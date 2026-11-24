@@ -314,9 +314,17 @@ const FAN_DROP = Math.sin(ELEVATION_DEG * RAD);
 export function eyeLineBooks(viewHeight: number, book: { thickness: number; width: number; depth: number }, gap: number): number {
   const pitch = FAN_RISE * Math.max(0, book.thickness);
   if (!(pitch > 0)) return 0;
-  // The top book's top half, and how far a turned cover can reach up behind its spine.
-  const top = pitch / 2 + (FAN_DROP * Math.hypot(book.width, book.depth)) / 2 + Math.max(0, gap);
-  return Math.max(0, Math.floor((viewHeight / 2 - top) / pitch));
+  return Math.max(0, Math.floor((viewHeight / 2 - eyeLineReach(book, gap)) / pitch));
+}
+
+/**
+ * How far (px) a book at the eye line can reach above or below it, with `gap` to spare: half its
+ * spine, and how far a turned cover can reach past its spine. The book sheet's half state stops
+ * this far below the eye line, so the book there stays in view.
+ */
+export function eyeLineReach(book: { thickness: number; width: number; depth: number }, gap: number): number {
+  const pitch = FAN_RISE * Math.max(0, book.thickness);
+  return pitch / 2 + (FAN_DROP * Math.hypot(book.width, book.depth)) / 2 + Math.max(0, gap);
 }
 
 /**

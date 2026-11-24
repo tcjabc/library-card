@@ -31,7 +31,8 @@ export class BookLookupError extends Error {
   }
 }
 
-const TIMEOUT_MS = 8000;
+/** Each provider request gives up after this long (ms). The book details sheet uses it too. */
+export const LOOKUP_TIMEOUT_MS = 8000;
 const GOOGLE_FIRST_PREFIXES = ['978957', '978986', '978626'];
 
 interface LookupOptions {
@@ -44,8 +45,9 @@ interface LookupOptions {
 
 type ProviderResult = Omit<Book, 'isbn'> | null;
 type Provider = (isbn: string, signal?: AbortSignal) => Promise<ProviderResult>;
+export type ProviderName = 'google' | 'openlibrary';
 
-export function providerOrder(isbn: string): ['google', 'openlibrary'] | ['openlibrary', 'google'] {
+export function providerOrder(isbn: string): [ProviderName, ProviderName] {
   return GOOGLE_FIRST_PREFIXES.some((p) => isbn.startsWith(p)) ? ['google', 'openlibrary'] : ['openlibrary', 'google'];
 }
 
@@ -98,12 +100,14 @@ export async function lookupIsbn(raw: string, options: LookupOptions = {}): Prom
 // Providers
 // ---------------------------------------------------------------------------
 
-async function fetchJson(url: string, signal?: AbortSignal): Promise<unknown> {
+/** GET a JSON document, giving up after LOOKUP_TIMEOUT_MS or when `signal` aborts. Rejects on HTTP errors. */
+export async function fetchJson(url: string, signal?: AbortSignal): Promise<unknown> {
   // AbortSignal.timeout/any are too new for older iOS Safari; do it by hand.
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), LOOKUP_TIMEOUT_MS);
   const onAbort = () => controller.abort();
   signal?.addEventListener('abort', onAbort);
+  if (signal?.aborted) controller.abort();
   try {
     const response = await fetch(url, { signal: controller.signal, headers: { Accept: 'application/json' } });
     if (!response.ok) throw new Error(`HTTP ${response.status} from ${new URL(url).hostname}`);
@@ -121,12 +125,28 @@ interface OpenLibraryEntry {
   cover?: { small?: string; medium?: string; large?: string };
 }
 
-async function fromOpenLibrary(isbn: string, signal?: AbortSignal): Promise<ProviderResult> {
+/** Open Library's bibkeys for an ISBN-13: itself, and its ISBN-10 when it has one. */
+export function openLibraryKeys(isbn: string): string[] {
   const isbn10 = isbn13To10(isbn);
-  const keys = [`ISBN:${isbn}`, ...(isbn10 ? [`ISBN:${isbn10}`] : [])];
-  const url =
-    `https://openlibrary.org/api/books?bibkeys=${encodeURIComponent(keys.join(','))}` +
-    '&format=json&jscmd=data';
+  return [`ISBN:${isbn}`, ...(isbn10 ? [`ISBN:${isbn10}`] : [])];
+}
+
+/** Open Library's Books API for these bibkeys: "data" (titles, covers) or "details" (descriptions, pages…). */
+export function openLibraryUrl(keys: readonly string[], jscmd: 'data' | 'details'): string {
+  return `https://openlibrary.org/api/books?bibkeys=${encodeURIComponent(keys.join(','))}&format=json&jscmd=${jscmd}`;
+}
+
+/** Google Books' volume search for an ISBN, with the VITE_GOOGLE_BOOKS_API_KEY when one is set. */
+export function googleBooksUrl(isbn: string): string {
+  const params = new URLSearchParams({ q: `isbn:${isbn}`, maxResults: '1' });
+  const key = import.meta.env.VITE_GOOGLE_BOOKS_API_KEY?.trim();
+  if (key) params.set('key', key);
+  return `https://www.googleapis.com/books/v1/volumes?${params.toString()}`;
+}
+
+async function fromOpenLibrary(isbn: string, signal?: AbortSignal): Promise<ProviderResult> {
+  const keys = openLibraryKeys(isbn);
+  const url = openLibraryUrl(keys, 'data');
   const data = (await fetchJson(url, signal)) as Record<string, OpenLibraryEntry> | null;
   const entry = keys.map((key) => data?.[key]).find((e) => e?.title);
   if (!entry?.title) return null;
@@ -154,13 +174,7 @@ interface GoogleBooksResponse {
 }
 
 async function fromGoogleBooks(isbn: string, signal?: AbortSignal): Promise<ProviderResult> {
-  const params = new URLSearchParams({ q: `isbn:${isbn}`, maxResults: '1' });
-  const key = import.meta.env.VITE_GOOGLE_BOOKS_API_KEY?.trim();
-  if (key) params.set('key', key);
-  const data = (await fetchJson(
-    `https://www.googleapis.com/books/v1/volumes?${params.toString()}`,
-    signal,
-  )) as GoogleBooksResponse;
+  const data = (await fetchJson(googleBooksUrl(isbn), signal)) as GoogleBooksResponse;
   const info = data.items?.[0]?.volumeInfo;
   if (!info?.title) return null;
 

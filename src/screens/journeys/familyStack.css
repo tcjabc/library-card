@@ -24,9 +24,8 @@
   overscroll-behavior: none;
 }
 
-/* Drags on the header and the bar don't pan anything (taps still work). */
-.family-stack__header,
-.family-stack__bar {
+/* Drags on the header don't pan anything (taps still work); the book sheet's bar takes its own. */
+.family-stack__header {
   touch-action: none;
 }
 
@@ -68,31 +67,11 @@
   margin: var(--space-4);
 }
 
-/* The book in the middle: the reader's avatar and the title on one line. */
-.family-stack__bar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-height: var(--tap-target);
-  margin: 0;
-  padding: var(--space-2) var(--space-4) max(var(--space-2), env(safe-area-inset-bottom));
-  border-top: var(--border-thin) solid var(--color-border);
-  background: var(--color-surface);
-  color: var(--color-text);
-  font-weight: var(--weight-bold);
-}
-
-.family-stack__bar-avatar {
+/*
+ * The bar's place under the pile. The bar itself is the book sheet's (bookDetailsSheet.css),
+ * which lies over the page, so the pile keeps this size whether the sheet is open or not.
+ */
+.family-stack__dock {
   flex: none;
-  font-family: var(--font-emoji);
-  font-size: var(--text-xl);
-  line-height: 1;
-}
-
-.family-stack__bar-title {
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  font-size: var(--text-md);
+  height: calc(var(--stack-bar-height) + env(safe-area-inset-bottom));
 }
