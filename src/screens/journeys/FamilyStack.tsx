@@ -6,6 +6,7 @@ import { currentTimeZone, onTimeZoneChange } from '../../lib/timezone';
 import { familyPart } from '../../staircase/bookFamily';
 import { cssLength } from '../../staircase/canvasHelpers';
 import CanvasStack from '../../staircase/CanvasStack';
+import { useStackCovers } from '../../staircase/coverSetting';
 import { isExpanded, sheetBook, sheetHeights, type SheetHeights, type SheetState } from '../../staircase/sheetState';
 import { stackItems, stackListText, stackMarkers, type StackItem } from '../../staircase/stackItems';
 import { BIGGEST_BOOK } from '../../staircase/stackModel';
@@ -71,11 +72,18 @@ export default function FamilyStack({ reader }: { reader: Reader }) {
   const { data: sheetData } = useDataQuery(sheetQuery, ['loans', 'libraries', 'collections', 'home_items']);
   const zone = useSyncExternalStore(onTimeZoneChange, currentTimeZone, currentTimeZone);
   const today = useToday();
+  const covers = useStackCovers();
 
   const items = useMemo(
     () =>
       data
-        ? stackItems(data.summaries, data.readers, (isbn) => data.books.get(isbn)?.title, { title: t.stackUntitled, avatar: t.stackNoAvatar })
+        ? stackItems(
+            data.summaries,
+            data.readers,
+            (isbn) => data.books.get(isbn)?.title,
+            { title: t.stackUntitled, avatar: t.stackNoAvatar },
+            (isbn) => data.books.get(isbn)?.cover_url,
+          )
         : [],
     [data],
   );
@@ -220,6 +228,7 @@ export default function FamilyStack({ reader }: { reader: Reader }) {
             onCentre={onCentre}
             onScroller={setScroller}
             paused={sheet === 'full'}
+            covers={covers}
           />
           <div ref={dock} className="family-stack__dock" aria-hidden="true" />
           <BookDetailsSheet

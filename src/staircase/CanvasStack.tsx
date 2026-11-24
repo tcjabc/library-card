@@ -11,9 +11,12 @@ import {
   stepTarget,
 } from './camera';
 import { LruCache, backingSize, canvasScale, cssLength, fitWithEllipsis, graphemes } from './canvasHelpers';
+import { CoverArt, type CoverWish } from './coverArt';
+import { coverCrop } from './coverColour';
 import {
   DECIDE_AFTER_MS,
   FAN_CAP,
+  LOD_DISTANCE,
   faceSpan,
   faceThickness,
   insetDue,
@@ -73,6 +76,11 @@ import './canvasStack.css';
  * books in the draw window are drawn; their labels are drawn once and reused. A label that would
  * cover the book in the middle (the one being looked at) moves just above or below it instead
  * (markerTop in stackItems.ts).
+ *
+ * Covers (`covers`, coverArt.ts): a book with a cover takes its spine's colour from it, and the
+ * books close enough to show their top face in detail (the page edges' LOD) draw the cover's
+ * picture there, as on a real book lying front up with its spine towards the reader. Both are
+ * loaded and measured in idle time, never while drawing; until then a book has its own colour.
  *
  * When the books change (a new read), the camera keeps the reader's book in front of them, or
  * moves up to the new newest book if they were looking at the newest (stackItems.followPile).
@@ -162,6 +170,8 @@ export interface CanvasStackProps {
   label: string;
   /** Draw nothing while true (something covers the pile); catch up when it's false again. */
   paused?: boolean;
+  /** The books' real covers (each item's `cover`): their colour on the spines, their picture on the top faces up close. */
+  covers?: boolean;
   /** The scroll area, for measuring. */
   onScroller?: (el: HTMLDivElement | null) => void;
   /** Each scroll by the reader (not the settle's own scroll). */
@@ -301,8 +311,12 @@ interface BookPaint {
   avatar: string;
   spineHue: number;
   width: number;
+  depth: number;
   thickness: number;
+  /** The covers' own colour (top and bottom faces), until the real cover's is known. */
   cover: string;
+  /** The real cover (a display URL), or null. */
+  coverUrl: string | null;
   /** The reader's colour. */
   band: string;
 }
@@ -312,8 +326,11 @@ function context2d(canvas: HTMLCanvasElement | null, opaque: boolean): CanvasRen
   return canvas?.getContext('2d', opaque ? { alpha: false } : undefined) ?? null;
 }
 
-/** A spine at `scale` canvas pixels per px: the book's colour and shade, the reader's band and avatar, then the title. */
-function renderSpine(book: BookPaint, theme: BookTheme, scale: number, plainAvatar = false): HTMLCanvasElement {
+/**
+ * A spine at `scale` canvas pixels per px: the book's colour (its cover's, `fill`, when known) and
+ * shade, the reader's band and avatar, then the title.
+ */
+function renderSpine(book: BookPaint, theme: BookTheme, scale: number, plainAvatar = false, fill: string | null = null): HTMLCanvasElement {
   const { width: w, thickness: t } = book;
   const canvas = document.createElement('canvas');
   canvas.width = backingSize(w, scale);
@@ -321,7 +338,7 @@ function renderSpine(book: BookPaint, theme: BookTheme, scale: number, plainAvat
   const ctx = canvas.getContext('2d');
   if (!ctx) return canvas;
   ctx.scale(canvas.width / w, canvas.height / t);
-  ctx.fillStyle = hsl(book.spineHue, theme.spineSaturation, theme.spineLightness);
+  ctx.fillStyle = fill ?? hsl(book.spineHue, theme.spineSaturation, theme.spineLightness);
   ctx.fillRect(0, 0, w, t);
   const shade = ctx.createLinearGradient(0, 0, 0, t);
   shade.addColorStop(0.55, 'transparent');
@@ -472,15 +489,19 @@ interface FaceKit {
   plainAvatars: boolean;
   /** Label preparation this frame: time (ms) and count. */
   prep: { ms: number; count: number };
+  /** The real covers' colours and pictures, or null with covers off. */
+  art: CoverArt | null;
 }
 
-/** A spine label from the cache, prepared (and timed) if it isn't there. */
+/** A spine label from the cache, prepared (and timed) if it isn't there. A cover's colour arriving makes it a new label. */
 function spineLabel(book: BookPaint, kit: FaceKit): HTMLCanvasElement {
-  let spine = kit.labels.get(book.labelKey);
+  const tint = kit.art?.colour(book.coverUrl) ?? null;
+  const key = tint ? `${book.labelKey}\u0000${tint.spine}` : book.labelKey;
+  let spine = kit.labels.get(key);
   if (!spine) {
     const started = performance.now();
-    spine = renderSpine(book, kit.theme, kit.scale, kit.plainAvatars);
-    kit.labels.set(book.labelKey, spine);
+    spine = renderSpine(book, kit.theme, kit.scale, kit.plainAvatars, tint?.spine ?? null);
+    kit.labels.set(key, spine);
     kit.prep.ms += performance.now() - started;
     kit.prep.count += 1;
   }
@@ -507,11 +528,26 @@ function drawFace(ctx: CanvasRenderingContext2D, face: ProjectedFace, book: Book
     ctx.drawImage(spine, 0, 0, face.width, face.height);
     ops += 1;
   } else if (face.side === 'top' || face.side === 'bottom') {
+    const { origin: o, u, v } = face;
+    // Up close (the page edges' LOD), the real cover's picture: one affine drawImage, which maps
+    // its crop exactly onto the face. The cover's top is at the spine's left end and its spine
+    // edge towards the reader (v), as on a real book lying front up: image x runs from the spine
+    // edge to the back (-v), image y along the spine (u). A turn, not a mirror.
+    const picture =
+      face.side === 'top' && kit.art && pageDetail(fromCamera, faceThickness(face)) === 'striped' ? kit.art.picture(book.coverUrl) : null;
+    if (picture) {
+      const crop = coverCrop(picture.width, picture.height, book.width, book.depth);
+      ctx.setTransform(-v.x * scale, -v.y * scale, u.x * scale, u.y * scale, (o.x + v.x) * scale, (o.y + v.y) * scale);
+      ctx.drawImage(picture.image, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, 1, 1);
+      ops += 1;
+    }
     // In the face's unit square, so the one cover gradient fits every book.
-    ctx.setTransform(face.u.x * scale, face.u.y * scale, face.v.x * scale, face.v.y * scale, face.origin.x * scale, face.origin.y * scale);
-    ctx.fillStyle = book.cover;
-    ctx.fillRect(0, 0, 1, 1);
-    ops += 1;
+    ctx.setTransform(u.x * scale, u.y * scale, v.x * scale, v.y * scale, o.x * scale, o.y * scale);
+    if (!picture) {
+      ctx.fillStyle = kit.art?.colour(book.coverUrl)?.cover ?? book.cover;
+      ctx.fillRect(0, 0, 1, 1);
+      ops += 1;
+    }
     if (face.side === 'top' && paint.coverShade) {
       ctx.fillStyle = paint.coverShade;
       ctx.fillRect(0, 0, 1, 1);
@@ -635,7 +671,6 @@ function faceBox(faces: readonly ProjectedFace[]): { left: number; right: number
   return { left, right, top, bottom };
 }
 
-/** The biggest book (px), for how many books fit above the eye line (stackProjection.eyeLineBooks). */
 /** Marker labels kept ready to draw. */
 const SPRITE_CACHE_SIZE = 64;
 
@@ -656,6 +691,24 @@ function ownScroll(c: CameraState, el: HTMLDivElement, top: number) {
   c.scrollTop = top;
 }
 
+/** Colours are fetched for this many books beyond the drawn ones each way. */
+const COLOUR_SPARE = 10;
+/** Pictures are decoded for the books whose top face shows in detail, and one more each way. */
+const PICTURE_REACH = LOD_DISTANCE + 1;
+
+/** Ask the loader for the covers of the books near the camera, nearest first. */
+function askCovers(loader: CoverArt | null, items: readonly StackItem[], centre: number, from: number, to: number) {
+  if (!loader) return;
+  const wishes: CoverWish[] = [];
+  for (let i = Math.max(0, from - COLOUR_SPARE); i < Math.min(items.length, to + COLOUR_SPARE); i++) {
+    const url = items[i].cover;
+    if (!url) continue;
+    const distance = Math.abs(i - centre);
+    wishes.push({ url, isbn: items[i].isbn, picture: distance <= PICTURE_REACH, distance });
+  }
+  loader.want(wishes);
+}
+
 function prefersReducedMotion(): boolean {
   return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
@@ -672,6 +725,7 @@ function CanvasStack({
   measureRaster = false,
   label,
   paused = false,
+  covers = false,
   onScroller,
   onScroll,
   onDraw,
@@ -693,8 +747,10 @@ function CanvasStack({
           avatar: item.avatar,
           spineHue: hue,
           width: shapes[i].width,
+          depth: shapes[i].depth,
           thickness: shapes[i].thickness,
           cover: hsl(hue, theme.spineSaturation, theme.coverLightness),
+          coverUrl: item.cover ?? null,
           band,
         };
       }),
@@ -753,7 +809,12 @@ function CanvasStack({
     /** Drawing is paused (the pile is covered); `missed`: a frame was skipped meanwhile. */
     paused,
     missed: false,
+    /** The window the covers were last asked for (centre, from, to), and the pending ask. */
+    coverAsk: '',
+    coverTimer: 0,
   });
+  /** The real covers' loader, while `covers` is on. */
+  const art = useRef<CoverArt | null>(null);
   // What the next frame draws: kept in a ref so scrolling never waits on React.
   const scene = useRef({ items, shapes, centres, paints, markers, onCentre, twist, settle, describeCentre, measureRaster, onDraw });
   useLayoutEffect(() => {
@@ -838,7 +899,7 @@ function CanvasStack({
         });
         from = range.start;
         to = range.end;
-        const kit: FaceKit = { scale, labels, theme, paint: paint.current, plainAvatars: o?.plainAvatars ?? false, prep };
+        const kit: FaceKit = { scale, labels, theme, paint: paint.current, plainAvatars: o?.plainAvatars ?? false, prep, art: art.current };
         const marks = placed.current;
         marks.sprites.length = 0;
         marks.lines.length = 0;
@@ -926,6 +987,15 @@ function CanvasStack({
         if (centre !== c.centre) {
           c.centre = centre;
           onCentre?.(items[centre], centre);
+        }
+        // The covers near the camera are asked for after this frame (never loaded in it).
+        const ask = `${centre}:${from}:${to}`;
+        if (art.current && ask !== c.coverAsk && !c.coverTimer) {
+          c.coverAsk = ask;
+          c.coverTimer = window.setTimeout(() => {
+            c.coverTimer = 0;
+            askCovers(art.current, scene.current.items, centre, from, to);
+          }, 0);
         }
       }
 
@@ -1123,6 +1193,31 @@ function CanvasStack({
     }
   }, [paused, run]);
 
+  // The real covers: a loader while `covers` is on. A colour or picture arriving draws again
+  // (unless a frame is coming anyway, or drawing is paused: then it's caught up later).
+  useEffect(() => {
+    if (!covers) return;
+    const c = cam.current;
+    const loader = new CoverArt({
+      ink: theme.onBook,
+      onChange: () => {
+        if (!c.raf) draw(true);
+      },
+    });
+    art.current = loader;
+    c.coverAsk = '';
+    if (!c.raf) draw(true);
+    return () => {
+      loader.dispose();
+      art.current = null;
+      window.clearTimeout(c.coverTimer);
+      c.coverTimer = 0;
+      c.coverAsk = '';
+      labels.clear();
+      if (!c.raf) draw(true);
+    };
+  }, [covers, draw, theme, labels]);
+
   // prefers-reduced-motion: no easing (followed live).
   useEffect(() => {
     const c = cam.current;
@@ -1189,9 +1284,11 @@ function CanvasStack({
     keys.current = next;
     const c = cam.current;
     if (!prev) return;
-    // Titles or colours may have changed even when the books haven't: tell onCentre again.
+    // Titles, colours or covers may have changed even when the books haven't: tell onCentre
+    // again, and ask for the covers again.
     c.centre = -1;
     c.tag = null;
+    c.coverAsk = '';
     const el = scroller.current;
     const same = prev.length === next.length && prev.every((key, i) => key === next[i]);
     if (same || !el) {
@@ -1274,6 +1371,7 @@ function CanvasStack({
           paint: paint.current,
           plainAvatars: c.overrides?.plainAvatars ?? false,
           prep: { ms: 0, count: 0 },
+          art: art.current,
         };
         for (let i = Math.max(0, from); i < Math.min(items.length, to); i++) spineLabel(paints[i], kit);
       },

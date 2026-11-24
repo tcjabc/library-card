@@ -55,6 +55,45 @@ names it.
   that would cover the book in the middle of the view (the one being looked at) moves just above or below it,
   always inside the pile's area (never under the bar).
 
+## Covers
+
+The pile shows the family's real covers (`src/staircase/coverArt.ts` loads them, the rules are pure and
+unit-tested in `src/staircase/coverColour.ts`, `CanvasStack.tsx` draws them). Nothing changes in the data, sync or
+backups: the covers are the books' own `cover_url`s.
+
+- **Spine colour**: a book with a cover takes its spine's colour from it. The cover is copied down to 16 × 16;
+  near-white, near-black, grey and see-through pixels are skipped, the 30° hue bucket with the most pixels wins
+  and its pixels' average is the colour (none if under 4% of the pixels are usable). Its saturation and lightness
+  are clamped to the spines' bands, then it is darkened until the white title reaches 4.5:1 contrast. The covers'
+  flat fill is the same colour a little lighter. A book with no cover, a cover that fails or one with no usable
+  colour keeps its own colour (from its ISBN, as before). Page edges, shading and the reader's band are unchanged.
+- **The cover on the top face**: the books close enough to show their top face in detail (the page edges' LOD:
+  within 4 books of the camera and not edge-on) draw the cover's picture there with one affine `drawImage`,
+  cropped to the face's shape (never stretched), with the usual shade on top. It lies as on a real book, front up
+  with its spine towards the reader: the cover's top at the spine's left end (where the spine's band and title
+  start), its binding edge along the front. A turn, never a mirror. Far books keep a flat face.
+- **Loading**: never in the draw loop. After a frame, the books near the camera are asked for (colours for the
+  drawn books and 10 more each way, pictures for the detailed ones and 1 more each way); covers load two at a time
+  in idle time, then the pile draws again. A colour arriving changes that spine's label at its next draw (no
+  flash: the book simply takes its new colour). Pictures are about 128 px on their longest side, at most 24 kept,
+  and released when their books are more than 12 away.
+- **Sources and CORS**: the canvas is never tainted, since pixels only come from CORS responses or the app's own
+  photos. Photos (`cover:<hash>`) come from the store's blob: URLs. Open Library covers (and archive.org, where
+  they redirect) send CORS headers; they are fetched with an extra `lc-pixels=1` parameter so the service worker's
+  opaque copy (cached for `<img>`) never answers. **Google Books thumbnails send no CORS headers**, so for them the
+  Open Library cover for the same ISBN is used; with none, the book keeps its own colour and a flat top face.
+- **Failures**: a 404 (or other final answer) isn't asked again this visit; a 403, 429, 5xx, offline or CORS
+  refusal is tried again after 30 s, then 60 s, at most 3 times a visit.
+- **The colour cache**: on this device only, in **localStorage** (`library-card:cover-colours`): one small entry
+  per cover (a photo by its bytes' SHA-256, a catalogue cover by its address), at most 2,000 (the oldest go first),
+  "no usable colour" included. Never synced, never in a backup, cleared by "Reset this device" with the app's other
+  `library-card:` keys. Pictures are never stored: they are decoded again on the next visit (catalogue covers come
+  from the service worker's cache).
+- **The setting**: Developer tools → Book stack → "Covers on the stack" (on by default) switches all of this off
+  on this device (localStorage `library-card:stack-covers`), for a device that struggles; the stack is then as it
+  was in 1.10.0. The book stack page gives its pretend piles pretend covers while it's on, so the benchmark
+  measures them; a benchmark result says whether covers were on.
+
 ## Time zone
 
 A book's month is the month of its `first_read_at` **in the household's time zone** (`households.time_zone`, the

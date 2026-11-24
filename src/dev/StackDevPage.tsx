@@ -1,11 +1,12 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { currentBuildInfo, formatVersionLine } from '../grownups/version';
 import { href } from '../router';
 import { bookRenders } from '../staircase/bookRenders';
 import type { CentreBook, CentreTag, DrawStats, StackBench } from '../staircase/CanvasStack';
 import { currentTimeZone } from '../lib/timezone';
 import { stackMarkers } from '../staircase/stackItems';
-import { fakeStackItems, generateFakeStack } from '../staircase/stackModel';
+import { useStackCovers, writeStackCovers } from '../staircase/coverSetting';
+import { fakeStackItems, generateFakeStack, spineHue } from '../staircase/stackModel';
 import { MAX_TWIST_DEG, TWIST_DEG } from '../staircase/stackProjection';
 import { fmt, strings } from '../strings';
 import {
@@ -20,6 +21,7 @@ import {
   type SampleStats,
 } from './frameStats';
 import { BenchControls, BenchResults, BenchRunning } from './StackBenchmarkPanel';
+import { usePretendCovers } from './pretendCovers';
 import { useStackBenchmark } from './useStackBenchmark';
 import { formatBenchResult } from './stackBenchmark';
 import './StackDevPage.css';
@@ -66,7 +68,13 @@ export default function StackDevPage() {
   const [settle, setSettle] = useState(true);
   const [raster, setRaster] = useState(false);
   const entries = useMemo(() => generateFakeStack(count, SEED), [count]);
-  const items = useMemo(() => fakeStackItems(entries, SEED), [entries]);
+  const covers = useStackCovers();
+  const pretendCovers = usePretendCovers(covers);
+  const items = useMemo(() => {
+    const plain = fakeStackItems(entries, SEED);
+    if (!pretendCovers || pretendCovers.length === 0) return plain;
+    return plain.map((item) => ({ ...item, cover: pretendCovers[spineHue(item.isbn) % pretendCovers.length] }));
+  }, [entries, pretendCovers]);
   const markers = useMemo(
     () =>
       stackMarkers(items, currentTimeZone(), {
@@ -90,7 +98,7 @@ export default function StackDevPage() {
   const benchmark = useStackBenchmark(benchHandle, version, reset);
 
   // A new pile starts its counts afresh.
-  useEffect(() => reset(), [count, mode, twist, settle, raster, reset]);
+  useEffect(() => reset(), [count, mode, twist, settle, raster, covers, reset]);
   const label = fmt(t.stackLabel, { count: count.toLocaleString() });
 
   return (
@@ -120,6 +128,7 @@ export default function StackDevPage() {
             measureRaster={raster}
             onDraw={meter.onDraw}
             onBench={onBench}
+            covers={covers}
           />
         ) : (
           <BookStack
@@ -158,6 +167,8 @@ export default function StackDevPage() {
           onSettle={setSettle}
           raster={raster}
           onRaster={setRaster}
+          covers={covers}
+          onCovers={writeStackCovers}
           readout={meter.readout}
           onReset={reset}
         />
@@ -370,7 +381,7 @@ function perFrame(stats: SampleStats | null): string {
   return stats === null ? t.measureFpsNone : fmt(t.measurePerFrameValue, { average: stats.average.toFixed(1), max: Math.round(stats.max) });
 }
 
-function readoutLines(readout: Readout, count: number, mode: StackMode, twist: number, settle: boolean, raster: boolean): [string, string][] {
+function readoutLines(readout: Readout, count: number, mode: StackMode, twist: number, settle: boolean, raster: boolean, covers: boolean): [string, string][] {
   const canvas = mode === 'canvas';
   const only = t.measureDrawCanvasOnly;
   const size = readout.canvas;
@@ -385,6 +396,7 @@ function readoutLines(readout: Readout, count: number, mode: StackMode, twist: n
     [t.measureMode, modeName(mode)],
     [t.measureTwist, canvas ? fmt(t.measureDegrees, { degrees: twist }) : t.measureDrawCanvasOnly],
     [t.measureSettle, canvas ? (settle ? t.measureOn : t.measureOff) : t.measureDrawCanvasOnly],
+    [t.measureCovers, canvas ? (covers ? t.measureOn : t.measureOff) : t.measureDrawCanvasOnly],
     [t.measureFps, readout.fps === null ? t.measureFpsNone : readout.fps.toFixed(1)],
     [t.measureRenders, readout.renders === null ? t.measureFpsNone : readout.renders.toFixed(1)],
     [t.measureDraw, draw],
@@ -472,6 +484,9 @@ interface MeasurePanelProps {
   onSettle: (settle: boolean) => void;
   raster: boolean;
   onRaster: (raster: boolean) => void;
+  /** "Covers on the stack": this device's setting, also used by the Family Staircase. */
+  covers: boolean;
+  onCovers: (covers: boolean) => void;
   readout: Readout;
   onReset: () => void;
 }
@@ -491,11 +506,14 @@ function MeasurePanel({
   onSettle,
   raster,
   onRaster,
+  covers,
+  onCovers,
   readout,
   onReset,
 }: MeasurePanelProps) {
   const [copied, setCopied] = useState<boolean | null>(null);
-  const lines = readoutLines(readout, count, mode, twist, settle, raster);
+  const coversNoteId = useId();
+  const lines = readoutLines(readout, count, mode, twist, settle, raster, covers);
 
   const copy = async () => {
     const parts = [version, t.stackTitle, ...lines.map(([label, value]) => `${label}: ${value}`)];
@@ -547,6 +565,12 @@ function MeasurePanel({
           <button type="button" className="chip" aria-pressed={raster} onClick={() => onRaster(!raster)}>
             {t.measureRasterChip}
           </button>
+          <button type="button" className="chip" aria-pressed={covers} aria-describedby={coversNoteId} onClick={() => onCovers(!covers)}>
+            {t.measureCovers}
+          </button>
+          <p id={coversNoteId} className="small muted">
+            {t.measureCoversNote}
+          </p>
         </div>
       )}
       <dl className="stack-dev__readout">

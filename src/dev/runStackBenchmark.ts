@@ -5,6 +5,7 @@
  * again. Whatever happens (finished, cancelled or an error), the stack is put back as it was.
  */
 import type { DrawStats, StackBench } from '../staircase/CanvasStack';
+import { readStackCovers } from '../staircase/coverSetting';
 import { addBreakdown, breakdownAverages, emptyBreakdown } from './frameStats';
 import {
   BENCH_RUN_MS,
@@ -276,6 +277,7 @@ export async function runStackBenchmark({ bench, version, onProgress, isCancelle
     calibration: { start: null, end: null },
     rows,
     cancelled: false,
+    covers: readStackCovers(),
   };
   const wake = await requestWakeLock();
   try {

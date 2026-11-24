@@ -49,13 +49,19 @@ export function fitWithEllipsis(text: string, maxWidth: number, measure: (s: str
   return chars.slice(0, lo).join('').trimEnd() + ELLIPSIS;
 }
 
-/** A small least-recently-used cache: getting or setting a key makes it the newest; the oldest goes first. */
+/**
+ * A small least-recently-used cache: getting or setting a key makes it the newest; the oldest goes
+ * first. `onEvict` hears about every value that leaves (dropped, replaced, deleted or cleared), so
+ * it can be released (e.g. an ImageBitmap closed).
+ */
 export class LruCache<K, V> {
   private readonly map = new Map<K, V>();
   private max: number;
+  private readonly onEvict?: (value: V, key: K) => void;
 
-  constructor(limit: number) {
+  constructor(limit: number, onEvict?: (value: V, key: K) => void) {
     this.max = Math.max(1, Math.floor(limit));
+    this.onEvict = onEvict;
   }
 
   get size(): number {
@@ -73,7 +79,7 @@ export class LruCache<K, V> {
   }
 
   private trim(): void {
-    while (this.map.size > this.max) this.map.delete(this.map.keys().next().value as K);
+    while (this.map.size > this.max) this.delete(this.map.keys().next().value as K);
   }
 
   get(key: K): V | undefined {
@@ -85,7 +91,9 @@ export class LruCache<K, V> {
   }
 
   set(key: K, value: V): void {
+    const old = this.map.get(key);
     this.map.delete(key);
+    if (old !== undefined && old !== value) this.onEvict?.(old, key);
     this.map.set(key, value);
     this.trim();
   }
@@ -94,7 +102,23 @@ export class LruCache<K, V> {
     return this.map.has(key);
   }
 
+  /** Removes a key (its value is evicted). */
+  delete(key: K): boolean {
+    const value = this.map.get(key);
+    if (value === undefined) return false;
+    this.map.delete(key);
+    this.onEvict?.(value, key);
+    return true;
+  }
+
+  /** The keys, oldest first. */
+  keys(): K[] {
+    return [...this.map.keys()];
+  }
+
   clear(): void {
+    const all = [...this.map];
     this.map.clear();
+    if (this.onEvict) for (const [key, value] of all) this.onEvict(value, key);
   }
 }

@@ -27,6 +27,8 @@ export interface StackItem {
   readerColour: number;
   /** The reader's first confirmed read of the book (ISO, UTC). */
   firstReadAt: string;
+  /** The book's cover (a display URL: a catalogue address or a photo's blob: URL), if it has one. */
+  cover?: string | null;
 }
 
 export interface StackReaderInfo {
@@ -49,6 +51,7 @@ export function stackItems(
   readers: readonly StackReaderInfo[],
   titleOf: (isbn: string) => string | null | undefined,
   placeholder: { title: string; avatar: string },
+  coverOf?: (isbn: string) => string | null | undefined,
 ): StackItem[] {
   const byId = new Map(readers.map((r) => [r.id, r]));
   const colours = assignReaderColors(
@@ -67,6 +70,7 @@ export function stackItems(
       avatar: reader?.avatar || placeholder.avatar,
       readerColour: (colours.get(read.reader_id) ?? readerColorIndex(read.reader_id, READER_COLOURS)) + 1,
       firstReadAt: read.first_read_at,
+      ...(coverOf ? { cover: coverOf(read.isbn) ?? null } : {}),
     };
   });
 }

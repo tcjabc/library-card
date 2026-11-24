@@ -474,3 +474,13 @@ describe('the pretend piles', () => {
     for (const s of stack) expect(s.readerColour).toBe(colour.get(s.readerId));
   });
 });
+
+describe('covers on the pile’s books', () => {
+  it('carries each book’s cover when asked, and nothing extra when not', () => {
+    const reads = [read('kid-a', '111', '2026-10-01T10:00:00.000Z'), read('kid-b', '222', '2026-10-02T10:00:00.000Z')];
+    const covers: Record<string, string> = { '111': 'https://covers.openlibrary.org/b/isbn/111-M.jpg' };
+    const withCovers = stackItems(reads, readers, (isbn) => titles[isbn], placeholder, (isbn) => covers[isbn]);
+    expect(withCovers.map((i) => i.cover)).toEqual([covers['111'], null]);
+    expect(stackItems(reads, readers, (isbn) => titles[isbn], placeholder).every((i) => !('cover' in i))).toBe(true);
+  });
+});

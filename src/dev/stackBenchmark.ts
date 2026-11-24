@@ -181,6 +181,8 @@ export interface BenchResult {
   calibration: { start: { averageMs: number; fps: number } | null; end: { averageMs: number; fps: number } | null };
   rows: BenchRow[];
   cancelled: boolean;
+  /** "Covers on the stack" while it ran (missing in results from before 1.10.1). */
+  covers?: boolean;
 }
 
 const n1 = (v: number) => v.toFixed(1);
@@ -296,6 +298,7 @@ export function formatBenchResult(result: BenchResult): string {
   const lines = [
     result.version,
     fmt(t.benchFinished, { at: localStamp(new Date(result.at)) }) + (result.cancelled ? ` ${t.benchWasCancelled}` : ''),
+    ...(result.covers === undefined ? [] : [fmt(t.benchCovers, { state: result.covers ? t.measureOn : t.measureOff })]),
     ...deviceLines(result.device),
     fmt(t.benchCalibrationStart, { score: scoreText(result.calibration.start) }),
     fmt(t.benchCalibrationEnd, { score: scoreText(result.calibration.end) }),
