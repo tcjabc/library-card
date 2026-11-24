@@ -17,8 +17,9 @@ Developer tools, until it's retired.
 - **Order and step numbers**: the same rule as before (`staircaseOrder`): by `first_read_at`, then reader id, then
   ISBN. Step 1 is the bottom of the pile; step N is the household's Nth first read. The total in the title is the
   number of books on the pile.
-- A read confirmed later keeps its own `read_at`, so it can land in the middle of the pile. Each book's size and
-  wobble are seeded by its reader + ISBN (not its step), so the books above it don't change.
+- A read confirmed later keeps its own `read_at`, so it can land in the middle of the pile. Each book's size comes
+  from the book itself (its ISBN and its cover's shape, below), never its step, so the books above it don't change.
+  With "Cover shapes" off, sizes are seeded by reader + ISBN as before 1.13.0.
 - **Spines**: the colour comes from a hash of the ISBN; the band and avatar are the reader's (the reader colours
   `--reader-1` … `--reader-8`, assigned as on the old staircase). A missing title shows "A book"; covers aren't used.
 - Counting elsewhere (milestones, the hub's total, journeys) is unchanged: no data, DataStore or sync changes.
@@ -33,7 +34,10 @@ names it.
   there is nothing to scroll.
 - **K** is how many books fit between the eye line and the top of the area, worked out from the area's height and
   the pitch of the thickest book (so any K + 1 books fit, whatever their sizes and turns), less the room the gap's
-  lifted books take (below). K only decides where the pile **starts**:
+  lifted books take (below). With cover shapes the thickest book is 28 × 1.135 (about 31.8) with the footprint whose
+  diagonal is longest (the tallest cover's), instead of the old 42-unit preset, so more books fit: K is 8 on a phone
+  (was 5) and 6 in tablet landscape (was 4), gap included. The half sheet's stop (`eyeLineReach`) uses the same book.
+  K only decides where the pile **starts**:
   - **A pile that fits (N - 1 <= K)** opens on its base book (step 1) at the eye line, the pile rising above it and
     the lower half plain background. Scrolling up eases towards the newest book (the pile then sits below the eye
     line); scrolling back down returns to the base book.
@@ -42,6 +46,42 @@ names it.
   when the screen opens.
 - The screen is pinned to the viewport: the page behind it never scrolls or rubber-bands (iOS), and drags on the
   header don't move anything (drags on the bar move the book sheet).
+
+## Book sizes from the covers
+
+Books differ in page size like real books: tall picture books, square books and wide landscape books. Code:
+`src/staircase/bookShapes.ts` (every constant and rule, pure and unit-tested); the loader reads the shapes
+(`coverArt.ts`); `CanvasStack.tsx` draws them. Nothing changes in the data or sync.
+
+- **Footprint** (spine length W and depth D) from the cover's shape, width ÷ height = D / W, clamped to 0.45–1.6:
+  eff = REF × (shape / REF)^STRENGTH (REF = 124 / 190, STRENGTH 1), W = clamp(√(AREA / eff), 120, 240), D = eff × W,
+  with AREA = 190 × 124. So a tall book (0.55) is about 207 × 114, a square one 153 × 153, a wide one (1.3) 135 × 175,
+  and the standard shape is 190 × 124. A book without a known shape (no cover, a missing or failing one, or not read
+  yet) is the standard 190 × 124.
+- **Thickness**: 28 × (1 + VARIETY × (hv − 0.5) × 0.9), VARIETY 0.3, hv a stable hash of the book (its ISBN or
+  no-ISBN key): 24.2 to 31.8, the same on every device, never from the cover. So a cover arriving late changes only
+  its own book's footprint: the pile's height, the scroll mapping and every other book stay where they are.
+- **Where the shape comes from**: the app's own photos and Open Library covers from the bitmap the loader already
+  decodes for the colour; **Google Books** covers (no CORS headers) from the natural size of a plain `<img>` of the
+  cover itself, never drawn to a canvas, so nothing is tainted. Read in idle time with the colours (the 60 books
+  nearest the camera first), with their own retries and back-off; never on a frame.
+- **The shape cache**: on this device only, in localStorage `library-card:cover-shapes` (beside the colour cache,
+  keyed the same way: a photo by its bytes' SHA-256, a catalogue cover by its address), at most 2,000. Never synced,
+  never in a backup, cleared by "Reset this device". The colour cache is unchanged; a cover whose shape isn't stored
+  yet (a 1.12.0 entry) is simply read again later.
+- **Arriving on screen**: a shape that arrives for a book being drawn eases its footprint from the standard one over
+  `--duration-crossfade` (160 ms; at once with reduced motion), drawing only while it eases.
+- **Everything else follows the per-book sizes**: the fan and the camera use the books' own cumulative thicknesses
+  (the eye-line height between two books is interpolated between their middles); the gap, flags and month lines move
+  with their books; the cover on the top face fits the face (cropped like `object-fit: cover`, now very little);
+  the spine's title and avatar are fitted to the book's own spine, their size scaled with its thickness (28 = the
+  usual size). Spine labels and page edges are cached per size bucket (6 px of spine length, 0.5 px of thickness)
+  so the caches stay small. A new book's drop lands it on the books' own heights and its mass follows its thickness.
+- **The setting**: Developer tools → Book stack → "Cover shapes" (on by default, this device only, localStorage
+  `library-card:stack-shapes`). Off, the books have the seeded sizes they had in 1.12.0 (176–230 × 104–132 × 28, 34
+  or 42) and K as before. The page's readout shows the constants (strength, variety, area and clamps); a benchmark
+  result says whether shapes were on. Its pretend covers come in a few shapes. Without "Covers on the stack" no
+  shapes are read, so every book is standard (thicknesses still vary).
 
 ## The gap around the eye-line book
 

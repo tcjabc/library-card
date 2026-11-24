@@ -331,3 +331,49 @@ export function rememberColour(colours: StoredColours, key: string, colour: stri
   colours.set(key, colour ?? '');
   while (colours.size > max) colours.delete(colours.keys().next().value as string);
 }
+
+// ---------------------------------------------------------------------------
+// The device's cover-shape cache (localStorage: "library-card:cover-shapes")
+// ---------------------------------------------------------------------------
+
+/**
+ * Each cover's shape (width ÷ height, bookShapes.coverAspect), beside the colour cache and keyed
+ * the same way (coverKey), so a book is shaped at once on the next visit. A separate key, so the
+ * colour cache's entries are untouched: a cover whose shape isn't known yet is just read later.
+ */
+export const SHAPES_KEY = 'library-card:cover-shapes';
+/** At most this many covers' shapes are kept (the oldest go first). */
+export const MAX_SHAPES = 2000;
+const SHAPES_VERSION = 1;
+
+export type StoredShapes = Map<string, number>;
+
+export function parseShapes(text: string | null): StoredShapes {
+  const out: StoredShapes = new Map();
+  if (!text) return out;
+  try {
+    const v = JSON.parse(text) as { v?: unknown; shapes?: unknown };
+    if (v?.v !== SHAPES_VERSION || !Array.isArray(v.shapes)) return out;
+    for (const entry of v.shapes) {
+      if (!Array.isArray(entry) || typeof entry[0] !== 'string' || typeof entry[1] !== 'number') continue;
+      if (!(entry[1] > 0) || !Number.isFinite(entry[1])) continue;
+      out.set(entry[0], entry[1]);
+    }
+  } catch {
+    return new Map();
+  }
+  return out;
+}
+
+/** Oldest first, at most MAX_SHAPES, to 4 decimal places. */
+export function serialiseShapes(shapes: StoredShapes, max = MAX_SHAPES): string {
+  const entries = [...shapes].slice(-max).map(([k, a]) => [k, Math.round(a * 10000) / 10000]);
+  return JSON.stringify({ v: SHAPES_VERSION, shapes: entries });
+}
+
+/** Keeps a shape (moving it to the newest end) and drops the oldest beyond `max`. */
+export function rememberShape(shapes: StoredShapes, key: string, aspect: number, max = MAX_SHAPES): void {
+  shapes.delete(key);
+  shapes.set(key, aspect);
+  while (shapes.size > max) shapes.delete(shapes.keys().next().value as string);
+}

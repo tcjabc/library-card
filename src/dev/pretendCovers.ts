@@ -4,14 +4,23 @@ import { useEffect, useState } from 'react';
  * Pretend covers for the developer tools' pretend piles (#/dev/stack), so "Covers on the stack"
  * and the benchmark have pictures to draw without any network: a few small images drawn here
  * (a coloured ground, a band, a circle and a number) and kept as blob: URLs for the visit. They
- * load like photos taken in the app.
+ * load like photos taken in the app. They come in a few shapes (tall, standard, square, wide), so
+ * "Cover shapes" has different books to shape.
  */
 
 export const PRETEND_COVERS = 12;
-const WIDTH = 120;
-const HEIGHT = 180;
+/** Width × height (px), in turn. */
+const SIZES: readonly (readonly [number, number])[] = [
+  [120, 180],
+  [104, 190],
+  [150, 150],
+  [196, 150],
+  [130, 176],
+  [180, 138],
+];
 
 function drawCover(i: number): Promise<Blob | null> {
+  const [WIDTH, HEIGHT] = SIZES[i % SIZES.length];
   const canvas = document.createElement('canvas');
   canvas.width = WIDTH;
   canvas.height = HEIGHT;

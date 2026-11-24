@@ -11,6 +11,8 @@ import { currentTimeZone } from '../lib/timezone';
 import { stackMarkers } from '../staircase/stackItems';
 import { useStackCovers, writeStackCovers } from '../staircase/coverSetting';
 import { useStackGap, writeStackGap } from '../staircase/gapSetting';
+import { useStackShapes, writeStackShapes } from '../staircase/shapeSetting';
+import { AREA, STANDARD_DEPTH, STANDARD_WIDTH, STRENGTH, VARIETY, WIDTH_RANGE, ASPECT_RANGE } from '../staircase/bookShapes';
 import { GAP_UP_PX, GAP_DOWN_PX } from '../staircase/eyeGap';
 import { GAP_DOWN, GAP_RAMP, GAP_UP, fakeStackItems, generateFakeStack, spineHue } from '../staircase/stackModel';
 import { MAX_TWIST_DEG, TWIST_DEG } from '../staircase/stackProjection';
@@ -78,6 +80,7 @@ export default function StackDevPage() {
   const entries = useMemo(() => generateFakeStack(count, SEED), [count]);
   const covers = useStackCovers();
   const gap = useStackGap();
+  const coverShapes = useStackShapes();
   const pretendCovers = usePretendCovers(covers);
   const items = useMemo(() => {
     const plain = fakeStackItems(entries, SEED);
@@ -119,7 +122,7 @@ export default function StackDevPage() {
   );
 
   // A new pile starts its counts afresh.
-  useEffect(() => reset(), [count, mode, twist, settle, raster, covers, gap, reset]);
+  useEffect(() => reset(), [count, mode, twist, settle, raster, covers, gap, coverShapes, reset]);
   const label = fmt(t.stackLabel, { count: count.toLocaleString() });
 
   return (
@@ -150,6 +153,7 @@ export default function StackDevPage() {
             onDraw={meter.onDraw}
             onBench={onBench}
             covers={covers}
+            coverShapes={coverShapes}
             gap={gap}
             drop={drop}
             onLanding={landed}
@@ -195,6 +199,8 @@ export default function StackDevPage() {
           onCovers={writeStackCovers}
           gap={gap}
           onGap={writeStackGap}
+          coverShapes={coverShapes}
+          onCoverShapes={writeStackShapes}
           onReplay={replay}
           readout={meter.readout}
           onReset={reset}
@@ -487,6 +493,7 @@ function readoutLines(
   raster: boolean,
   covers: boolean,
   gap: boolean,
+  coverShapes: boolean,
 ): [string, string][] {
   const canvas = mode === 'canvas';
   const only = t.measureDrawCanvasOnly;
@@ -504,6 +511,23 @@ function readoutLines(
     [t.measureSettle, canvas ? (settle ? t.measureOn : t.measureOff) : t.measureDrawCanvasOnly],
     [t.measureCovers, canvas ? (covers ? t.measureOn : t.measureOff) : t.measureDrawCanvasOnly],
     [t.measureGap, canvas ? (gap ? t.measureOn : t.measureOff) : t.measureDrawCanvasOnly],
+    [t.measureShapes, canvas ? (coverShapes ? t.measureOn : t.measureOff) : t.measureDrawCanvasOnly],
+    [
+      t.measureShapeConstants,
+      canvas
+        ? fmt(t.measureShapeConstantsValue, {
+            strength: STRENGTH,
+            variety: VARIETY,
+            width: STANDARD_WIDTH,
+            depth: STANDARD_DEPTH,
+            area: AREA.toLocaleString(),
+            minWidth: WIDTH_RANGE[0],
+            maxWidth: WIDTH_RANGE[1],
+            minAspect: ASPECT_RANGE[0],
+            maxAspect: ASPECT_RANGE[1],
+          })
+        : t.measureDrawCanvasOnly,
+    ],
     [
       t.measureGapConstants,
       canvas
@@ -621,6 +645,9 @@ interface MeasurePanelProps {
   /** "Gap around the eye-line book": this device's setting, also used by the Family Staircase. */
   gap: boolean;
   onGap: (gap: boolean) => void;
+  /** "Cover shapes": this device's setting, also used by the Family Staircase. */
+  coverShapes: boolean;
+  onCoverShapes: (on: boolean) => void;
   /** "Replay new-book drop": the newest books fall onto the pile here again. */
   onReplay: (count: number) => void;
   readout: Readout;
@@ -646,6 +673,8 @@ function MeasurePanel({
   onCovers,
   gap,
   onGap,
+  coverShapes,
+  onCoverShapes,
   onReplay,
   readout,
   onReset,
@@ -653,7 +682,8 @@ function MeasurePanel({
   const [copied, setCopied] = useState<boolean | null>(null);
   const coversNoteId = useId();
   const gapNoteId = useId();
-  const lines = readoutLines(readout, count, mode, twist, settle, raster, covers, gap);
+  const shapesNoteId = useId();
+  const lines = readoutLines(readout, count, mode, twist, settle, raster, covers, gap, coverShapes);
 
   const copy = async () => {
     const parts = [version, t.stackTitle, ...lines.map(([label, value]) => `${label}: ${value}`)];
@@ -716,6 +746,12 @@ function MeasurePanel({
           </button>
           <p id={gapNoteId} className="small muted">
             {t.measureGapNote}
+          </p>
+          <button type="button" className="chip" aria-pressed={coverShapes} aria-describedby={shapesNoteId} onClick={() => onCoverShapes(!coverShapes)}>
+            {t.measureShapes}
+          </button>
+          <p id={shapesNoteId} className="small muted">
+            {t.measureShapesNote}
           </p>
         </div>
       )}

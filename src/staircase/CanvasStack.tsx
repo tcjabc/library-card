@@ -16,6 +16,18 @@ import { coverCrop } from './coverColour';
 import { coverJobs, showsPicture, travelOf, type Travel } from './coverPlan';
 import { bookLift, liftAbove, lineLift } from './eyeGap';
 import {
+  BIGGEST_SHAPED_BOOK,
+  STANDARD_DEPTH,
+  STANDARD_WIDTH,
+  THICKNESS_BUCKET,
+  WIDTH_BUCKET,
+  coverFootprint,
+  easeFootprint,
+  pileShape,
+  sizeBucket,
+  spineTextScale,
+} from './bookShapes';
+import {
   addFallers,
   dropActive,
   dropCamera,
@@ -46,7 +58,7 @@ import {
   type StackOverrides,
 } from './drawBudget';
 import { READER_COLOURS, atNewest, firstMarkerFrom, followPile, markerTop, type LabelPart, type StackItem, type StackMarkers } from './stackItems';
-import { BIGGEST_BOOK, BOOK_DEPTHS, BOOK_WIDTHS, bookShape, spineHue } from './stackModel';
+import { BIGGEST_BOOK, BOOK_DEPTHS, BOOK_WIDTHS, spineHue, type BookShape } from './stackModel';
 import {
   FAN_CAMERA,
   TWIST_DEG,
@@ -100,6 +112,11 @@ import './canvasStack.css';
  * as on a real book lying front up with its spine towards the reader. Both are loaded ahead of the
  * camera and measured in idle time, never while drawing; until then a book has its own colour,
  * and one arriving for a book on screen fades in (instantly with reduced motion).
+ *
+ * Cover shapes (`coverShapes`, bookShapes.ts): each book's footprint follows its cover's shape
+ * (tall, square, wide) at a fixed area, easing in when the shape arrives; its thickness is a
+ * little different per book from a hash of its ISBN, never from the cover, so the pile's height
+ * never changes when a cover arrives. Off: the seeded sizes from before.
  *
  * The gap (`gap`, eyeGap.ts): the books above the eye-line book lift away and the books below it
  * drop a little, by their distance from the camera, so the gap travels with the camera and the
@@ -226,6 +243,8 @@ export interface CanvasStackProps {
   paused?: boolean;
   /** The books' real covers (each item's `cover`): their colour on the spines, their picture on the top faces up close. */
   covers?: boolean;
+  /** Footprints from the covers' shapes and thicknesses from the books (bookShapes.ts); off: the seeded sizes. */
+  coverShapes?: boolean;
   /** The gap around the eye-line book (eyeGap.ts): the books above lift away, the books below drop a little. */
   gap?: boolean;
   /** New books to greet (dropMotion.ts): the newest `count` fall onto the pile, or show with a brief outline. A new `id` starts one. */
@@ -281,6 +300,11 @@ interface BookTheme {
   gap: number;
   titleFont: string;
   avatarFont: string;
+  /** The spine's title and avatar sizes (px), weight and families, for text scaled to a book's thickness. */
+  titleSize: number;
+  titleWeight: string;
+  bodyFamily: string;
+  emojiFamily: string;
   /** The avatar's size (px), for the benchmark's plain avatars. */
   avatarSize: number;
   /** The inset's lines (px) and colours. */
@@ -338,6 +362,10 @@ function readTheme(): BookTheme {
     gap: px('--space-2'),
     titleFont: `${v('--weight-bold')} ${px('--text-sm')}px ${v('--font-body')}`,
     avatarFont: `${px('--text-md')}px ${v('--font-emoji')}`,
+    titleSize: px('--text-sm'),
+    titleWeight: v('--weight-bold'),
+    bodyFamily: v('--font-body'),
+    emojiFamily: v('--font-emoji'),
     avatarSize: px('--text-md'),
     borderThin: px('--border-thin'),
     borderThick: px('--border-thick'),
@@ -397,8 +425,20 @@ function context2d(canvas: HTMLCanvasElement | null, opaque: boolean): CanvasRen
  * A spine at `scale` canvas pixels per px: the book's colour (its cover's, `fill`, when known) and
  * shade, the reader's band and avatar, then the title.
  */
-function renderSpine(book: BookPaint, theme: BookTheme, scale: number, plainAvatar = false, fill: string | null = null): HTMLCanvasElement {
-  const { width: w, thickness: t } = book;
+function renderSpine(
+  book: BookPaint,
+  theme: BookTheme,
+  scale: number,
+  plainAvatar = false,
+  fill: string | null = null,
+  size: { width: number; thickness: number } = book,
+  textScale = 1,
+): HTMLCanvasElement {
+  const { width: w, thickness: t } = size;
+  // Text scaled to the book's thickness (cover shapes); 1: the theme's own fonts, as before.
+  const titleFont = textScale === 1 ? theme.titleFont : `${theme.titleWeight} ${theme.titleSize * textScale}px ${theme.bodyFamily}`;
+  const avatarFont = textScale === 1 ? theme.avatarFont : `${theme.avatarSize * textScale}px ${theme.emojiFamily}`;
+  const avatarSize = theme.avatarSize * textScale;
   const canvas = document.createElement('canvas');
   canvas.width = backingSize(w, scale);
   canvas.height = backingSize(t, scale);
@@ -419,23 +459,23 @@ function renderSpine(book: BookPaint, theme: BookTheme, scale: number, plainAvat
   let x = theme.bandWidth + theme.gap;
   if (plainAvatar) {
     // The benchmark's "plain avatars": a circle in the reader's colour with the title's initial, no emoji.
-    const r = theme.avatarSize / 2;
+    const r = avatarSize / 2;
     ctx.fillStyle = book.band;
     ctx.beginPath();
     ctx.arc(x + r, t / 2, r, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = theme.onBook;
-    ctx.font = theme.titleFont;
+    ctx.font = titleFont;
     ctx.textAlign = 'center';
     ctx.fillText((graphemes(book.title)[0] ?? '').toUpperCase(), x + r, t / 2);
     ctx.textAlign = 'start';
-    x += theme.avatarSize + theme.gap;
+    x += avatarSize + theme.gap;
   } else {
-    ctx.font = theme.avatarFont;
+    ctx.font = avatarFont;
     ctx.fillText(book.avatar, x, t / 2);
     x += ctx.measureText(book.avatar).width + theme.gap;
   }
-  ctx.font = theme.titleFont;
+  ctx.font = titleFont;
   const title = fitWithEllipsis(book.title, w - x - theme.gap, (s) => ctx.measureText(s).width);
   ctx.fillText(title, x, t / 2);
   return canvas;
@@ -564,9 +604,11 @@ interface FaceKit {
   now: number;
   /** Set when a cover drawn this frame is still fading in (another frame is wanted). */
   fading: boolean;
+  /** Cover shapes: labels and page edges per size bucket, spine text scaled to the thickness. */
+  shaped: boolean;
 }
 
-const NO_FADE: CoverFade = { colour: 1, picture: 1 };
+const NO_FADE: CoverFade = { colour: 1, picture: 1, shape: 1 };
 
 /** A book's cover fade this frame (noting in the kit when one is still running). */
 function coverFade(book: BookPaint, kit: FaceKit): CoverFade {
@@ -580,13 +622,17 @@ function coverFade(book: BookPaint, kit: FaceKit): CoverFade {
  * A spine label from the cache, prepared (and timed) if it isn't there. A cover's colour arriving
  * makes it a new label; `own` asks for the book's own colour (the label a fade starts from).
  */
-function spineLabel(book: BookPaint, kit: FaceKit, own = false): HTMLCanvasElement {
+function spineLabel(book: BookPaint, kit: FaceKit, own = false, shape: { width: number; thickness: number } = book): HTMLCanvasElement {
   const tint = own ? null : (kit.art?.colour(book.coverUrl) ?? null);
-  const key = tint ? `${book.labelKey}\u0000${tint.spine}` : book.labelKey;
+  // With cover shapes a label is drawn for its size bucket (a few per book at most, also while a
+  // shape eases in) and stretched to the face; the text is fitted to that spine.
+  const size = kit.shaped ? { width: sizeBucket(shape.width, WIDTH_BUCKET), thickness: sizeBucket(shape.thickness, THICKNESS_BUCKET) } : book;
+  const sized = kit.shaped ? `${book.labelKey}\u0000${size.width}x${size.thickness}` : book.labelKey;
+  const key = tint ? `${sized}\u0000${tint.spine}` : sized;
   let spine = kit.labels.get(key);
   if (!spine) {
     const started = performance.now();
-    spine = renderSpine(book, kit.theme, kit.scale, kit.plainAvatars, tint?.spine ?? null);
+    spine = renderSpine(book, kit.theme, kit.scale, kit.plainAvatars, tint?.spine ?? null, size, kit.shaped ? spineTextScale(size.thickness) : 1);
     kit.labels.set(key, spine);
     kit.prep.ms += performance.now() - started;
     kit.prep.count += 1;
@@ -619,15 +665,15 @@ function tracePath(ctx: CanvasRenderingContext2D, face: ProjectedFace) {
 }
 
 /** One face of one book, through the face's affine transform. `fromCamera` is the book's distance from the camera (books). */
-function drawFace(ctx: CanvasRenderingContext2D, face: ProjectedFace, book: BookPaint, fromCamera: number, kit: FaceKit) {
+function drawFace(ctx: CanvasRenderingContext2D, face: ProjectedFace, book: BookPaint, shape: BookShape, fromCamera: number, kit: FaceKit) {
   const { scale, theme, paint } = kit;
   if (face.side === 'front') {
     const fade = coverFade(book, kit);
-    const spine = spineLabel(book, kit);
+    const spine = spineLabel(book, kit, false, shape);
     ctx.setTransform(...faceTransform(face, scale));
     if (fade.colour < 1) {
       // A cover's colour arriving on screen: the book's own spine, the new one fading in over it.
-      ctx.drawImage(spineLabel(book, kit, true), 0, 0, face.width, face.height);
+      ctx.drawImage(spineLabel(book, kit, true, shape), 0, 0, face.width, face.height);
       ctx.globalAlpha = fade.colour;
       ops += 1;
     }
@@ -661,7 +707,7 @@ function drawFace(ctx: CanvasRenderingContext2D, face: ProjectedFace, book: Book
       ops += 1;
     }
     if (picture) {
-      const crop = coverCrop(picture.width, picture.height, book.width, book.depth);
+      const crop = coverCrop(picture.width, picture.height, shape.width, shape.depth);
       ctx.setTransform(-v.x * scale, -v.y * scale, u.x * scale, u.y * scale, (o.x + v.x) * scale, (o.y + v.y) * scale);
       ctx.globalAlpha = fade.picture;
       ctx.drawImage(picture.image, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, 1, 1);
@@ -676,10 +722,11 @@ function drawFace(ctx: CanvasRenderingContext2D, face: ProjectedFace, book: Book
     }
   } else if (pageDetail(fromCamera, faceThickness(face)) === 'striped') {
     // Page edges up close: the cached stripes, one drawImage.
-    let pages = paint.pages.get(book.thickness);
+    const thickness = kit.shaped ? sizeBucket(shape.thickness, THICKNESS_BUCKET) : book.thickness;
+    let pages = paint.pages.get(thickness);
     if (!pages) {
-      pages = renderPages(book.thickness, theme, scale);
-      paint.pages.set(book.thickness, pages);
+      pages = renderPages(thickness, theme, scale);
+      paint.pages.set(thickness, pages);
     }
     ctx.setTransform(...faceTransform(face, scale));
     ctx.drawImage(pages, 0, 0, face.width, face.height);
@@ -719,7 +766,7 @@ function drawInset(
   s: number,
   twist: number,
   centre: number,
-  shapes: readonly { width: number; depth: number }[],
+  shapeAt: (index: number) => { width: number; depth: number },
   paints: readonly BookPaint[],
   theme: BookTheme,
 ) {
@@ -728,7 +775,7 @@ function drawInset(
   const mid = side / 2;
   const k = (side - 2 * theme.gap) / INSET_SPAN;
   const footprint = (index: number) => {
-    const { width: w, depth: d } = shapes[index];
+    const { width: w, depth: d } = shapeAt(index);
     const yaw = relativeYaw(index, s, twist) * RAD;
     const c = Math.cos(yaw) * k;
     const sn = Math.sin(yaw) * k;
@@ -873,6 +920,7 @@ function CanvasStack({
   label,
   paused = false,
   covers = false,
+  coverShapes = false,
   gap = false,
   drop = null,
   liveDrops = false,
@@ -884,7 +932,8 @@ function CanvasStack({
   onBench,
 }: CanvasStackProps) {
   const count = items.length;
-  const shapes = useMemo(() => items.map((item) => bookShape(seed, item.key)), [items, seed]);
+  // Cover shapes: thickness from the book (its ISBN), the standard footprint until its cover's shape is known.
+  const shapes = useMemo(() => items.map((item) => pileShape(coverShapes, seed, item)), [items, seed, coverShapes]);
   const centres = useMemo(() => pileCentres(shapes.map((s) => s.thickness)), [shapes]);
   const [theme] = useState(readTheme);
   // Oldest first, like `items`.
@@ -923,6 +972,8 @@ function CanvasStack({
   const paint = useRef<Paint>({ pages: new Map(), coverShade: null, scale: 0 });
   /** This frame's projected books, by offset from the centre book minus FAN_CAP (reused every frame). */
   const scratch = useRef<(ProjectedBook | null)[]>(Array.from({ length: 2 * FAN_CAP + 1 }, () => null));
+  /** This frame's book shapes (cover shapes easing in), by the same offset (reused every frame). */
+  const liveShapes = useRef<(BookShape | null)[]>(Array.from({ length: 2 * FAN_CAP + 1 }, () => null));
   /** Where the camera is going and where it's drawn (book positions), and the frame loop's state. */
   const cam = useRef({
     target: Math.max(0, count - 1),
@@ -996,6 +1047,7 @@ function CanvasStack({
     liveDrops,
     onLanding,
     onDropEnd,
+    coverShapes,
   });
   useLayoutEffect(() => {
     scene.current = {
@@ -1016,6 +1068,7 @@ function CanvasStack({
       liveDrops,
       onLanding,
       onDropEnd,
+      coverShapes,
     };
   });
   /** This frame's marker labels and month lines (reused every frame). */
@@ -1077,6 +1130,7 @@ function CanvasStack({
       let to = 0;
       const prep = { ms: 0, count: 0 };
       let kit: FaceKit | null = null;
+      let shapeFading = false;
       const booksStart = performance.now();
       const centre = total > 0 ? Math.round(clampPosition(s, total)) : -1;
       if (centre >= 0) {
@@ -1086,12 +1140,35 @@ function CanvasStack({
         books.fill(null);
         const base = centre - FAN_CAP;
         const dw = c.drop?.world ?? null;
+        const shaped = scene.current.coverShapes;
+        const live = liveShapes.current;
+        live.fill(null);
+        /** Book `i`'s shape this frame: with cover shapes, its cover's footprint (easing in when it has just arrived). */
+        const shapeAt = (i: number): BookShape => {
+          const at = i - base;
+          const cached = at >= 0 && at < live.length ? live[at] : null;
+          if (cached) return cached;
+          let shape = shapes[i];
+          const url = paints[i]?.coverUrl ?? null;
+          const aspect = shaped && art.current && url ? art.current.aspect(url) : null;
+          if (aspect !== null) {
+            let fp = coverFootprint(aspect);
+            const p = art.current?.fade(url, started).shape ?? 1;
+            if (p < 1) {
+              fp = easeFootprint({ width: STANDARD_WIDTH, depth: STANDARD_DEPTH }, fp, p);
+              shapeFading = true;
+            }
+            shape = { ...shape, width: fp.width, depth: fp.depth };
+          }
+          if (at >= 0 && at < live.length) live[at] = shape;
+          return shape;
+        };
         /** A book's lift from the drop (in the air, less the pile's push), 0 without a drop. */
         const fall = (i: number) => (dw ? dropLift(dw, i) : 0);
         const projectAt = (i: number): ProjectedBook => {
           let book = books[i - base];
           if (!book) {
-            let shape = shapes[i];
+            let shape = shapeAt(i);
             let lift = bookLift(i, s, gapOn) + fall(i);
             const sq = dw?.squash.get(i);
             if (sq) {
@@ -1121,6 +1198,7 @@ function CanvasStack({
           art: art.current,
           now: started,
           fading: false,
+          shaped: scene.current.coverShapes,
         };
         const marks = placed.current;
         marks.sprites.length = 0;
@@ -1150,7 +1228,7 @@ function CanvasStack({
             const alpha = dw ? markerAlpha(dw, m.index) : 1;
             if (alpha <= 0) continue;
             const between = m.index > 0 ? (fall(m.index) + fall(m.index - 1)) / 2 : fall(m.index);
-            const y = spineLevels(m.index, shapes[m.index], centres, s, twist, originY, lineLift(m.index, s, gapOn) + between).bottom;
+            const y = spineLevels(m.index, shapeAt(m.index), centres, s, twist, originY, lineLift(m.index, s, gapOn) + between).bottom;
             if (y < 0 || y > height) continue;
             marks.lines.push(y);
             marks.lineAlpha.push(alpha);
@@ -1162,7 +1240,7 @@ function CanvasStack({
             const f = markers.flags[k];
             const alpha = dw ? markerAlpha(dw, f.index) : 1;
             if (alpha <= 0) continue;
-            const y = spineLevels(f.index, shapes[f.index], centres, s, twist, originY, bookLift(f.index, s, gapOn) + fall(f.index)).middle;
+            const y = spineLevels(f.index, shapeAt(f.index), centres, s, twist, originY, bookLift(f.index, s, gapOn) + fall(f.index)).middle;
             const sp = sprite(`f\u0000${f.text}`, () =>
               renderSprite(
                 [
@@ -1199,8 +1277,9 @@ function CanvasStack({
           const book = projectAt(i);
           // Ready each spine as its book comes into the window, even facing away, so a turn of
           // the fan never has many spines to draw in one frame.
-          spineLabel(paints[i], kit);
-          for (const face of book.faces) drawFace(ctx, face, paints[i], i - s, kit);
+          const shape = shapeAt(i);
+          spineLabel(paints[i], kit, false, shape);
+          for (const face of book.faces) drawFace(ctx, face, paints[i], shape, i - s, kit);
           faces += book.faces.length;
           if (hl && pulse > 0 && i >= hl.start && i < hl.end) {
             // A new book shown without falling: a calm outline pulse.
@@ -1284,8 +1363,8 @@ function CanvasStack({
           }, 0);
         }
       }
-      // A cover still fading in: one more frame (the camera's own frames draw it while it moves).
-      if (kit?.fading && !c.fadeRaf) {
+      // A cover (or its shape) still fading in: one more frame (the camera's own frames draw it while it moves).
+      if ((kit?.fading || shapeFading) && !c.fadeRaf) {
         c.fadeRaf = requestAnimationFrame(() => {
           c.fadeRaf = 0;
           c.fadeFrame();
@@ -1315,7 +1394,7 @@ function CanvasStack({
             s,
             twist,
             centre,
-            shapes,
+            (i) => liveShapes.current[i - (centre - FAN_CAP)] ?? shapes[i],
             paints,
             theme,
           );
@@ -1435,7 +1514,7 @@ function CanvasStack({
       // book's scroll offset doesn't depend on it, so a resize or a turn keeps the reader's book.
       const cs = cam.current;
       const count = scene.current.items.length;
-      cs.k = eyeLineBooks(height, BIGGEST_BOOK, theme.restGap, liftAbove(scene.current.gap));
+      cs.k = eyeLineBooks(height, scene.current.coverShapes ? BIGGEST_SHAPED_BOOK : BIGGEST_BOOK, theme.restGap, liftAbove(scene.current.gap));
       if (sizer.current) sizer.current.style.height = `${scrollHeight(count, height)}px`;
       if (first) {
         // Opening: the base book if the pile fits above the eye line, else the newest.
@@ -1503,6 +1582,7 @@ function CanvasStack({
       },
       reduced: () => c.reduced,
       fadeMs: theme.crossfadeMs,
+      shapes: coverShapes,
     });
     art.current = loader;
     c.coverAsk = '';
@@ -1518,7 +1598,7 @@ function CanvasStack({
       labels.clear();
       if (!c.raf) draw(true);
     };
-  }, [covers, draw, theme, labels]);
+  }, [covers, coverShapes, draw, theme, labels]);
 
   // A cover's fade frame: a draw where the camera is, unless the camera's own frame is coming.
   useEffect(() => {
@@ -1584,9 +1664,9 @@ function CanvasStack({
   // where the camera is (the camera itself stays put).
   useLayoutEffect(() => {
     const c = cam.current;
-    c.k = eyeLineBooks(size.current.height, BIGGEST_BOOK, theme.restGap, liftAbove(gap));
+    c.k = eyeLineBooks(size.current.height, coverShapes ? BIGGEST_SHAPED_BOOK : BIGGEST_BOOK, theme.restGap, liftAbove(gap));
     if (!c.raf) draw(true);
-  }, [gap, draw, theme]);
+  }, [gap, coverShapes, draw, theme]);
 
   // A new twist, tag or inset: draw again where the camera is (unless a frame is coming anyway).
   useEffect(() => {
@@ -1793,8 +1873,14 @@ function CanvasStack({
           art: art.current,
           now: performance.now(),
           fading: false,
+          shaped: scene.current.coverShapes,
         };
-        for (let i = Math.max(0, from); i < Math.min(items.length, to); i++) spineLabel(paints[i], kit);
+        const { shapes: all, coverShapes: shaped } = scene.current;
+        for (let i = Math.max(0, from); i < Math.min(items.length, to); i++) {
+          // The size it will be drawn at: its cover's footprint once that's known.
+          const aspect = shaped ? (art.current?.aspect(paints[i].coverUrl) ?? null) : null;
+          spineLabel(paints[i], kit, false, aspect === null ? all[i] : { ...all[i], ...coverFootprint(aspect) });
+        }
       },
       drawNow: () => draw(true),
       scroller: () => scroller.current,

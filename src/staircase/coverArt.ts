@@ -1,22 +1,29 @@
 import {
   COLOUR_SAMPLE_PX,
   COLOURS_KEY,
+  SHAPES_KEY,
   afterFailure,
   bitmapSize,
   coverKey,
   dominantColour,
   isFinalStatus,
+  isGoogleCover,
   isPhotoUrl,
   mayTry,
   parseColours,
+  parseShapes,
   pixelSource,
   rememberColour,
+  rememberShape,
   serialiseColours,
+  serialiseShapes,
   spineColours,
   type Attempts,
   type BookColours,
   type StoredColours,
+  type StoredShapes,
 } from './coverColour';
+import { coverAspect } from './bookShapes';
 import { evictions, fadeProgress, fadeStart, sliceHasRoom, worthKeeping } from './coverPlan';
 
 /**
@@ -29,6 +36,11 @@ import { evictions, fadeProgress, fadeStart, sliceHasRoom, worthKeeping } from '
  *   by "Reset this device"), so the next visit has it at once;
  * - a small picture (about 128 px on its longest side) for the top faces, about PICTURE_CAP of
  *   them, released only beyond KEEP_DISTANCE from the camera once over the cap (coverPlan.evictions).
+ *
+ * - with `shapes`, its shape (width ÷ height, bookShapes.ts), for the book's footprint: from the
+ *   bitmap decoded for the colour, or (a Google Books cover, which sends no CORS headers) the
+ *   natural size of a plain <img> of the cover itself, never drawn anywhere; kept in the device's
+ *   shape cache (localStorage "library-card:cover-shapes", beside the colours).
  *
  * Pixels only ever come through CORS (coverColour.pixelSource) or the app's own photos (blob:
  * URLs), so neither the small canvases nor the pile's canvas is ever tainted. A cover that fails
@@ -98,9 +110,48 @@ function saveSoon(): void {
   }, SAVE_AFTER_MS);
 }
 
-/** Forget this page's copy (tests, or after "Reset this device" cleared the stored one). */
+let storedShapes: StoredShapes | null = null;
+let shapesTimer = 0;
+
+function shapes(): StoredShapes {
+  if (!storedShapes) {
+    let text: string | null;
+    try {
+      text = window.localStorage.getItem(SHAPES_KEY);
+    } catch {
+      text = null;
+    }
+    storedShapes = parseShapes(text);
+  }
+  return storedShapes;
+}
+
+function saveShapesSoon(): void {
+  window.clearTimeout(shapesTimer);
+  shapesTimer = window.setTimeout(() => {
+    try {
+      if (storedShapes) window.localStorage.setItem(SHAPES_KEY, serialiseShapes(storedShapes));
+    } catch {
+      // No room or no storage: the shapes are kept for this visit only.
+    }
+  }, SAVE_AFTER_MS);
+}
+
+/** Forget this page's copies (tests, or after "Reset this device" cleared the stored ones). */
 export function forgetCoverColours(): void {
   stored = null;
+  storedShapes = null;
+}
+
+/** A cover's natural size from a plain <img> (no CORS needed, never drawn), or null if it won't load. */
+function naturalSize(url: string): Promise<{ width: number; height: number } | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.decoding = 'async';
+    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
 }
 
 function release(picture: CoverPicture): void {
@@ -179,18 +230,21 @@ interface Kept {
   used: number;
 }
 
-/** When a cover's colour and picture started fading in (performance.now()). */
+/** When a cover's colour, picture and shape started fading in (performance.now()). */
 interface Fade {
   colour?: number;
   picture?: number;
+  shape?: number;
 }
 
 export interface CoverFade {
   colour: number;
   picture: number;
+  /** How far the book's footprint has eased to its cover's shape. */
+  shape: number;
 }
 
-const FADED: CoverFade = { colour: 1, picture: 1 };
+const FADED: CoverFade = { colour: 1, picture: 1, shape: 1 };
 
 export class CoverArt {
   /** Cover URL -> colour cache key (a photo's needs its bytes hashed first). */
@@ -199,6 +253,8 @@ export class CoverArt {
   private readonly tints = new Map<string, BookColours | null>();
   private readonly pictures = new Map<string, Kept>();
   private readonly attempts = new Map<string, Attempts>();
+  /** Shape reads fail and back off on their own (a Google cover's <img> is a different fetch). */
+  private readonly shapeAttempts = new Map<string, Attempts>();
   private readonly loading = new Set<string>();
   /** Covers fetched and decoded, waiting to be measured (not fetched again meanwhile). */
   private readonly arrived = new Set<string>();
@@ -218,12 +274,21 @@ export class CoverArt {
   private readonly onChange: () => void;
   private readonly reduced: () => boolean;
   private readonly fadeMs: number;
+  private readonly wantShapes: boolean;
 
-  constructor(options: { ink: string; onChange: () => void; reduced?: () => boolean; fadeMs?: number }) {
+  constructor(options: { ink: string; onChange: () => void; reduced?: () => boolean; fadeMs?: number; shapes?: boolean }) {
     this.ink = options.ink;
     this.onChange = options.onChange;
     this.reduced = options.reduced ?? (() => false);
     this.fadeMs = options.fadeMs ?? 0;
+    this.wantShapes = options.shapes ?? false;
+  }
+
+  /** The cover's shape (width ÷ height), if known on this device (a lookup). */
+  aspect(url: string | null): number | null {
+    if (!url) return null;
+    const key = this.keyOf(url);
+    return key ? (shapes().get(key) ?? null) : null;
   }
 
   /** The spine colours for a cover, if known (a lookup, or a little arithmetic once). */
@@ -257,11 +322,12 @@ export class CoverArt {
     const reduced = this.reduced();
     const colour = fadeProgress(f.colour, now, this.fadeMs, reduced);
     const picture = fadeProgress(f.picture, now, this.fadeMs, reduced);
-    if (colour >= 1 && picture >= 1) {
+    const shape = fadeProgress(f.shape, now, this.fadeMs, reduced);
+    if (colour >= 1 && picture >= 1 && shape >= 1) {
       this.fades.delete(url);
       return FADED;
     }
-    return { colour, picture };
+    return { colour, picture, shape };
   }
 
   /** Pictures kept and their memory (bytes, 4 a pixel), for the developer tools. */
@@ -313,11 +379,34 @@ export class CoverArt {
     return this.keys.get(url) ?? (isPhotoUrl(url) ? undefined : coverKey(url));
   }
 
-  private needs(w: CoverWish): boolean {
-    if (this.loading.has(w.url) || this.arrived.has(w.url) || !mayTry(this.attempts.get(w.url), Date.now())) return false;
-    const key = this.keyOf(w.url);
+  private needsPixels(w: CoverWish, key: string | null | undefined): boolean {
+    if (!mayTry(this.attempts.get(w.url), Date.now())) return false;
     const known = key ? colours().has(key) : false;
     return !known || (w.picture && !this.pictures.has(w.url) && worthKeeping(this.distanceOf(w.url)));
+  }
+
+  private needsShape(w: CoverWish, key: string | null | undefined): boolean {
+    if (!this.wantShapes || !mayTry(this.shapeAttempts.get(w.url), Date.now())) return false;
+    return !(key && shapes().has(key));
+  }
+
+  private needs(w: CoverWish): boolean {
+    if (this.loading.has(w.url) || this.arrived.has(w.url)) return false;
+    const key = this.keyOf(w.url);
+    return this.needsPixels(w, key) || this.needsShape(w, key);
+  }
+
+  /** A cover's shape is known: kept, and eased in if its book is on screen. */
+  private gotShape(url: string, key: string, width: number, height: number): void {
+    const aspect = coverAspect(width, height);
+    if (aspect === null) {
+      this.shapeAttempts.set(url, afterFailure(undefined, Date.now(), true));
+      return;
+    }
+    rememberShape(shapes(), key, aspect);
+    saveShapesSoon();
+    this.startFade(url, 'shape');
+    this.note(url);
   }
 
   private pump(): void {
@@ -396,7 +485,18 @@ export class CoverArt {
         this.attempts.set(w.url, afterFailure(undefined, Date.now(), true));
         return;
       }
-      if (colours().has(key) && !(w.picture && worthKeeping(this.distanceOf(w.url)))) return;
+      const pixels = this.needsPixels(w, key);
+      let shape = this.needsShape(w, key);
+      if (shape && !blob && (isGoogleCover(w.url) || !pixels)) {
+        // Its shape from a plain <img> of the cover itself: Google's thumbnails send no CORS
+        // headers, and an <img> needs none (it's never drawn, so nothing is tainted).
+        const size = await naturalSize(w.url);
+        if (this.disposed) return;
+        if (size) this.gotShape(w.url, key, size.width, size.height);
+        else this.shapeAttempts.set(w.url, afterFailure(this.shapeAttempts.get(w.url), Date.now(), false));
+        shape = false;
+      }
+      if (!pixels && !shape) return;
       if (!blob) {
         const source = pixelSource(w.url, w.isbn);
         if (!source) {
@@ -412,6 +512,12 @@ export class CoverArt {
       }
       const decoded = await decode(blob);
       if (this.disposed) {
+        decoded.done();
+        return;
+      }
+      // The shape from the decoded bitmap (only its size: no drawing here).
+      if (shape && !isGoogleCover(w.url)) this.gotShape(w.url, key, decoded.width, decoded.height);
+      if (!pixels) {
         decoded.done();
         return;
       }

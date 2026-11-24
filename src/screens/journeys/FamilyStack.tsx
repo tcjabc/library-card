@@ -10,6 +10,8 @@ import { thud, vibrationMs } from '../../staircase/dropMotion';
 import { playThud, vibrateLanding } from '../../staircase/dropSound';
 import { useStackCovers } from '../../staircase/coverSetting';
 import { useStackGap } from '../../staircase/gapSetting';
+import { BIGGEST_SHAPED_BOOK } from '../../staircase/bookShapes';
+import { useStackShapes } from '../../staircase/shapeSetting';
 import { useStackSounds, writeStackSounds } from '../../staircase/soundSetting';
 import { SeenTracker, arrival, parseSeen, seenKey, type Arrival, type Seen } from '../../staircase/stackSeen';
 import { isExpanded, sheetBook, sheetHeights, type SheetHeights, type SheetState } from '../../staircase/sheetState';
@@ -113,6 +115,7 @@ export default function FamilyStack({ reader }: { reader: Reader }) {
   const today = useToday();
   const covers = useStackCovers();
   const gap = useStackGap();
+  const coverShapes = useStackShapes();
   const sounds = useStackSounds();
 
   const items = useMemo(
@@ -261,7 +264,7 @@ export default function FamilyStack({ reader }: { reader: Reader }) {
         headerBottom: scroller.getBoundingClientRect().top - pageTop,
         view: scroller.clientHeight,
         bar: d.offsetHeight,
-        reach: eyeLineReach(BIGGEST_BOOK, length('--space-3')),
+        reach: eyeLineReach(coverShapes ? BIGGEST_SHAPED_BOOK : BIGGEST_BOOK, length('--space-3')),
         minHalf: length('--stack-sheet-min-half'),
       });
       setHeights((prev) => (prev && prev.collapsed === next.collapsed && prev.half === next.half && prev.full === next.full ? prev : next));
@@ -272,7 +275,7 @@ export default function FamilyStack({ reader }: { reader: Reader }) {
     resize.observe(scroller);
     resize.observe(d);
     return () => resize.disconnect();
-  }, [scroller]);
+  }, [scroller, coverShapes]);
 
   const label = count === 1 ? t.stackLabelOne : fmt(t.stackLabel, { count: count.toLocaleString(locale) });
 
@@ -321,6 +324,7 @@ export default function FamilyStack({ reader }: { reader: Reader }) {
             onScroller={setScroller}
             paused={sheet === 'full'}
             covers={covers}
+            coverShapes={coverShapes}
             gap={gap}
             drop={greeted?.drop ?? null}
             liveDrops
