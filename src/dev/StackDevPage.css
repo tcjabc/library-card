@@ -196,3 +196,17 @@
   left: 0;
   opacity: 0;
 }
+
+/* Cover diagnostics: one line per book, as copied. */
+.stack-dev__diag {
+  margin: 0;
+  padding: var(--space-2);
+  border: var(--border-thin) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--line-height);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

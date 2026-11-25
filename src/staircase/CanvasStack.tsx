@@ -13,6 +13,7 @@ import {
 import { LruCache, backingSize, canvasScale, cssDuration, cssLength, fitWithEllipsis, graphemes } from './canvasHelpers';
 import { CoverArt, type CoverFade, type CoverWish } from './coverArt';
 import { coverCrop } from './coverColour';
+import { provideCoverReport, type CoverReport } from './coverDiagnostics';
 import { coverJobs, showsPicture, travelOf, type Travel } from './coverPlan';
 import { bookLift, liftAbove, lineLift } from './eyeGap';
 import {
@@ -44,6 +45,7 @@ import {
   type DropWorld,
 } from './dropMotion';
 import { MAX_DROP } from './stackSeen';
+import { flushForTiming, markTainted } from './pixelGuard';
 import {
   DECIDE_AFTER_MS,
   FAN_CAP,
@@ -243,6 +245,8 @@ export interface CanvasStackProps {
   paused?: boolean;
   /** The books' real covers (each item's `cover`): their colour on the spines, their picture on the top faces up close. */
   covers?: boolean;
+  /** Developer tools' Cover diagnostics describe this pile (the Family Staircase's): coverDiagnostics.ts. */
+  reportCovers?: boolean;
   /** Footprints from the covers' shapes and thicknesses from the books (bookShapes.ts); off: the seeded sizes. */
   coverShapes?: boolean;
   /** The gap around the eye-line book (eyeGap.ts): the books above lift away, the books below drop a little. */
@@ -710,6 +714,8 @@ function drawFace(ctx: CanvasRenderingContext2D, face: ProjectedFace, book: Book
       const crop = coverCrop(picture.width, picture.height, shape.width, shape.depth);
       ctx.setTransform(-v.x * scale, -v.y * scale, u.x * scale, u.y * scale, (o.x + v.x) * scale, (o.y + v.y) * scale);
       ctx.globalAlpha = fade.picture;
+      // A Google thumbnail's copy (loaded without CORS) taints this canvas: it's never read (pixelGuard.ts).
+      if (picture.tainted) markTainted(ctx.canvas);
       ctx.drawImage(picture.image, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, 1, 1);
       ctx.globalAlpha = 1;
       ops += 1;
@@ -920,6 +926,7 @@ function CanvasStack({
   label,
   paused = false,
   covers = false,
+  reportCovers = false,
   coverShapes = false,
   gap = false,
   drop = null,
@@ -1017,6 +1024,8 @@ function CanvasStack({
     coverAsk: '',
     coverTimer: 0,
     coverWindow: { ask: '', centre: 0, from: 0, to: 0, travel: 0 as Travel },
+    /** The latest frame's drawn books [from, to) and where `scratch` starts (book base), for the Cover diagnostics. */
+    drawnRange: { base: 0, from: 0, to: 0 },
     /** The frame asked for while a cover fades in (when the camera isn't moving anyway), and what it does. */
     fadeRaf: 0,
     fadeFrame: () => {},
@@ -1188,6 +1197,7 @@ function CanvasStack({
         });
         from = range.start;
         to = range.end;
+        c.drawnRange = { base, from, to };
         kit = {
           scale,
           labels,
@@ -1376,8 +1386,8 @@ function CanvasStack({
       c.frame += 1;
       if (measureRaster && !settled && c.frame % RASTER_EVERY === 0) {
         const flushStart = performance.now();
-        ctx.getImageData(0, 0, 1, 1);
-        raster = performance.now() - flushStart;
+        // Skipped once a Google cover (loaded without CORS) has been drawn here.
+        if (flushForTiming(ctx)) raster = performance.now() - flushStart;
       }
 
       const overlayStart = performance.now();
@@ -1569,6 +1579,35 @@ function CanvasStack({
       run();
     }
   }, [paused, run]);
+
+  // Developer tools' Cover diagnostics: this pile's covers on demand while it's open, its last
+  // report kept as it closes (this cleanup runs before the loader's below is disposed).
+  useEffect(() => {
+    if (!reportCovers) return;
+    const build = (): CoverReport => {
+      const { items } = scene.current;
+      const loader = art.current;
+      const { base, from, to } = cam.current.drawnRange;
+      const projected = scratch.current;
+      return {
+        at: Date.now(),
+        books: items.map((item, i) => {
+          const drawn = i >= from && i < to;
+          const top = drawn ? projected[i - base]?.faces.find((f) => f.side === 'top') : undefined;
+          return {
+            number: i + 1,
+            title: item.title,
+            key: item.isbn,
+            hasCover: !!item.cover,
+            drawn,
+            topPx: top ? faceThickness(top) : null,
+            cover: loader && item.cover ? loader.describe(item.cover, item.isbn) : null,
+          };
+        }),
+      };
+    };
+    return provideCoverReport(build);
+  }, [reportCovers]);
 
   // The real covers: a loader while `covers` is on. A colour or picture arriving draws again
   // (unless a frame is coming anyway, or drawing is paused: then it's caught up later).

@@ -5,6 +5,7 @@ import {
   afterFailure,
   bitmapSize,
   coverKey,
+  coverSource,
   dominantColour,
   isFinalStatus,
   isGoogleCover,
@@ -20,11 +21,13 @@ import {
   spineColours,
   type Attempts,
   type BookColours,
+  type CoverSourceKind,
   type StoredColours,
   type StoredShapes,
 } from './coverColour';
 import { coverAspect } from './bookShapes';
 import { evictions, fadeProgress, fadeStart, sliceHasRoom, worthKeeping } from './coverPlan';
+import { drawGuarded, markTainted, readPixels } from './pixelGuard';
 
 /**
  * Loads the Family Staircase's real covers, away from the draw loop (CanvasStack asks for the
@@ -39,13 +42,17 @@ import { evictions, fadeProgress, fadeStart, sliceHasRoom, worthKeeping } from '
  *
  * - with `shapes`, its shape (width ÷ height, bookShapes.ts), for the book's footprint: from the
  *   bitmap decoded for the colour, or (a Google Books cover, which sends no CORS headers) the
- *   natural size of a plain <img> of the cover itself, never drawn anywhere; kept in the device's
- *   shape cache (localStorage "library-card:cover-shapes", beside the colours).
+ *   natural size of a plain <img> of the cover itself; kept in the device's shape cache
+ *   (localStorage "library-card:cover-shapes", beside the colours).
  *
- * Pixels only ever come through CORS (coverColour.pixelSource) or the app's own photos (blob:
- * URLs), so neither the small canvases nor the pile's canvas is ever tainted. A cover that fails
- * is tried again later, a few times a visit at most (coverColour.afterFailure). A cover arriving
- * for a book on screen fades in (coverPlan.fadeStart); the pile draws the fade.
+ * Where the picture comes from (coverColour.coverSource): the app's own photo (blob: URLs), a
+ * cover read through CORS (Open Library, also for a Google Books cover by its ISBN), or, once
+ * Open Library has no cover for a Google Books book or fails, the Google thumbnail itself as a
+ * plain <img>. That one is drawn but never read: its small copy is marked tainted, it gives no
+ * colour (the spine keeps the book's own), and the pile's canvas, which then holds it, is never
+ * read either (pixelGuard.ts). A cover that fails is tried again later, a few times a visit at
+ * most (coverColour.afterFailure), also while the camera rests. A cover arriving for a book on
+ * screen fades in (coverPlan.fadeStart); the pile draws the fade.
  */
 
 /** Covers loading at once. */
@@ -58,11 +65,15 @@ const TINTS_PER_SLICE = 40;
 const FALLBACK_SLICE_MS = 6;
 /** The colour cache is written this long after the last new colour (ms). */
 const SAVE_AFTER_MS = 1000;
+/** A cover waiting to be tried again is looked at this long after its wait ends (ms). */
+const WAKE_SLACK_MS = 50;
 
 export interface CoverPicture {
   image: CanvasImageSource;
   width: number;
   height: number;
+  /** A copy of a picture loaded without CORS (a Google thumbnail): drawable, never read back. */
+  tainted?: boolean;
 }
 
 /** A book the pile would like covered: `picture` when its top face may show it soon. */
@@ -80,6 +91,25 @@ export interface CoverAsk {
   drawn: ReadonlySet<string>;
   /** A cover's nearest book's distance from the camera (books), Infinity if it's not in the pile. */
   distanceOf: (url: string) => number;
+}
+
+/** A cover's state for the developer tools' Cover diagnostics (coverDiagnostics.ts). */
+export interface CoverState {
+  /** Where its picture comes from now. */
+  source: CoverSourceKind;
+  state: 'not requested' | 'loading' | 'ready' | 'failed' | 'backoff';
+  /** The last failure from the current source: an HTTP status ("404"), "network", "no source", "not a picture", "image failed". */
+  reason: string | null;
+  /** In backoff: not tried again before this time (ms, Date.now()). */
+  until: number | null;
+  /** Tries so far from the current source this visit. */
+  attempts: number;
+  /** A Google cover drawn from its thumbnail: why Open Library didn't give it ("404", "429", "no ISBN"). */
+  openLibrary: string | null;
+  /** This device's colour cache: a colour, "none" (the cover has no usable colour), or not known yet. */
+  colour: 'yes' | 'none' | 'no';
+  /** This device's shape cache has its shape. */
+  shape: boolean;
 }
 
 // The device's colour cache, read once per page and shared by every pile.
@@ -143,12 +173,15 @@ export function forgetCoverColours(): void {
   storedShapes = null;
 }
 
-/** A cover's natural size from a plain <img> (no CORS needed, never drawn), or null if it won't load. */
-function naturalSize(url: string): Promise<{ width: number; height: number } | null> {
+/**
+ * A plain <img> of a cover (no crossOrigin attribute: no CORS needed), decoded, or null if it
+ * won't load. Its pixels can never be read; it is only measured (natural size) or drawn.
+ */
+function plainImage(url: string): Promise<HTMLImageElement | null> {
   return new Promise((resolve) => {
     const img = new Image();
     img.decoding = 'async';
-    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    img.onload = () => resolve(img.naturalWidth > 0 && img.naturalHeight > 0 ? img : null);
     img.onerror = () => resolve(null);
     img.src = url;
   });
@@ -173,6 +206,8 @@ interface Decoded {
   width: number;
   height: number;
   done: () => void;
+  /** Loaded without CORS (a Google thumbnail's plain <img>): drawn, never read. */
+  tainted?: boolean;
 }
 
 /** A blob as something drawable, by createImageBitmap (decoded off the main thread) or an <img> of its own blob: URL. */
@@ -197,6 +232,13 @@ class HttpError extends Error {
   constructor(readonly status: number) {
     super(`HTTP ${status}`);
   }
+}
+
+/** Why a fetch failed, for the diagnostics. */
+function failureReason(error: unknown): string {
+  if (error instanceof HttpError) return String(error.status);
+  if (error instanceof TypeError) return 'network';
+  return 'not a picture';
 }
 
 type Slice = (timeRemaining: () => number) => void;
@@ -246,21 +288,34 @@ export interface CoverFade {
 
 const FADED: CoverFade = { colour: 1, picture: 1, shape: 1 };
 
+/** What a wish needs loaded now: its pixels through CORS, its Google thumbnail as a plain <img>, or nothing. */
+type Job = 'cors' | 'img' | null;
+
 export class CoverArt {
   /** Cover URL -> colour cache key (a photo's needs its bytes hashed first). */
   private readonly keys = new Map<string, string | null>();
   /** Colour cache key -> spine colours for this ink (null: no usable colour). */
   private readonly tints = new Map<string, BookColours | null>();
   private readonly pictures = new Map<string, Kept>();
+  /** Tries of a cover's CORS source (Open Library, by ISBN for a Google cover; a photo; any other https cover). */
   private readonly attempts = new Map<string, Attempts>();
+  /** Tries of a Google cover's own thumbnail as a plain <img>, once Open Library has no cover or fails. */
+  private readonly imgAttempts = new Map<string, Attempts>();
   /** Shape reads fail and back off on their own (a Google cover's <img> is a different fetch). */
   private readonly shapeAttempts = new Map<string, Attempts>();
+  /** The last failure of each (diagnostics). */
+  private readonly failures = new Map<string, string>();
+  private readonly imgFailures = new Map<string, string>();
   private readonly loading = new Set<string>();
   /** Covers fetched and decoded, waiting to be measured (not fetched again meanwhile). */
   private readonly arrived = new Set<string>();
+  /** Covers passed over while loading or waiting to be measured: looked at again when that ends. */
+  private readonly revisit = new Set<string>();
   private readonly fades = new Map<string, Fade>();
   private measures: Measure[] = [];
   private queue: readonly CoverWish[] = [];
+  /** The covers whose pictures the latest ask wants (a load started earlier for a colour only may now need its picture too). */
+  private pictureWanted: ReadonlySet<string> = new Set();
   /** Where the next look for work in `queue` starts (everything before it is taken or not needed now). */
   private cursor = 0;
   private tintCursor = 0;
@@ -270,6 +325,9 @@ export class CoverArt {
   private pumping = false;
   private changed = false;
   private disposed = false;
+  /** The earliest time a cover waiting to be tried again may be (ms, Date.now()), and its timer. */
+  private wakeAt = Infinity;
+  private wakeTimer = 0;
   private readonly ink: string;
   private readonly onChange: () => void;
   private readonly reduced: () => boolean;
@@ -337,6 +395,35 @@ export class CoverArt {
     return { pictures: this.pictures.size, bytes };
   }
 
+  /** A cover's state on this device now (developer tools' Cover diagnostics; a few lookups). */
+  describe(url: string, isbn: string): CoverState {
+    const key = this.keyOf(url);
+    const raw = key ? colours().get(key) : undefined;
+    const colour = raw === undefined ? 'no' : raw ? 'yes' : 'none';
+    const shape = !!key && shapes().has(key);
+    const corsFailed = this.openLibraryFailed(url);
+    const source = coverSource(url, isbn, corsFailed).kind;
+    const google = source === 'google';
+    const tries = (google ? this.imgAttempts : this.attempts).get(url);
+    const reason = (google ? this.imgFailures : this.failures).get(url) ?? null;
+    const openLibrary = google ? (this.failures.get(url) ?? (pixelSource(url, isbn) ? null : 'no ISBN')) : null;
+    let state: CoverState['state'];
+    if (this.pictures.has(url)) state = 'ready';
+    else if (this.loading.has(url) || this.arrived.has(url)) state = 'loading';
+    else if (!tries) state = 'not requested';
+    else state = tries.done ? 'failed' : 'backoff';
+    return {
+      source,
+      state,
+      reason,
+      until: state === 'backoff' && tries ? tries.nextAt : null,
+      attempts: tries?.tries ?? 0,
+      openLibrary,
+      colour,
+      shape,
+    };
+  }
+
   /**
    * The books near the camera, most wanted first. Replaces what was asked before; pictures are
    * released by coverPlan.evictions. Loading and measuring happen later, in idle time.
@@ -344,6 +431,9 @@ export class CoverArt {
   want(ask: CoverAsk): void {
     if (this.disposed) return;
     this.queue = ask.wishes;
+    const pictureWanted = new Set<string>();
+    for (const w of ask.wishes) if (w.picture) pictureWanted.add(w.url);
+    this.pictureWanted = pictureWanted;
     this.cursor = 0;
     this.tintCursor = 0;
     this.drawn = ask.drawn;
@@ -355,6 +445,8 @@ export class CoverArt {
   dispose(): void {
     this.disposed = true;
     this.queue = [];
+    window.clearTimeout(this.wakeTimer);
+    this.wakeTimer = 0;
     for (const m of this.measures) m.decoded.done();
     this.measures = [];
     this.arrived.clear();
@@ -379,10 +471,34 @@ export class CoverArt {
     return this.keys.get(url) ?? (isPhotoUrl(url) ? undefined : coverKey(url));
   }
 
-  private needsPixels(w: CoverWish, key: string | null | undefined): boolean {
-    if (!mayTry(this.attempts.get(w.url), Date.now())) return false;
+  /** Its CORS source has failed at least once this visit (for a Google cover: its picture comes from Google now). */
+  private openLibraryFailed(url: string): boolean {
+    return (this.attempts.get(url)?.tries ?? 0) > 0;
+  }
+
+  /** The latest ask wants this cover's picture, and it isn't kept yet. */
+  private wantsPicture(url: string): boolean {
+    return this.pictureWanted.has(url) && !this.pictures.has(url) && worthKeeping(this.distanceOf(url));
+  }
+
+  /**
+   * What to load for a wish now. Through CORS while its colour isn't known or its picture is
+   * wanted (and that source may be tried); for a Google cover whose Open Library cover is missing
+   * or failing, the picture from its own thumbnail instead, and Open Library again only for the
+   * colour, once its wait is over.
+   */
+  private job(w: CoverWish, key: string | null | undefined): Job {
+    const now = Date.now();
     const known = key ? colours().has(key) : false;
-    return !known || (w.picture && !this.pictures.has(w.url) && worthKeeping(this.distanceOf(w.url)));
+    const picture = this.wantsPicture(w.url);
+    const source = coverSource(w.url, w.isbn, this.openLibraryFailed(w.url));
+    if (source.kind === 'none') return null;
+    if (source.kind === 'google') {
+      if (picture && mayTry(this.imgAttempts.get(w.url), now)) return 'img';
+      return !known && pixelSource(w.url, w.isbn) && mayTry(this.attempts.get(w.url), now) ? 'cors' : null;
+    }
+    if (!mayTry(this.attempts.get(w.url), now)) return null;
+    return !known || picture ? 'cors' : null;
   }
 
   private needsShape(w: CoverWish, key: string | null | undefined): boolean {
@@ -391,9 +507,36 @@ export class CoverArt {
   }
 
   private needs(w: CoverWish): boolean {
-    if (this.loading.has(w.url) || this.arrived.has(w.url)) return false;
+    if (this.loading.has(w.url) || this.arrived.has(w.url)) {
+      // Busy: looked at again when that's done (its picture may be wanted by now).
+      this.revisit.add(w.url);
+      return false;
+    }
     const key = this.keyOf(w.url);
-    return this.needsPixels(w, key) || this.needsShape(w, key);
+    return this.job(w, key) !== null || this.needsShape(w, key);
+  }
+
+  /** A try failed: back off (coverColour.afterFailure), and look again when the wait is over, even with the camera at rest. */
+  private failed(tries: Map<string, Attempts>, url: string, final: boolean): void {
+    const next = afterFailure(tries.get(url), Date.now(), final);
+    tries.set(url, next);
+    if (!next.done) this.wakeLater(next.nextAt);
+  }
+
+  private wakeLater(at: number): void {
+    if (this.disposed || !(at < this.wakeAt)) return;
+    this.wakeAt = at;
+    window.clearTimeout(this.wakeTimer);
+    this.wakeTimer = window.setTimeout(
+      () => {
+        this.wakeTimer = 0;
+        this.wakeAt = Infinity;
+        if (this.disposed) return;
+        this.cursor = 0;
+        this.pump();
+      },
+      Math.max(0, at - Date.now()) + WAKE_SLACK_MS,
+    );
   }
 
   /** A cover's shape is known: kept, and eased in if its book is on screen. */
@@ -435,6 +578,9 @@ export class CoverArt {
         this.loading.add(w.url);
         void this.load(w).finally(() => {
           this.loading.delete(w.url);
+          // Passed over meanwhile, or something left to do (a Google cover's picture once Open
+          // Library failed): look through the queue again.
+          if (this.revisit.delete(w.url) || this.needs(w)) this.cursor = 0;
           this.pump();
         });
       }
@@ -482,27 +628,33 @@ export class CoverArt {
         this.keys.set(w.url, key);
       }
       if (!key) {
+        this.failures.set(w.url, 'no source');
         this.attempts.set(w.url, afterFailure(undefined, Date.now(), true));
         return;
       }
-      const pixels = this.needsPixels(w, key);
+      const job = this.job(w, key);
       let shape = this.needsShape(w, key);
-      if (shape && !blob && (isGoogleCover(w.url) || !pixels)) {
+      if (job === 'img') {
+        await this.loadThumbnail(w, key, shape);
+        return;
+      }
+      if (shape && !blob && (isGoogleCover(w.url) || !job)) {
         // Its shape from a plain <img> of the cover itself: Google's thumbnails send no CORS
-        // headers, and an <img> needs none (it's never drawn, so nothing is tainted).
-        const size = await naturalSize(w.url);
+        // headers, and an <img> needs none (only its size is read here).
+        const img = await plainImage(w.url.replace(/^http:/i, 'https:'));
         if (this.disposed) return;
-        if (size) this.gotShape(w.url, key, size.width, size.height);
-        else this.shapeAttempts.set(w.url, afterFailure(this.shapeAttempts.get(w.url), Date.now(), false));
+        if (img) this.gotShape(w.url, key, img.naturalWidth, img.naturalHeight);
+        else this.failed(this.shapeAttempts, w.url, false);
         shape = false;
       }
-      if (!pixels && !shape) return;
+      if (!job) return;
       if (!blob) {
         const source = pixelSource(w.url, w.isbn);
         if (!source) {
-          // Nowhere to read it from (a Google cover with no ISBN): the book keeps its own colour.
+          // Nowhere to read it from: the book keeps its own colour.
           rememberColour(colours(), key, null);
           saveSoon();
+          this.failures.set(w.url, 'no source');
           this.attempts.set(w.url, afterFailure(undefined, Date.now(), true));
           return;
         }
@@ -517,38 +669,55 @@ export class CoverArt {
       }
       // The shape from the decoded bitmap (only its size: no drawing here).
       if (shape && !isGoogleCover(w.url)) this.gotShape(w.url, key, decoded.width, decoded.height);
-      if (!pixels) {
-        decoded.done();
-        return;
-      }
       this.measures.push({ wish: w, key, decoded });
       this.arrived.add(w.url);
     } catch (error) {
       // Offline, CORS refused, a 403/429/5xx, or a file that isn't a picture: back off, a few tries a visit.
-      const final = error instanceof HttpError ? isFinalStatus(error.status) : false;
-      this.attempts.set(w.url, afterFailure(this.attempts.get(w.url), Date.now(), final));
+      this.failures.set(w.url, failureReason(error));
+      this.failed(this.attempts, w.url, error instanceof HttpError ? isFinalStatus(error.status) : false);
     }
   }
 
-  /** In an idle slice: draw an arrived cover small, read its colour if it's new, keep the picture if it's still near. */
+  /**
+   * A Google cover whose Open Library cover is missing or failing: its own thumbnail as a plain
+   * <img> (no CORS), its shape from that, and its picture drawn from it in measure() (never read).
+   */
+  private async loadThumbnail(w: CoverWish, key: string, shape: boolean): Promise<void> {
+    const source = coverSource(w.url, w.isbn, true);
+    const img = source.url ? await plainImage(source.url) : null;
+    if (this.disposed) return;
+    if (!img) {
+      this.imgFailures.set(w.url, 'image failed');
+      this.failed(this.imgAttempts, w.url, false);
+      return;
+    }
+    if (shape) this.gotShape(w.url, key, img.naturalWidth, img.naturalHeight);
+    this.measures.push({ wish: w, key, decoded: { source: img, width: img.naturalWidth, height: img.naturalHeight, done: () => {}, tainted: true } });
+    this.arrived.add(w.url);
+  }
+
+  /** In an idle slice: draw an arrived cover small, read its colour if it's new (never a tainted one), keep the picture if it's still wanted. */
   private measure({ wish: w, key, decoded }: Measure): void {
     try {
-      const wantColour = !colours().has(key);
-      const wantPicture = w.picture && !this.pictures.has(w.url) && worthKeeping(this.distanceOf(w.url));
+      const wantColour = !decoded.tainted && !colours().has(key);
+      // The latest ask decides (it may want the picture of a cover first loaded for its colour only).
+      const wantPicture = this.wantsPicture(w.url);
       if (!wantColour && !wantPicture) return;
       const size = bitmapSize(decoded.width, decoded.height);
       const small = document.createElement('canvas');
       small.width = size.width;
       small.height = size.height;
-      small.getContext('2d')?.drawImage(decoded.source, 0, 0, size.width, size.height);
+      const smallCtx = small.getContext('2d');
+      if (smallCtx) drawGuarded(smallCtx, decoded.source, 0, 0, size.width, size.height, decoded.tainted);
+      else if (decoded.tainted) markTainted(small);
       if (wantColour) {
         const sample = document.createElement('canvas');
         sample.width = COLOUR_SAMPLE_PX;
         sample.height = COLOUR_SAMPLE_PX;
         const ctx = sample.getContext('2d', { willReadFrequently: true });
         if (ctx) {
-          ctx.drawImage(small, 0, 0, COLOUR_SAMPLE_PX, COLOUR_SAMPLE_PX);
-          const colour = dominantColour(ctx.getImageData(0, 0, COLOUR_SAMPLE_PX, COLOUR_SAMPLE_PX).data);
+          drawGuarded(ctx, small, 0, 0, COLOUR_SAMPLE_PX, COLOUR_SAMPLE_PX);
+          const colour = dominantColour(readPixels(ctx, 0, 0, COLOUR_SAMPLE_PX, COLOUR_SAMPLE_PX));
           rememberColour(colours(), key, colour);
           this.tints.delete(key);
           saveSoon();
@@ -556,16 +725,18 @@ export class CoverArt {
         }
       }
       if (wantPicture) {
-        this.pictures.set(w.url, { picture: { image: small, width: size.width, height: size.height }, used: ++this.used });
+        this.pictures.set(w.url, { picture: { image: small, width: size.width, height: size.height, tainted: decoded.tainted }, used: ++this.used });
         this.startFade(w.url, 'picture');
         this.trim();
       } else release({ image: small, width: 0, height: 0 });
       this.note(w.url);
     } catch {
-      this.attempts.set(w.url, afterFailure(this.attempts.get(w.url), Date.now(), false));
+      if (decoded.tainted) this.failed(this.imgAttempts, w.url, false);
+      else this.failed(this.attempts, w.url, false);
     } finally {
       decoded.done();
       this.arrived.delete(w.url);
+      if (this.revisit.delete(w.url)) this.cursor = 0;
     }
   }
 }

@@ -13,6 +13,7 @@ import {
   contrastRatio,
   coverCrop,
   coverKey,
+  coverSource,
   dominantColour,
   hslToRgb,
   isFinalStatus,
@@ -168,6 +169,39 @@ describe('cover keys and where pixels come from', () => {
   it('nothing to read from an address that isn’t http(s)', () => {
     expect(pixelSource('ftp://example.org/x.jpg', ISBN)).toBeNull();
     expect(pixelSource('cover:abc', ISBN)).toBeNull();
+  });
+});
+
+describe('where the top-face picture comes from: photo > Open Library > Google img > none', () => {
+  const ISBN = '9789571234567';
+  const OL = `https://covers.openlibrary.org/b/isbn/${ISBN}-M.jpg?default=false`;
+  const GOOGLE = 'http://books.google.com/books/content?id=abc&printsec=frontcover&img=1&zoom=1';
+
+  it('a photo from itself', () => {
+    expect(coverSource('blob:http://localhost/1234', ISBN)).toEqual({ kind: 'photo', url: 'blob:http://localhost/1234' });
+    expect(coverSource('blob:http://localhost/1234', ISBN, true)).toEqual({ kind: 'photo', url: 'blob:http://localhost/1234' });
+  });
+
+  it('an Open Library cover through CORS, also after a failure (it backs off and is tried again)', () => {
+    expect(coverSource(OL, ISBN)).toEqual({ kind: 'openlibrary', url: `${OL}&${PIXELS_PARAM}` });
+    expect(coverSource(OL, ISBN, true)).toEqual({ kind: 'openlibrary', url: `${OL}&${PIXELS_PARAM}` });
+  });
+
+  it('a Google cover: Open Library by ISBN first, then the Google thumbnail itself (https) once that is missing or fails', () => {
+    expect(coverSource(GOOGLE, ISBN)).toEqual({ kind: 'openlibrary', url: `${OL}&${PIXELS_PARAM}` });
+    expect(coverSource(GOOGLE, ISBN, true)).toEqual({ kind: 'google', url: GOOGLE.replace('http:', 'https:') });
+  });
+
+  it('a Google cover with no ISBN to ask Open Library by: the thumbnail straight away', () => {
+    expect(coverSource(GOOGLE, 'noisbn-123')).toEqual({ kind: 'google', url: GOOGLE.replace('http:', 'https:') });
+    expect(coverSource(GOOGLE, '0439708184')).toEqual({ kind: 'google', url: GOOGLE.replace('http:', 'https:') });
+  });
+
+  it('any other https cover through CORS; nothing for no cover or another scheme', () => {
+    expect(coverSource('https://example.org/c.jpg', ISBN)).toEqual({ kind: 'cors', url: `https://example.org/c.jpg?${PIXELS_PARAM}` });
+    expect(coverSource(null, ISBN)).toEqual({ kind: 'none', url: null });
+    expect(coverSource('ftp://example.org/x.jpg', ISBN)).toEqual({ kind: 'none', url: null });
+    expect(coverSource('cover:abc', ISBN)).toEqual({ kind: 'none', url: null });
   });
 });
 

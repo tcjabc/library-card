@@ -12,6 +12,7 @@ import { stackMarkers } from '../staircase/stackItems';
 import { useStackCovers, writeStackCovers } from '../staircase/coverSetting';
 import { useStackGap, writeStackGap } from '../staircase/gapSetting';
 import { useStackShapes, writeStackShapes } from '../staircase/shapeSetting';
+import { coverReportLines, latestCoverReport, type CoverReport } from '../staircase/coverDiagnostics';
 import { AREA, STANDARD_DEPTH, STANDARD_WIDTH, STRENGTH, VARIETY, WIDTH_RANGE, ASPECT_RANGE } from '../staircase/bookShapes';
 import { GAP_UP_PX, GAP_DOWN_PX } from '../staircase/eyeGap';
 import { GAP_DOWN, GAP_RAMP, GAP_UP, fakeStackItems, generateFakeStack, spineHue } from '../staircase/stackModel';
@@ -475,6 +476,41 @@ function DropControls({ onReplay }: { onReplay: (count: number) => void }) {
   );
 }
 
+/** "Cover diagnostics": the Family Staircase pile's covers on this device (coverDiagnostics.ts), to read or copy. */
+function CoverDiagnostics({ version }: { version: string }) {
+  const [report, setReport] = useState<CoverReport | null>(() => latestCoverReport());
+  const [copied, setCopied] = useState<boolean | null>(null);
+  const clock = useMemo(() => new Intl.DateTimeFormat(strings.app.locale, { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }), []);
+  const lines = report ? coverReportLines(report, t, (ms) => clock.format(ms)) : null;
+  const copy = async () => {
+    if (lines) setCopied(await copyText([version, ...lines].join('\n')));
+  };
+  return (
+    <div className="stack-dev__controls">
+      <p className="small">
+        <strong>{t.coverDiagHeading}</strong> {t.coverDiagIntro}
+      </p>
+      {lines ? <pre className="stack-dev__diag">{lines.join('\n')}</pre> : <p className="small muted">{t.coverDiagEmpty}</p>}
+      <button
+        type="button"
+        className="chip"
+        onClick={() => {
+          setReport(latestCoverReport());
+          setCopied(null);
+        }}
+      >
+        {t.coverDiagRefresh}
+      </button>
+      <button type="button" className="chip" disabled={!lines} onClick={() => void copy()}>
+        {t.coverDiagCopy}
+      </button>
+      <p className="small muted" role="status">
+        {copied === true ? t.measureCopied : copied === false ? t.coverDiagCopyFailed : ''}
+      </p>
+    </div>
+  );
+}
+
 function modeName(mode: StackMode): string {
   if (mode === 'canvas') return t.measureModeCanvas;
   return mode === 'lite' ? t.measureModeLite : t.measureMode3d;
@@ -756,6 +792,7 @@ function MeasurePanel({
         </div>
       )}
       {mode === 'canvas' && <DropControls onReplay={onReplay} />}
+      <CoverDiagnostics version={version} />
       <dl className="stack-dev__readout">
         {lines.map(([label, value]) => (
           <div key={label} className="stack-dev__line">

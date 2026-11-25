@@ -38,4 +38,19 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // The Family Staircase draws Google covers loaded without CORS (they taint the canvas):
+    // pixels are read only through src/staircase/pixelGuard.ts, which refuses a tainted canvas.
+    files: ['src/staircase/**/*.{ts,tsx}'],
+    ignores: ['src/staircase/pixelGuard.ts', 'src/staircase/__tests__/**'],
+    rules: {
+      'no-restricted-properties': [
+        'error',
+        ...['getImageData', 'toDataURL', 'toBlob', 'convertToBlob'].map((property) => ({
+          property,
+          message: 'Read pixels only through pixelGuard.ts (readPixels / flushForTiming): a canvas may hold a picture loaded without CORS.',
+        })),
+      ],
+    },
+  },
 );

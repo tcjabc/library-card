@@ -63,7 +63,7 @@ Books differ in page size like real books: tall picture books, square books and 
   its own book's footprint: the pile's height, the scroll mapping and every other book stay where they are.
 - **Where the shape comes from**: the app's own photos and Open Library covers from the bitmap the loader already
   decodes for the colour; **Google Books** covers (no CORS headers) from the natural size of a plain `<img>` of the
-  cover itself, never drawn to a canvas, so nothing is tainted. Read in idle time with the colours (the 60 books
+  cover itself (the same `<img>` its top-face picture is drawn from, see Covers). Read in idle time with the colours (the 60 books
   nearest the camera first), with their own retries and back-off; never on a frame.
 - **The shape cache**: on this device only, in localStorage `library-card:cover-shapes` (beside the colour cache,
   keyed the same way: a photo by its bytes' SHA-256, a catalogue cover by its address), at most 2,000. Never synced,
@@ -160,13 +160,31 @@ them). Nothing changes in the data, sync or backups: the covers are the books' o
   `--duration-crossfade` (160 ms): the book's own colour, then its cover's colour and picture over it together.
   The pile draws only while a fade runs (no idle loop). With reduced motion it switches at once. A cover arriving
   for a book off screen just shows when the book comes into view.
-- **Sources and CORS**: the canvas is never tainted, since pixels only come from CORS responses or the app's own
-  photos. Photos (`cover:<hash>`) come from the store's blob: URLs. Open Library covers (and archive.org, where
-  they redirect) send CORS headers; they are fetched with an extra `lc-pixels=1` parameter so the service worker's
-  opaque copy (cached for `<img>`) never answers. **Google Books thumbnails send no CORS headers**, so for them the
-  Open Library cover for the same ISBN is used; with none, the book keeps its own colour and a flat top face.
+- **Where the picture comes from** (`coverColour.coverSource`, in this order): the app's own **photo**
+  (`cover:<hash>`, from the store's blob: URL); a cover read through **CORS**: Open Library (and archive.org, where
+  it redirects), also for a Google Books cover by the book's ISBN, fetched with an extra `lc-pixels=1` parameter so
+  the service worker's opaque copy (cached for `<img>`) never answers; else the **Google Books thumbnail itself as
+  a plain `<img>`** (1.13.1); else none. Google's thumbnails send no CORS headers, so a Google cover tries Open
+  Library's cover for its ISBN first (it gives the spine its colour); once that is missing (404), fails (403, 429,
+  offline…) or there's no ISBN to ask by, its picture comes from the Google `<img>` (no `crossOrigin`), with the
+  same size, idle-time, picture-cache, fade and back-off rules as any other cover, cropped and drawn on the top face
+  the same way. Its spine keeps the book's own colour (its pixels can't be read); Open Library is still asked again
+  for the colour when its wait is over. Before 1.13.1 such books (a Google-only cover with no Open Library cover,
+  for example a Taiwanese edition, which looks Google Books up first) kept a flat top face and their own spine colour.
+- **Never reading a tainted canvas**: drawing a picture loaded without CORS works, but taints the canvas it is drawn
+  on, and reading pixels from a tainted canvas throws. `src/staircase/pixelGuard.ts` is the only staircase code
+  allowed to read pixels (an ESLint rule bans `getImageData`, `toDataURL`, `toBlob` and `convertToBlob` in
+  `src/staircase` everywhere else, and a unit test scans the sources too). A Google cover's small copy is marked
+  tainted, a marked canvas drawn onto another marks that one too, the pile's canvas is marked when it draws one,
+  and `readPixels` refuses a marked canvas. The colour sampler reads only its own 16 × 16 canvas, drawn from
+  CORS-safe covers. The pile's canvas is never read in the app; the developer tools' "Measure raster" probe goes
+  through the guard and is skipped once a Google cover has been drawn on it. Checked in headless Chrome (desktop
+  Chrome 157, with and without the service worker); on Safari and iOS drawing a cross-origin `<img>` to a canvas is
+  standard, but it hasn't been checked on a device yet.
 - **Failures**: a 404 (or other final answer) isn't asked again this visit; a 403, 429, 5xx, offline or CORS
-  refusal is tried again after 30 s, then 60 s, at most 3 times a visit.
+  refusal is tried again after 30 s, then 60 s, at most 3 times a visit per source (Open Library, the Google
+  `<img>`), also while the camera rests (1.13.0 waited until the camera moved). A cover first loaded for its colour
+  only, whose book comes into view meanwhile, gets its picture when the load ends, without another ask.
 - **The colour cache**: on this device only, in **localStorage** (`library-card:cover-colours`): one small entry
   per cover (a photo by its bytes' SHA-256, a catalogue cover by its address), at most 2,000 (the oldest go first),
   "no usable colour" included. Never synced, never in a backup, cleared by "Reset this device" with the app's other
@@ -177,6 +195,14 @@ them). Nothing changes in the data, sync or backups: the covers are the books' o
   was in 1.10.0. The book stack page gives its pretend piles pretend covers while it's on, so the benchmark
   measures them; a benchmark result says whether covers were on, and the page's readout shows the cover pictures
   kept and their memory ("Cover pictures kept").
+- **Cover diagnostics** (Developer tools → Book stack, 1.13.1): the Family Staircase's pile as it was when it was
+  last open on this device, newest first: for each book its title and key, where its cover comes from (photo /
+  Open Library / Google img, with why Open Library didn't give it / none), its state (not requested, loading,
+  ready, failed with the reason and tries, backoff until when), whether this device has its colour and shape
+  cached, and its top face: the cover, or why it is flat (no cover, covers off, failed, backoff, outside draw
+  range, top face not showing, LOD, loading, not requested). "Copy" copies it as text with the version line, to
+  paste from a phone. Local only (`src/staircase/coverDiagnostics.ts`): in memory and in this tab's
+  sessionStorage (`library-card:cover-report`, gone when the app closes), never synced or sent.
 
 ## Time zone
 

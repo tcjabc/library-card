@@ -324,6 +324,7 @@ export default function FamilyStack({ reader }: { reader: Reader }) {
             onScroller={setScroller}
             paused={sheet === 'full'}
             covers={covers}
+            reportCovers
             coverShapes={coverShapes}
             gap={gap}
             drop={greeted?.drop ?? null}

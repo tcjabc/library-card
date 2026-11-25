@@ -195,7 +195,7 @@ export function isOpenLibraryCover(url: string): boolean {
   return !!host && (host === 'covers.openlibrary.org' || host === 'archive.org' || host.endsWith('.archive.org'));
 }
 
-/** Google Books' thumbnails send no CORS headers: their pixels can't be read (or drawn) without tainting the canvas. */
+/** Google Books' thumbnails send no CORS headers: drawn, they taint the canvas, so their pixels are never read (pixelGuard.ts). */
 export function isGoogleCover(url: string): boolean {
   const host = hostOf(url);
   return !!host && (host === 'books.google.com' || /^books\.google\.[a-z.]+$/.test(host) || host.endsWith('.googleusercontent.com'));
@@ -221,6 +221,38 @@ export function pixelSource(url: string, isbn: string): string | null {
     return /^\d{13}$/.test(isbn) ? withPixelsParam(`https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg?default=false`) : null;
   }
   return withPixelsParam(secure);
+}
+
+/**
+ * Where a book's top-face picture comes from: the app's own photo; a cover whose pixels may be
+ * read (Open Library: by its address or, for a Google Books cover, by the book's ISBN; any other
+ * https cover by its address); else the Google Books thumbnail itself, loaded as a plain <img>
+ * (no CORS: it can be drawn but never read back, coverArt.ts); else none.
+ */
+export type CoverSourceKind = 'photo' | 'openlibrary' | 'cors' | 'google' | 'none';
+
+export interface CoverSource {
+  kind: CoverSourceKind;
+  /** What to fetch with CORS ('photo', 'openlibrary', 'cors') or load as a plain <img> ('google'); null for 'none'. */
+  url: string | null;
+}
+
+/**
+ * The source for a cover (photo > Open Library > Google <img> > none). A Google Books cover is
+ * read through Open Library's cover for its ISBN first (it gives the spine its colour too); once
+ * that is missing or fails (`openLibraryFailed`), or with no ISBN to ask by, its picture comes
+ * from the Google thumbnail as a plain <img>, and the spine keeps the book's own colour.
+ */
+export function coverSource(url: string | null, isbn: string, openLibraryFailed = false): CoverSource {
+  if (!url) return { kind: 'none', url: null };
+  if (isPhotoUrl(url)) return { kind: 'photo', url };
+  const secure = url.replace(/^http:/i, 'https:');
+  if (!/^https:\/\//i.test(secure)) return { kind: 'none', url: null };
+  if (isGoogleCover(secure)) {
+    const openLibrary = openLibraryFailed ? null : pixelSource(secure, isbn);
+    return openLibrary ? { kind: 'openlibrary', url: openLibrary } : { kind: 'google', url: secure };
+  }
+  return { kind: isOpenLibraryCover(secure) ? 'openlibrary' : 'cors', url: withPixelsParam(secure) };
 }
 
 // ---------------------------------------------------------------------------
