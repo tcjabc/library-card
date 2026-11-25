@@ -347,6 +347,11 @@ export type ParentNotePatch = Partial<Pick<ParentNote, 'target' | 'trigger' | 't
 
 export type NewCollection = Pick<Collection, 'household_id' | 'title'> & Partial<Pick<Collection, 'cover_url' | 'isbn' | 'expected_count'>>;
 export type CollectionPatch = Partial<Pick<Collection, 'title' | 'cover_url' | 'isbn' | 'expected_count'>>;
+/** One book for setBooksCollection: its key and its number in the collection (missing or null: none). */
+export interface BookCollectionEntry {
+  isbn: BookKey;
+  volume?: number | null;
+}
 
 export type NewLibraryCard = Pick<LibraryCard, 'household_id' | 'reader_id' | 'value' | 'format'> &
   Partial<Pick<LibraryCard, 'library_id' | 'label'>>;
@@ -528,6 +533,15 @@ export interface DataStore {
    * "not_found" for an unknown book or collection, "invalid" for a bad number.
    */
   setBookCollection(isbn: BookKey, collectionId: Id, volume: number | null): Promise<Book>;
+  /**
+   * Puts several saved books in a collection at once (each moving out of any other), with their
+   * numbers (1–9999; missing or null: none), and puts each one at Home if it isn't (a borrowed
+   * book), so the set shows on the shelf. Everything is checked first ("not_found" for an unknown
+   * collection, "invalid" for a bad number or a book listed twice), then every book is written in
+   * one transaction with one change notification. Books that don't exist (any more) are skipped.
+   * Returns how many books were put in the collection.
+   */
+  setBooksCollection(collectionId: Id, entries: readonly BookCollectionEntry[]): Promise<number>;
   /** Takes a book out of its collection (the book is kept). */
   clearBookCollection(isbn: BookKey): Promise<Book>;
   /** The collection's books, by number (unnumbered last), then key. */

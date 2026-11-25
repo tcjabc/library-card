@@ -500,6 +500,28 @@
   gap: var(--space-2);
 }
 
+/* Picking books for a set: tick rows (the whole row is the tick's label), the number once ticked. */
+.gu-pick {
+  grid-template-columns: var(--tap-target-grownup) var(--list-cover-height) minmax(0, 1fr) var(--badge-size);
+  cursor: pointer;
+}
+
+.gu-pick__tick {
+  justify-self: center;
+  width: var(--space-5);
+  height: var(--space-5);
+  margin: 0;
+  accent-color: var(--color-brand);
+}
+
+.gu-pick__body {
+  gap: var(--space-1);
+}
+
+.gu-pick__tags {
+  gap: var(--space-1);
+}
+
 .input--number,
 .row > .input--number {
   flex: none;

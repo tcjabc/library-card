@@ -1078,6 +1078,12 @@ img {
   font-weight: var(--weight-bold);
 }
 
+/* A tag that warns about what saving will do ("moves from …"). */
+.chip-tag--warn {
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
 @media (max-width: 26rem) {
   .set-sheet__slot {
     grid-template-columns: var(--list-cover-height) minmax(0, 1fr);
@@ -1284,6 +1290,19 @@ img {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
+}
+
+/* A sheet's main buttons, kept on screen while a long sheet scrolls (a phone on its side too).
+   Spans the sheet's width over its side padding. */
+.sheet__footer {
+  position: sticky;
+  bottom: 0;
+  z-index: var(--z-sticky);
+  /* Over the sheet's side and bottom padding (it is the sheet's last thing). */
+  margin: 0 calc(-1 * var(--space-4)) calc(-1 * max(var(--space-5), env(safe-area-inset-bottom)));
+  padding: var(--space-3) var(--space-4) max(var(--space-3), env(safe-area-inset-bottom));
+  border-top: var(--border-thin) solid var(--color-border);
+  background: var(--color-surface);
 }
 
 @media (min-width: 48rem) {

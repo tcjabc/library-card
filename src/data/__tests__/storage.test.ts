@@ -60,7 +60,7 @@ describe('coverage', () => {
       // books and covers
       'getBook', 'getBooks', 'putBook', 'saveCoverImage', 'isCoverPhotoMissing',
       // collections
-      'createCollection', 'getCollection', 'listCollections', 'updateCollection', 'deleteCollection', 'setBookCollection',
+      'createCollection', 'getCollection', 'listCollections', 'updateCollection', 'deleteCollection', 'setBookCollection', 'setBooksCollection',
       'clearBookCollection', 'listCollectionBooks',
       // parent notes
       'listNotes', 'createNote', 'updateNote', 'deleteNote', 'reorderNotes', 'listNotesForReader', 'listNoteViews', 'markNoteSeen', 'showAgain',

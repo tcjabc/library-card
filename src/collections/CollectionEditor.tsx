@@ -1,6 +1,5 @@
 import { useCallback, useId, useState, type FormEvent } from 'react';
 import { BookFinder } from '../books/BookFinder';
-import { matchesBookSearch } from '../lib/search';
 import { MAX_VOLUME, newNoIsbnBookKey, useDataQuery, type Book, type DataStore, type Household } from '../data';
 import { fmt, strings } from '../strings';
 import { BookCover } from '../ui/BookCover';
@@ -9,21 +8,22 @@ import { Sheet } from '../ui/Sheet';
 import { useToast } from '../ui/Toast';
 import { useGrownUpSession } from '../grownups/useGrownUpSession';
 import { CollectionForm } from './CollectionForm';
+import { loadPickCandidates, PICK_ROWS_SHOWN, shownCandidates, type PickCandidate } from './pick';
 import { buildSlots, nextFreeVolume, quickAddPlan, stillToAdd } from './progress';
 
 const t = strings.collections;
 
-/** How books are being added: quick-add, scanning (into a given number, or the next free ones), or from Home. */
+/** How books are being added: quick-add, scanning (into a given number, or the next free ones), or books we have. */
 type Mode = { kind: 'list' } | { kind: 'quick' } | { kind: 'scan'; slot: number | null } | { kind: 'existing' };
 
 async function loadEditor(store: DataStore, householdId: string, collectionId: string) {
-  const [collection, members, home] = await Promise.all([
+  const [collection, members, home, candidates] = await Promise.all([
     store.getCollection(collectionId),
     store.listCollectionBooks(collectionId),
     store.listHomeItems(householdId),
+    loadPickCandidates(store, householdId, collectionId),
   ]);
-  const homeBooks = await store.getBooks(home.map((h) => h.isbn));
-  return { collection, members, home, homeBooks };
+  return { collection, members, home, candidates };
 }
 
 interface CollectionEditorProps {
@@ -48,7 +48,7 @@ export function CollectionEditor({ store, household, collectionId, onClose }: Co
   /** A book waiting for its number (after a scan, or picked from Home). */
   const [asking, setAsking] = useState<{ book: Book; volume: string } | null>(null);
   const query = useCallback((s: DataStore) => loadEditor(s, household.id, collectionId), [household.id, collectionId]);
-  const { data } = useDataQuery(query, ['collections', 'books', 'covers', 'home_items']);
+  const { data } = useDataQuery(query, ['collections', 'books', 'covers', 'home_items', 'loans']);
 
   const collection = data?.collection;
   if (data && !collection) return null; // deleted (here or elsewhere)
@@ -177,7 +177,7 @@ export function CollectionEditor({ store, household, collectionId, onClose }: Co
 
       {mode.kind === 'existing' && !asking && (
         <ExistingPicker
-          books={data.homeBooks.filter((b) => !b.collection_id)}
+          candidates={data.candidates.filter((c) => c.fromSet === null)}
           onPick={(book) => ask(book, null)}
           onDone={() => setMode({ kind: 'list' })}
         />
@@ -353,15 +353,16 @@ function QuickAdd({
   );
 }
 
-/** Home books not in any set, searchable; "Add" asks for the number. */
-function ExistingPicker({ books, onPick, onDone }: { books: readonly Book[]; onPick: (book: Book) => void; onDone: () => void }) {
+/** Books at Home or borrowed that are in no set, searchable; "Add" asks for the number (and puts it at Home). */
+function ExistingPicker({ candidates, onPick, onDone }: { candidates: readonly PickCandidate[]; onPick: (book: Book) => void; onDone: () => void }) {
   const [search, setSearch] = useState('');
   const id = useId();
-  const shown = books.filter((b) => matchesBookSearch(b, search)).slice(0, 50);
+  const { rows, matched } = shownCandidates(candidates, search, PICK_ROWS_SHOWN);
+  const shown = rows.map((c) => c.book);
   return (
     <div className="stack">
       <h3>{t.addExisting}</h3>
-      {books.length === 0 ? (
+      {candidates.length === 0 ? (
         <p className="muted">{t.existingNone}</p>
       ) : (
         <>
@@ -385,6 +386,7 @@ function ExistingPicker({ books, onPick, onDone }: { books: readonly Book[]; onP
               </li>
             ))}
           </ul>
+          {matched > shown.length && <p className="small muted">{fmt(t.pickMore, { shown: shown.length, count: matched })}</p>}
         </>
       )}
       <div className="row">

@@ -334,6 +334,61 @@ describe('sync adapter: two devices converge', () => {
     expect(await views(a)).toBe(await views(b));
   });
 
+  it('collections: a set made on A from picked books while B moves some of them: the later write wins per book, no orphans', async () => {
+    const { a, b, reader } = await household();
+    const ISBN_C = '9780000000026';
+    a.at = T0 + 5_000;
+    for (const [isbn, title] of [[ISBN_A, 'One'], [ISBN_B, 'Two'], [ISBN_C, 'Borrowed']] as const) {
+      await a.store.putBook({ isbn, title, authors: [], cover_url: null, source: 'manual' });
+    }
+    await a.store.addHomeItem(HOUSEHOLD_ID, ISBN_A);
+    await a.store.addHomeItem(HOUSEHOLD_ID, ISBN_B);
+    await a.store.createLoan({ household_id: HOUSEHOLD_ID, reader_id: reader.id, isbn: ISBN_C });
+    const other = await a.store.createCollection({ household_id: HOUSEHOLD_ID, title: 'Other', expected_count: 5 });
+    await send(a, b);
+
+    // Not synced meanwhile. B moves ISBN_A into Other before A's pick, and ISBN_B after it.
+    b.at = T0 + 15_000;
+    await b.store.setBookCollection(ISBN_A, other.id, 1);
+    a.at = T0 + 20_000;
+    const picked = await a.store.createCollection({ household_id: HOUSEHOLD_ID, title: 'Picked', expected_count: 3 });
+    expect(
+      await a.store.setBooksCollection(picked.id, [
+        { isbn: ISBN_A, volume: 1 },
+        { isbn: ISBN_B, volume: 2 },
+        { isbn: ISBN_C, volume: 3 },
+      ]),
+    ).toBe(3);
+    b.at = T0 + 25_000;
+    await b.store.setBookCollection(ISBN_B, other.id, 2);
+
+    const all = [...(await ops(a)), ...(await ops(b))];
+    await send(a, b);
+    await send(b, a);
+    const expected = [
+      [ISBN_A, picked.id, 1], // A's pick is later than B's move
+      [ISBN_B, other.id, 2], // B's move is later than A's pick
+      [ISBN_C, picked.id, 3],
+    ];
+    for (const d of [a, b]) {
+      expect((await d.store.getBooks([ISBN_A, ISBN_B, ISBN_C])).map((x) => [x.isbn, x.collection_id, x.volume])).toEqual(expected);
+      // The borrowed pick is at Home on both, and every book's set exists (no orphans).
+      expect((await d.store.getHomeItem(HOUSEHOLD_ID, ISBN_C))?.isbn).toBe(ISBN_C);
+      const ids = new Set((await d.store.listCollections(HOUSEHOLD_ID)).map((c) => c.id));
+      for (const book of await d.store.getBooks([ISBN_A, ISBN_B, ISBN_C])) expect(ids.has(book.collection_id ?? '')).toBe(true);
+    }
+    expect(await views(a)).toBe(await views(b));
+
+    // The same ops in any order (and twice) end the same on a third device.
+    const results = new Set<string>();
+    for (const order of orders(all)) {
+      const c = await device(T0 + 50_000);
+      await c.store.applyRemote(order, 1);
+      results.add(await views(c));
+    }
+    expect(results.size).toBe(1);
+  });
+
   it('parent notes: written on A shows on B; seen on B is seen on A (once, the same id); show again and deleting a reader reach both', async () => {
     const { a, b, reader } = await household();
     a.at = T0 + 5_000;

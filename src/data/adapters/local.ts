@@ -1357,6 +1357,37 @@ export async function createStoreWith<Extra extends object>(
       return resolved;
     },
 
+    async setBooksCollection(collectionId, entries) {
+      // Check everything before writing anything.
+      const numbers = entries.map((e) => checkedCount(e.volume ?? null, MAX_VOLUME, 'volume'));
+      const keys = entries.map((e) => e.isbn);
+      if (new Set(keys).size !== keys.length) throw new DataStoreError('invalid', 'A book is listed more than once.');
+      // One transaction for the lot (as deleteCollection), so the set fills in one go.
+      const tx = (await getDb()).transaction(['books', 'collections', 'home_items'], 'readwrite');
+      const collection = await tx.objectStore('collections').get(collectionId);
+      if (!collection) throw notFound('Collection', collectionId);
+      const books = tx.objectStore('books');
+      const home = tx.objectStore('home_items');
+      let added = 0;
+      let homed = 0;
+      for (const [i, isbn] of keys.entries()) {
+        const book = await books.get(isbn);
+        if (!book) continue; // gone (deleted, or never here): skipped
+        if (book.collection_id !== collectionId || (book.volume ?? null) !== numbers[i]) {
+          await books.put({ ...book, collection_id: collectionId, volume: numbers[i] });
+        }
+        added++;
+        // At Home too, as a set's books always are (a borrowed book would leave the set off the shelf).
+        if (!(await home.index('by_household_isbn').get([collection.household_id, isbn]))) {
+          await home.add({ id: isbn, household_id: collection.household_id, isbn, added_at: nowIso() });
+          homed++;
+        }
+      }
+      await tx.done;
+      if (added > 0) changed(...(homed > 0 ? (['books', 'home_items'] as const) : (['books'] as const)));
+      return added;
+    },
+
     async clearBookCollection(isbn) {
       const tx = (await getDb()).transaction(['books', 'collections', 'cover_images', 'covers'], 'readwrite');
       const book = await tx.objectStore('books').get(isbn);

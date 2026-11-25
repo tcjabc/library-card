@@ -497,6 +497,48 @@ export const storageChecks: StorageCheck[] = [
     await rejectsWithCode(store.setBookCollection('9780000000999', set.id, 1), 'not_found', 'unknown book');
     await rejectsWithCode(store.clearBookCollection('9780000000999'), 'not_found', 'clear unknown book');
   }),
+  check('collections', 'setBooksCollection: several books at once, numbered, moved from another set, borrowed ones put at Home, missing ones skipped, one change', async (ctx) => {
+    const { store, h, a } = await withReaders(ctx);
+    const set = await store.createCollection({ household_id: h.id, title: 'Picked', expected_count: 3 });
+    const other = await store.createCollection({ household_id: h.id, title: 'Other' });
+    for (const [isbn, title] of [[ISBN_A, 'Home one'], [ISBN_B, 'In other'], [ISBN_C, 'Borrowed']]) {
+      await store.putBook({ isbn, title, authors: [], cover_url: null, source: 'manual' });
+    }
+    await store.addHomeItem(h.id, ISBN_A);
+    await store.addHomeItem(h.id, ISBN_B);
+    await store.setBookCollection(ISBN_B, other.id, 4);
+    await store.createLoan({ household_id: h.id, reader_id: a.id, isbn: ISBN_C });
+
+    // Checked before anything is written.
+    await rejectsWithCode(store.setBooksCollection('nope', [{ isbn: ISBN_A, volume: 1 }]), 'not_found', 'unknown collection');
+    await rejectsWithCode(store.setBooksCollection(set.id, [{ isbn: ISBN_A, volume: 0 }]), 'invalid', 'number 0');
+    await rejectsWithCode(store.setBooksCollection(set.id, [{ isbn: ISBN_A, volume: 1 }, { isbn: ISBN_C, volume: 10_000 }]), 'invalid', 'a bad number later in the list');
+    await rejectsWithCode(store.setBooksCollection(set.id, [{ isbn: ISBN_A, volume: 1 }, { isbn: ISBN_A, volume: 2 }]), 'invalid', 'a book twice');
+    equal((await store.getBook(ISBN_A))?.collection_id, null, 'nothing written by a refused call');
+
+    const seen: DataChange[] = [];
+    const off = store.subscribe((c) => seen.push(c));
+    const added = await store.setBooksCollection(set.id, [
+      { isbn: ISBN_C, volume: 1 },
+      { isbn: ISBN_B, volume: 2 },
+      { isbn: '9780000000999', volume: 3 }, // not a saved book: skipped
+      { isbn: ISBN_A, volume: 3 },
+    ]);
+    off();
+    equal(added, 3, 'three added, the missing one skipped');
+    equal((await store.listCollectionBooks(set.id)).map((b) => [b.isbn, b.volume]), [[ISBN_C, 1], [ISBN_B, 2], [ISBN_A, 3]], 'numbered as given');
+    equal((await store.listCollectionBooks(other.id)).length, 0, 'moved out of the other set');
+    ok((await store.getHomeItem(h.id, ISBN_C)) !== null, 'the borrowed book is at Home now');
+    equal((await store.listHomeItems(h.id)).length, 3, 'no other Home items');
+    equal(seen.filter((c) => !c.remote).length, 1, 'one change notification');
+    ok(seen[0]?.tables.includes('books') && seen[0]?.tables.includes('home_items'), 'books and home items', seen[0]?.tables);
+
+    // Without numbers; again with the same values: nothing to write, still counted.
+    equal(await store.setBooksCollection(other.id, [{ isbn: ISBN_A }, { isbn: ISBN_B, volume: null }]), 2, 'unnumbered');
+    equal((await store.listCollectionBooks(other.id)).map((b) => [b.isbn, b.volume]), [[ISBN_A, null], [ISBN_B, null]], 'no numbers');
+    equal(await store.setBooksCollection(other.id, [{ isbn: ISBN_A }]), 1, 'unchanged book counted');
+    equal(await store.setBooksCollection(set.id, []), 0, 'an empty list does nothing');
+  }),
   check('collections', 'deleting one keeps its books and unlinks them; its cover photo stays while anything uses it', async (ctx) => {
     const { store, dbName } = await ctx.open();
     const h = await store.getCurrentHousehold();

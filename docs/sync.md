@@ -114,7 +114,13 @@ ordinary fields, so a book is in at most one collection and the later move wins.
 from a box ISBN has the id `box-<ISBN>`, so the same box made on two devices is one record (the
 later title wins). Deleting a collection is a tombstone plus a field op on each of its books
 (collection_id and volume back to null); a book added on another device at the same time keeps a
-`collection_id` no collection answers to, and the screens show it as a loose book. Progress and the
+`collection_id` no collection answers to, and the screens show it as a loose book. Filling a new
+set with books that already exist (`setBooksCollection`, Grown-ups → Books → New collection →
+Pick books) is one local transaction, recorded as ordinary field ops: `collection_id` and `volume`
+on each picked book (only the fields that change), plus a new `home_items` record for each
+borrowed book it puts at Home. Other devices may get those ops in any order or page; each book
+converges on its own, and a book moved on another device meanwhile goes to the later write.
+Progress and the
 trophy are worked out from read summaries on each device, never sent. Versions before collections
 skip `collections` ops as an unknown table and keep the books' new fields as unknown fields.
 

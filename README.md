@@ -201,6 +201,12 @@ rule stops feature code from importing an adapter directly.
     `cover:<sha256>` and hands out session-only `blob:` URLs, which are never
     persisted. A photo is deleted once no book uses it.
 12. Store `parent_pin_hash` exactly as `hashPin()` returns it.
+13. Collections: a book is in at most one, through its `collection_id` and
+    `volume`; `putBook()` never changes them. `setBookCollection()` puts one book
+    in a set; `setBooksCollection()` puts several (checked first, then one
+    transaction and one change notification), skips books that no longer exist,
+    and puts each one at Home if it is only borrowed. `deleteCollection()` keeps
+    the books and unlinks them in one transaction.
 
 After changing the local adapter, run `npm test`. The storage checks in
 `src/data/testing/` also run in the app (`#/dev`, Storage self-test), which is
