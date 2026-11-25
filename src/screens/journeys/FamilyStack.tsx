@@ -12,6 +12,8 @@ import { useStackCovers } from '../../staircase/coverSetting';
 import { useStackGap } from '../../staircase/gapSetting';
 import { BIGGEST_SHAPED_BOOK } from '../../staircase/bookShapes';
 import { useStackShapes } from '../../staircase/shapeSetting';
+import { useStackSky } from '../../staircase/skySetting';
+import { useStackGround } from '../../staircase/groundSetting';
 import { useStackSounds, writeStackSounds } from '../../staircase/soundSetting';
 import { SeenTracker, arrival, parseSeen, seenKey, type Arrival, type Seen } from '../../staircase/stackSeen';
 import { isExpanded, sheetBook, sheetHeights, type SheetHeights, type SheetState } from '../../staircase/sheetState';
@@ -116,6 +118,8 @@ export default function FamilyStack({ reader }: { reader: Reader }) {
   const covers = useStackCovers();
   const gap = useStackGap();
   const coverShapes = useStackShapes();
+  const sky = useStackSky();
+  const ground = useStackGround();
   const sounds = useStackSounds();
 
   const items = useMemo(
@@ -327,6 +331,8 @@ export default function FamilyStack({ reader }: { reader: Reader }) {
             reportCovers
             coverShapes={coverShapes}
             gap={gap}
+            sky={sky}
+            ground={ground}
             drop={greeted?.drop ?? null}
             liveDrops
             onLanding={landed}

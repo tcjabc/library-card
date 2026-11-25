@@ -45,6 +45,29 @@ import {
   type DropWorld,
 } from './dropMotion';
 import { MAX_DROP } from './stackSeen';
+import {
+  SCENE_DROP,
+  SHADOW_FORWARD,
+  SHADOW_OUTER_ALPHA,
+  SHADOW_SPREAD,
+  SkyGradients,
+  altitudeAt,
+  cssColour,
+  groundContactY,
+  groundInView,
+  groundShadowFootprint,
+  groundSize,
+  horizonY,
+  lineInk,
+  mix,
+  parseColour,
+  shadowInView,
+  shadowStrength,
+  skyColour,
+  skyT,
+  viewSky,
+  type Rgba,
+} from './scenery';
 import { flushForTiming, markTainted } from './pixelGuard';
 import {
   DECIDE_AFTER_MS,
@@ -100,8 +123,15 @@ import './canvasStack.css';
  * Per frame (drawBudget.ts): only the books on screen plus one spare each way are drawn (at most
  * FAN_CAP either side), bottom to top; each spine and each thickness of page edge is drawn once
  * to a small canvas and reused, and far or edge-on page edges are a flat fill. The canvas is
- * opaque (filled with the page's background), and if frames are slow it steps its resolution
- * down for the rest of the visit. The tag and the top-down inset only redraw when they change.
+ * opaque: each frame starts with the scenery (scenery.ts: the sky as one gradient by altitude,
+ * then the meadow, its horizon and the base book's shadow), or the page's plain background with
+ * the sky off. If frames are slow it steps its resolution down for the rest of the visit. The tag
+ * and the top-down inset only redraw when they change.
+ *
+ * Scenery (`sky`, `ground`, scenery.ts): the sky's colour goes by altitude (absolute, so a pile's
+ * sky never changes as it grows); the ground is anchored to the world, moving 1:1 with the base
+ * book (its gap lift included) and scrolling away as the camera climbs. Colours come from the
+ * --stack-* tokens, read again when the colour scheme changes while the pile is open.
  *
  * Markers (stackItems.ts): a dashed line under the first book of each month with its label at
  * the right, and flags at the left for book numbers (#1, 10, 50, 100, every 100). Only those by
@@ -176,6 +206,10 @@ export interface DrawStats {
   rebuilds: number;
   /** With covers on: the cover pictures kept and their memory (bytes). */
   covers?: { pictures: number; bytes: number };
+  /** The sky's t (scenery.skyT) at the top and the bottom of its gradient this frame, or null with no sky drawn. */
+  sky: { top: number; bottom: number } | null;
+  /** Whether any ground was drawn this frame. */
+  ground: boolean;
 }
 
 /** New books to greet: `count` of the newest fall, or are highlighted. */
@@ -251,6 +285,10 @@ export interface CanvasStackProps {
   coverShapes?: boolean;
   /** The gap around the eye-line book (eyeGap.ts): the books above lift away, the books below drop a little. */
   gap?: boolean;
+  /** The sky behind the pile, by altitude (scenery.ts); off: the page's plain background. */
+  sky?: boolean;
+  /** The meadow the pile stands on, its horizon and the base book's shadow (scenery.ts). */
+  ground?: boolean;
   /** New books to greet (dropMotion.ts): the newest `count` fall onto the pile, or show with a brief outline. A new `id` starts one. */
   drop?: StackDrop | null;
   /** Books arriving at the top while the camera follows the newest fall too (highlighted with reduced motion). */
@@ -342,6 +380,39 @@ interface BookTheme {
   restGap: number;
   /** A cover arriving for a book on screen fades in over this long (ms). */
   crossfadeMs: number;
+  /** The scenery's colours (--stack-*), parsed; a missing or unreadable one leaves its part out. */
+  scenery: SceneryTheme;
+}
+
+interface SceneryTheme {
+  /** Low, high, upper and space, or null (no sky). */
+  sky: Rgba[] | null;
+  horizon: Rgba | null;
+  /** The meadow near the pile and at the horizon, or null (no ground). */
+  ground: Rgba | null;
+  groundFar: Rgba | null;
+  shadow: string;
+  /** Month lines over the scenery: the two inks, and the page's background (behind with the sky off). */
+  lineOnLight: Rgba | null;
+  lineOnDark: Rgba | null;
+  background: Rgba | null;
+}
+
+function readScenery(v: (name: string) => string): SceneryTheme {
+  const colour = (name: string) => parseColour(v(name));
+  const sky = ['--stack-sky-low', '--stack-sky-high', '--stack-sky-upper', '--stack-sky-space'].map(colour);
+  const ground = colour('--stack-ground');
+  const groundFar = colour('--stack-ground-far');
+  return {
+    sky: sky.every((c) => c !== null) ? (sky as Rgba[]) : null,
+    horizon: colour('--stack-horizon'),
+    ground: ground && groundFar ? ground : null,
+    groundFar,
+    shadow: v('--stack-ground-shadow'),
+    lineOnLight: colour('--stack-line-on-light'),
+    lineOnDark: colour('--stack-line-on-dark'),
+    background: colour('--color-bg'),
+  };
 }
 
 function readTheme(): BookTheme {
@@ -396,7 +467,16 @@ function readTheme(): BookTheme {
     gutter: px('--space-3'),
     restGap: px('--space-5'),
     crossfadeMs: cssDuration(v('--duration-crossfade')) || 0,
+    scenery: readScenery(v),
   };
+}
+
+/**
+ * The colour scheme changed while the pile is open: the same theme object, its tokens read again
+ * (everything drawn holds this object, so the next frame uses the new colours).
+ */
+function rereadTheme(into: BookTheme): void {
+  Object.assign(into, readTheme());
 }
 
 function hsl(hue: number, saturation: string, lightness: string): string {
@@ -591,6 +671,38 @@ interface Paint {
   pages: Map<number, HTMLCanvasElement>;
   coverShade: CanvasGradient | null;
   scale: number;
+  /** The sky's gradients by altitude (a unit square, placed by the transform), or null without a sky. */
+  sky: SkyGradients<CanvasGradient> | null;
+  /** The meadow from the horizon (0) to the contact line, and the haze above the horizon (CSS px), or null without ground. */
+  ground: CanvasGradient | null;
+  haze: CanvasGradient | null;
+}
+
+/** The scenery's gradients for this theme (rebuilt with the paint when the scale or the colours change). */
+function sceneryPaint(ctx: CanvasRenderingContext2D, theme: BookTheme): Pick<Paint, 'sky' | 'ground' | 'haze'> {
+  const sc = theme.scenery;
+  const palette = sc.sky;
+  const sky = palette
+    ? new SkyGradients<CanvasGradient>((stops) => {
+        const g = ctx.createLinearGradient(0, 0, 0, 1);
+        for (const stop of stops) g.addColorStop(stop.offset, cssColour(skyColour(stop.t, palette)));
+        return g;
+      })
+    : null;
+  let ground: CanvasGradient | null = null;
+  let haze: CanvasGradient | null = null;
+  if (sc.ground && sc.groundFar) {
+    // Both in unit lengths: each frame stretches them to its view's ground (groundSize).
+    ground = ctx.createLinearGradient(0, 0, 0, 1);
+    ground.addColorStop(0, cssColour(sc.groundFar));
+    ground.addColorStop(1, cssColour(sc.ground));
+    if (sc.horizon) {
+      haze = ctx.createLinearGradient(0, -1, 0, 0);
+      haze.addColorStop(0, cssColour(sc.horizon, 0));
+      haze.addColorStop(1, cssColour(sc.horizon));
+    }
+  }
+  return { sky, ground, haze };
 }
 
 /** What drawing one face needs besides the face. */
@@ -929,6 +1041,8 @@ function CanvasStack({
   reportCovers = false,
   coverShapes = false,
   gap = false,
+  sky = false,
+  ground = false,
   drop = null,
   liveDrops = false,
   onLanding,
@@ -976,7 +1090,7 @@ function CanvasStack({
   const tagBook = useRef<HTMLSpanElement | null>(null);
   const tagTurned = useRef<HTMLSpanElement | null>(null);
   const size = useRef<Size>({ width: 0, height: 0, scale: 1, inset: 0 });
-  const paint = useRef<Paint>({ pages: new Map(), coverShade: null, scale: 0 });
+  const paint = useRef<Paint>({ pages: new Map(), coverShade: null, scale: 0, sky: null, ground: null, haze: null });
   /** This frame's projected books, by offset from the centre book minus FAN_CAP (reused every frame). */
   const scratch = useRef<(ProjectedBook | null)[]>(Array.from({ length: 2 * FAN_CAP + 1 }, () => null));
   /** This frame's book shapes (cover shapes easing in), by the same offset (reused every frame). */
@@ -1048,6 +1162,8 @@ function CanvasStack({
     onCentre,
     twist,
     gap,
+    sky,
+    ground,
     settle,
     describeCentre,
     measureRaster,
@@ -1069,6 +1185,8 @@ function CanvasStack({
       onCentre,
       twist,
       gap,
+      sky,
+      ground,
       settle,
       describeCentre,
       measureRaster,
@@ -1125,15 +1243,58 @@ function CanvasStack({
         const coverShade = ctx.createLinearGradient(0, 0, 0, 1);
         coverShade.addColorStop(0.6, 'transparent');
         coverShade.addColorStop(1, theme.shade);
-        paint.current = { pages: new Map(), coverShade, scale };
+        paint.current = { pages: new Map(), coverShade, scale, ...sceneryPaint(ctx, theme) };
       }
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.fillStyle = theme.background;
-      ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-      ops += 1;
 
       const s = c.shown;
       const total = items.length;
+      // The scenery first (scenery.ts): the sky by altitude, then the meadow from its horizon down.
+      const sc = theme.scenery;
+      const skyOn = scene.current.sky && paint.current.sky !== null;
+      const groundOn = scene.current.ground && paint.current.ground !== null;
+      const contact = groundContactY(centres, s, bookLift(0, s, gapOn), height / 2);
+      const groundBand = groundSize(height);
+      const meadow = SCENE_DROP * groundBand.depth;
+      const horizon = Math.round(horizonY(contact, groundBand.depth) * scale) / scale;
+      const skyNow = skyOn ? viewSky(horizon, height, groundOn) : null;
+      const groundNow = groundOn && groundInView(horizon, height);
+      if (skyNow && paint.current.sky) {
+        // One gradient from the top of the view to the horizon (or the bottom), kept by altitude.
+        ctx.setTransform(1, 0, 0, skyNow.bottom * scale, 0, 0);
+        ctx.fillStyle = paint.current.sky.get(skyNow.tTop, skyNow.tBottom);
+        ctx.fillRect(0, 0, ctx.canvas.width, 1);
+        ops += 1;
+      } else if (!groundNow || horizon > 0) {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.fillStyle = theme.background;
+        ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        ops += 1;
+      }
+      if (groundNow && paint.current.ground) {
+        // From the horizon down: the haze above its line, the meadow (hazier far off), the line.
+        if (paint.current.haze && horizon > 0) {
+          ctx.setTransform(scale, 0, 0, scale * groundBand.haze, 0, horizon * scale);
+          ctx.fillStyle = paint.current.haze;
+          ctx.fillRect(0, -1, width, 1);
+          ops += 1;
+        }
+        ctx.setTransform(scale, 0, 0, scale * meadow, 0, horizon * scale);
+        ctx.fillStyle = paint.current.ground;
+        ctx.fillRect(0, 0, width, (height - horizon) / meadow);
+        ops += 1;
+        if (sc.horizon && horizon >= 0) {
+          ctx.setTransform(scale, 0, 0, scale, 0, horizon * scale);
+          ctx.fillStyle = cssColour(sc.horizon);
+          ctx.fillRect(0, 0, width, theme.borderThin);
+          ops += 1;
+        }
+      }
+      /** What's behind a month line at `y`: the ground below the horizon, the sky (or the page) above it. */
+      const behind = (y: number): Rgba | null => {
+        if (groundNow && y >= horizon && sc.ground && sc.groundFar) return mix(sc.groundFar, sc.ground, (y - horizon) / meadow);
+        if (skyNow && sc.sky) return skyColour(skyT(altitudeAt(y, horizon)), sc.sky);
+        return null;
+      };
       let faces = 0;
       let from = 0;
       let to = 0;
@@ -1278,6 +1439,28 @@ function CanvasStack({
           }
           ctx.globalAlpha = 1;
         };
+        if (groundNow && !(dw && waiting(dw, 0))) {
+          // The base book's soft shadow on the ground: its footprint at height 0, turned with it.
+          const base0 = shapeAt(0);
+          const reach = (SCENE_DROP * Math.hypot(base0.width, base0.depth)) / 2 + SHADOW_SPREAD[0].along + SHADOW_FORWARD;
+          // A first book falling onto the ground: its shadow grows as it comes down.
+          const strength = shadowStrength(fall(0));
+          if (strength > 0 && shadowInView(contact, height, reach)) {
+            const yaw = relativeYaw(0, s, twist) + (dw ? dropSpin(dw, 0) : 0);
+            ctx.setTransform(scale, 0, 0, scale, 0, 0);
+            ctx.fillStyle = sc.shadow;
+            SHADOW_SPREAD.forEach((spread, k) => {
+              const corners = groundShadowFootprint(base0, yaw, contact, width / 2, spread, SHADOW_FORWARD);
+              ctx.globalAlpha = (k === 0 ? SHADOW_OUTER_ALPHA : 1) * strength;
+              ctx.beginPath();
+              corners.forEach((p, n) => (n === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+              ctx.closePath();
+              ctx.fill();
+              ops += 1;
+            });
+            ctx.globalAlpha = 1;
+          }
+        }
         // Bottom of the pile first: index order is painter's order (stackProjection's drawOrder).
         const hl = c.highlight;
         const pulse = hl ? highlightAlpha(started - hl.from) : 0;
@@ -1332,20 +1515,30 @@ function CanvasStack({
           // Month lines across the pile, in one dashed stroke (a landing book's fading in on its own).
           ctx.setTransform(scale, 0, 0, scale, 0, 0);
           ctx.setLineDash([theme.dash, theme.dashGap]);
-          ctx.strokeStyle = theme.insetLine;
           ctx.lineWidth = theme.borderThin;
           const line = (y: number) => {
             const at = (Math.round(y * scale) + 0.5) / scale;
             ctx.moveTo(theme.gutter, at);
             ctx.lineTo(width - theme.gutter, at);
           };
-          ctx.beginPath();
-          marks.lines.forEach((y, k) => marks.lineAlpha[k] >= 1 && line(y));
-          ctx.stroke();
-          ops += 1;
+          // Over the scenery each line takes whichever ink contrasts more with what's behind it.
+          const inkOf = (y: number): string => {
+            const back = behind(y);
+            if (!back || !sc.lineOnLight || !sc.lineOnDark) return theme.insetLine;
+            return cssColour(lineInk(back, sc.lineOnLight, sc.lineOnDark) === 'light' ? sc.lineOnLight : sc.lineOnDark);
+          };
+          const inks = marks.lines.map(inkOf);
+          for (const ink of new Set(inks)) {
+            ctx.strokeStyle = ink;
+            ctx.beginPath();
+            marks.lines.forEach((y, k) => marks.lineAlpha[k] >= 1 && inks[k] === ink && line(y));
+            ctx.stroke();
+            ops += 1;
+          }
           marks.lines.forEach((y, k) => {
             if (marks.lineAlpha[k] >= 1) return;
             ctx.globalAlpha = marks.lineAlpha[k];
+            ctx.strokeStyle = inks[k];
             ctx.beginPath();
             line(y);
             ctx.stroke();
@@ -1437,6 +1630,8 @@ function CanvasStack({
         labels: prep.count,
         rebuilds: c.rebuilds,
         covers: onDraw || c.listener ? art.current?.stats() : undefined,
+        sky: skyNow ? { top: skyNow.tTop, bottom: skyNow.tBottom } : null,
+        ground: groundNow,
       };
       c.cameraMs = 0;
       onDraw?.(stats);
@@ -1698,6 +1893,28 @@ function CanvasStack({
     media.addEventListener('change', onChange);
     return () => media.removeEventListener('change', onChange);
   }, []);
+
+  // The colour scheme changed while the pile is open (light ↔ dark): the tokens again, the
+  // labels, markers and scenery redrawn in them (paint.scale 0 rebuilds them on the next frame).
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = () => {
+      rereadTheme(theme);
+      labels.clear();
+      sprites.clear();
+      paint.current = { ...paint.current, scale: 0 };
+      cam.current.inset = null;
+      if (!cam.current.raf) draw(true);
+    };
+    media.addEventListener('change', onChange);
+    return () => media.removeEventListener('change', onChange);
+  }, [draw, labels, sprites, theme]);
+
+  // The sky or the ground switched on or off: draw again where the camera is.
+  useEffect(() => {
+    if (!cam.current.raf) draw(true);
+  }, [sky, ground, draw]);
 
   // The gap switched on or off: K for the new look (where a pile opens next time), and draw again
   // where the camera is (the camera itself stays put).

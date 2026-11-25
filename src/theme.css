@@ -117,6 +117,21 @@
   --book-page-stripe-paper: 2px;
   --book-page-stripe-line: 1px;
 
+  /* Family Staircase scenery (scenery.ts): the sky behind the pile by altitude, low (at the */
+  /* horizon) → high (about 10 books up) → upper (about 100) → space (1,000 and up), then the */
+  /* meadow it stands on, hazier towards the horizon, with a soft shadow under the base book. */
+  --stack-sky-low: #e3f2fb;
+  --stack-sky-high: #8ecaf0;
+  --stack-sky-upper: #3f7fc6;
+  --stack-sky-space: #152457;
+  --stack-horizon: #f4f8f2;
+  --stack-ground: #74b04c;
+  --stack-ground-far: #b3d48f;
+  --stack-ground-shadow: rgba(28, 52, 18, 0.35);
+  /* Month lines over the scenery: whichever of the two contrasts more with the sky or ground behind. */
+  --stack-line-on-light: #1f2430;
+  --stack-line-on-dark: #f8f9fa;
+
   /* Overlays */
   --color-backdrop: rgba(20, 24, 33, 0.55);
   --color-toast: #1f2430;
@@ -357,6 +372,17 @@
     --color-on-cover-placeholder: #f1f3f5;
     --color-stair: #3a2c1c;
     --color-stair-edge: #5c4630;
+    /* A dusk sky and a meadow in the evening (no stars). */
+    --stack-sky-low: #6b5578;
+    --stack-sky-high: #3a4276;
+    --stack-sky-upper: #222a55;
+    --stack-sky-space: #0c1029;
+    --stack-horizon: #8a7090;
+    --stack-ground: #2a4a2c;
+    --stack-ground-far: #46604a;
+    --stack-ground-shadow: rgba(0, 0, 0, 0.45);
+    --stack-line-on-light: #141821;
+    --stack-line-on-dark: #eef0f5;
     --color-toast: #eef0f5;
     --color-on-toast: #141821;
     --color-danger: #ff6b6b;

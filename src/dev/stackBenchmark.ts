@@ -187,6 +187,9 @@ export interface BenchResult {
   gap?: boolean;
   /** "Cover shapes" while it ran (missing in results from before 1.13.0). */
   shapes?: boolean;
+  /** "Sky" and "Ground & horizon" while it ran (missing in results from before 1.15.0). */
+  sky?: boolean;
+  ground?: boolean;
 }
 
 const n1 = (v: number) => v.toFixed(1);
@@ -305,6 +308,8 @@ export function formatBenchResult(result: BenchResult): string {
     ...(result.covers === undefined ? [] : [fmt(t.benchCovers, { state: result.covers ? t.measureOn : t.measureOff })]),
     ...(result.gap === undefined ? [] : [fmt(t.benchGap, { state: result.gap ? t.measureOn : t.measureOff })]),
     ...(result.shapes === undefined ? [] : [fmt(t.benchShapes, { state: result.shapes ? t.measureOn : t.measureOff })]),
+    ...(result.sky === undefined ? [] : [fmt(t.benchSky, { state: result.sky ? t.measureOn : t.measureOff })]),
+    ...(result.ground === undefined ? [] : [fmt(t.benchGround, { state: result.ground ? t.measureOn : t.measureOff })]),
     ...deviceLines(result.device),
     fmt(t.benchCalibrationStart, { score: scoreText(result.calibration.start) }),
     fmt(t.benchCalibrationEnd, { score: scoreText(result.calibration.end) }),

@@ -7,6 +7,8 @@
 import type { DrawStats, StackBench } from '../staircase/CanvasStack';
 import { readStackCovers } from '../staircase/coverSetting';
 import { readStackGap } from '../staircase/gapSetting';
+import { readStackGround } from '../staircase/groundSetting';
+import { readStackSky } from '../staircase/skySetting';
 import { readStackShapes } from '../staircase/shapeSetting';
 import { addBreakdown, breakdownAverages, emptyBreakdown } from './frameStats';
 import {
@@ -282,6 +284,8 @@ export async function runStackBenchmark({ bench, version, onProgress, isCancelle
     covers: readStackCovers(),
     gap: readStackGap(),
     shapes: readStackShapes(),
+    sky: readStackSky(),
+    ground: readStackGround(),
   };
   const wake = await requestWakeLock();
   try {

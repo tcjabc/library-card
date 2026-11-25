@@ -4,6 +4,7 @@
 .stack-dev {
   display: flex;
   flex-direction: column;
+  height: 100vh;
   height: 100dvh;
   max-width: var(--content-max-wide);
   margin: 0 auto;

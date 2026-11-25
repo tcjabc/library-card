@@ -39,13 +39,64 @@ names it.
   (was 5) and 6 in tablet landscape (was 4), gap included. The half sheet's stop (`eyeLineReach`) uses the same book.
   K only decides where the pile **starts**:
   - **A pile that fits (N - 1 <= K)** opens on its base book (step 1) at the eye line, the pile rising above it and
-    the lower half plain background. Scrolling up eases towards the newest book (the pile then sits below the eye
+    standing on the ground, which fills most of the lower half (see "Sky and ground"). Scrolling up eases towards the newest book (the pile then sits below the eye
     line); scrolling back down returns to the base book.
   - **A taller pile** opens on the newest book; scrolling down all the way brings the base book to the eye line.
 - Resizing or turning the screen works K out again and keeps the reader's book; the starting rule only applies
   when the screen opens.
 - The screen is pinned to the viewport: the page behind it never scrolls or rubber-bands (iOS), and drags on the
   header don't move anything (drags on the bar move the book sheet).
+
+## Sky and ground
+
+The pile stands on a meadow under a sky whose colour changes with height. Code: `src/staircase/scenery.ts` (every
+constant and rule, pure and unit-tested); `CanvasStack.tsx` draws it on the pile's own canvas before the books.
+Nothing changes in the data or sync.
+
+- **One canvas, still opaque**: each frame starts with the scenery instead of the page's plain background. Nothing
+  is written to the page while scrolling, and the canvas is never read (pixelGuard, below).
+- **The sky** is one vertical gradient. Its colour goes by **altitude above the horizon**, absolute and
+  logarithmic: t = log(1 + alt) / log(1 + 1,000), alt in books of 28 px, so a pile's sky never changes colour as
+  it grows. Four colours: `--stack-sky-low` at the horizon (t 0), `--stack-sky-high` at 10 books (t 0.35),
+  `--stack-sky-upper` at 100 (t 0.67) and `--stack-sky-space` at 1,000 and above (t 1). The gradient runs from the
+  altitude at the top of the view to the horizon (or the bottom of the view when the horizon is below it), sampled
+  at 5 points down the screen (altitude is linear down the screen, t isn't). The gradients are kept by t in steps
+  of 1/256 (at most 64), so a new one is made only when the view has climbed a step.
+  - A pile of 1 on its base book shows the low sky up to about t 0.33 at the top; a pile of 11 at its newest
+    reaches about 20 books (t 0.44), its ground still low on the screen; a pile of 100 at its newest is an
+    almost even upper sky; 1,000 is the edge of space.
+- **The ground** is anchored to the world: its contact line is the base book's bottom, so it moves 1:1 with the
+  base book, its gap lift included (`GAP_DOWN` lowers it with the base book once the camera is above it). It
+  doesn't follow the drop's spring: a landing on a short pile may press the base book into the soft ground for a
+  moment. As the camera climbs it scrolls away: on a phone the contact line leaves the view about 11 books up and
+  the horizon about 16. With nothing of it on screen, no ground work is done at all.
+  - **Horizon**: `GROUND_DEPTH` (300 px) of meadow behind the pile, seen at 24°, so sin 24° × 300 (about 122 px)
+    above the contact line. A haze (`--stack-horizon`, fading in over `HORIZON_HAZE`, 28 px) above a thin line in
+    the same colour. A view shorter than `GROUND_FULL_HEIGHT` (480 px; a phone on its side is about 290) gets less of both, in
+    proportion to its height but never under `GROUND_SCALE_MIN` (0.6) of them (`groundSize`), so its base book
+    still has a band of sky above the horizon; portrait phones and tablets get all of it.
+  - **Meadow**: one fill from the horizon down, `--stack-ground-far` at the horizon to `--stack-ground` at the
+    contact line and below (hazier far off).
+  - **Shadow** (`--stack-ground-shadow`): the base book's own footprint at height 0, so it follows its cover's
+    shape and its turn (−s × 10°, and a falling first book's spin), grown a little (`SHADOW_SPREAD`: mostly front
+    to back) and moved towards the reader (`SHADOW_FORWARD`), in two layers, so it shows as a soft band in front of
+    the spine. Not drawn while the base book waits to fall; while a first book falls onto the ground its shadow
+    grows as it comes down (`shadowStrength`: none from 420 px up, full on the ground).
+- **Dark theme**: a dusk sky and an evening meadow (the same tokens' dark values; no stars). When the colour
+  scheme changes while the pile is open, the tokens are read again and the next frame uses them (labels, markers
+  and scenery redrawn).
+- **Month lines** over the scenery take whichever of `--stack-line-on-light` and `--stack-line-on-dark` contrasts
+  more with the sky or ground behind them (at least 3:1 against every sky colour, the horizon and the meadow, in
+  both themes, checked by a unit test). With the sky and the ground off they keep `--color-text-muted`. Flags and
+  month labels are on their own chips (unchanged).
+- **Desktop**: the scenery fills the pile's column (the canvas), not the whole window.
+- **No idle loop**: the sky and ground change only when the camera or a drop draws a frame. Reduced motion
+  changes nothing here (nothing moves by itself).
+- **The settings**: Developer tools → Book stack → "Sky" and "Ground & horizon" (both on by default, this device
+  only: localStorage `library-card:stack-sky` and `library-card:stack-ground`, never synced, not in backups, cleared
+  by "Reset this device"). Off, the pile is on the plain background as in 1.14.0. The page's readout shows the
+  sky's t at the top and bottom of the view and whether ground is in view; its pretend piles include 1 and 11
+  books; a benchmark result says whether the sky and the ground were on.
 
 ## Book sizes from the covers
 

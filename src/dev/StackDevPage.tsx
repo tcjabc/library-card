@@ -12,6 +12,8 @@ import { stackMarkers } from '../staircase/stackItems';
 import { useStackCovers, writeStackCovers } from '../staircase/coverSetting';
 import { useStackGap, writeStackGap } from '../staircase/gapSetting';
 import { useStackShapes, writeStackShapes } from '../staircase/shapeSetting';
+import { useStackSky, writeStackSky } from '../staircase/skySetting';
+import { useStackGround, writeStackGround } from '../staircase/groundSetting';
 import { coverReportLines, latestCoverReport, type CoverReport } from '../staircase/coverDiagnostics';
 import { AREA, STANDARD_DEPTH, STANDARD_WIDTH, STRENGTH, VARIETY, WIDTH_RANGE, ASPECT_RANGE } from '../staircase/bookShapes';
 import { GAP_UP_PX, GAP_DOWN_PX } from '../staircase/eyeGap';
@@ -57,7 +59,7 @@ function describeCentre({ title, avatar, degrees }: CentreBook): CentreTag {
 }
 
 const t = strings.dev;
-const COUNTS = [7, 40, 100, 1000, 3000] as const;
+const COUNTS = [1, 7, 11, 40, 100, 1000, 3000] as const;
 /** "Replay new-book drop": 1 to this many books. */
 const MAX_REPLAY = 50;
 const SEED = 'dev-book-stack';
@@ -82,6 +84,8 @@ export default function StackDevPage() {
   const covers = useStackCovers();
   const gap = useStackGap();
   const coverShapes = useStackShapes();
+  const sky = useStackSky();
+  const ground = useStackGround();
   const pretendCovers = usePretendCovers(covers);
   const items = useMemo(() => {
     const plain = fakeStackItems(entries, SEED);
@@ -123,7 +127,7 @@ export default function StackDevPage() {
   );
 
   // A new pile starts its counts afresh.
-  useEffect(() => reset(), [count, mode, twist, settle, raster, covers, gap, coverShapes, reset]);
+  useEffect(() => reset(), [count, mode, twist, settle, raster, covers, gap, coverShapes, sky, ground, reset]);
   const label = fmt(t.stackLabel, { count: count.toLocaleString() });
 
   return (
@@ -156,6 +160,8 @@ export default function StackDevPage() {
             covers={covers}
             coverShapes={coverShapes}
             gap={gap}
+            sky={sky}
+            ground={ground}
             drop={drop}
             onLanding={landed}
           />
@@ -202,6 +208,10 @@ export default function StackDevPage() {
           onGap={writeStackGap}
           coverShapes={coverShapes}
           onCoverShapes={writeStackShapes}
+          sky={sky}
+          onSky={writeStackSky}
+          ground={ground}
+          onGround={writeStackGround}
           onReplay={replay}
           readout={meter.readout}
           onReset={reset}
@@ -234,6 +244,9 @@ interface Readout {
   rebuilds: number;
   /** Covers on: the cover pictures kept and their memory (bytes), at the latest frame. */
   coverPictures: { pictures: number; bytes: number } | null;
+  /** The sky's t at the top and bottom of the view at the latest frame (null: no sky drawn), and whether ground was drawn. */
+  sky: { top: number; bottom: number } | null;
+  ground: boolean;
   dropped: number;
   /** null where the browser can't report long tasks. */
   longTasks: number | null;
@@ -248,7 +261,7 @@ function supportsLongTasks(): boolean {
 }
 
 function emptyReadout(): Readout {
-  return { fps: null, renders: null, draw: null, faces: null, ops: null, canvas: null, raster: null, breakdown: null, rebuilds: 0, coverPictures: null, dropped: 0, longTasks: supportsLongTasks() ? 0 : null, longTaskMs: 0, nodes: 0, viewport: '', dpr: 1 };
+  return { fps: null, renders: null, draw: null, faces: null, ops: null, canvas: null, raster: null, breakdown: null, rebuilds: 0, coverPictures: null, sky: null, ground: false, dropped: 0, longTasks: supportsLongTasks() ? 0 : null, longTaskMs: 0, nodes: 0, viewport: '', dpr: 1 };
 }
 
 /** Times every frame while the pile is scrolling, counts late frames and long tasks. */
@@ -262,6 +275,8 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
     canvas: null as Readout['canvas'],
     rebuilds: 0,
     coverPictures: null as Readout['coverPictures'],
+    sky: null as Readout['sky'],
+    ground: false,
     lastBreakdown: null as Readout['breakdown'],
     last: 0,
     /** bookRenders() at the last frame. */
@@ -348,6 +363,8 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
         breakdown: s.lastBreakdown,
         rebuilds: s.rebuilds,
         coverPictures: s.coverPictures,
+        sky: s.sky,
+        ground: s.ground,
         dropped: s.dropped,
         longTasks: longTasks ? s.longTasks : null,
         longTaskMs: Math.round(s.longTaskMs),
@@ -381,6 +398,8 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
     s.canvas = { width: stats.width, height: stats.height, scale: stats.scale };
     s.rebuilds = stats.rebuilds;
     s.coverPictures = stats.covers ?? null;
+    s.sky = stats.sky;
+    s.ground = stats.ground;
     if (stats.raster !== undefined) s.flushes.push({ at: now, ms: stats.raster });
     if (now <= s.scrollingUntil + FRAME_MS) {
       s.draws.push({
@@ -530,6 +549,8 @@ function readoutLines(
   covers: boolean,
   gap: boolean,
   coverShapes: boolean,
+  sky: boolean,
+  ground: boolean,
 ): [string, string][] {
   const canvas = mode === 'canvas';
   const only = t.measureDrawCanvasOnly;
@@ -548,6 +569,16 @@ function readoutLines(
     [t.measureCovers, canvas ? (covers ? t.measureOn : t.measureOff) : t.measureDrawCanvasOnly],
     [t.measureGap, canvas ? (gap ? t.measureOn : t.measureOff) : t.measureDrawCanvasOnly],
     [t.measureShapes, canvas ? (coverShapes ? t.measureOn : t.measureOff) : t.measureDrawCanvasOnly],
+    [t.measureSky, canvas ? (sky ? t.measureOn : t.measureOff) : t.measureDrawCanvasOnly],
+    [
+      t.measureSkyT,
+      !canvas
+        ? t.measureDrawCanvasOnly
+        : readout.sky === null
+          ? t.measureSkyNone
+          : fmt(t.measureSkyTValue, { top: readout.sky.top.toFixed(3), bottom: readout.sky.bottom.toFixed(3) }),
+    ],
+    [t.measureGround, canvas ? (ground ? (readout.ground ? t.measureGroundShown : t.measureGroundAway) : t.measureOff) : t.measureDrawCanvasOnly],
     [
       t.measureShapeConstants,
       canvas
@@ -684,6 +715,11 @@ interface MeasurePanelProps {
   /** "Cover shapes": this device's setting, also used by the Family Staircase. */
   coverShapes: boolean;
   onCoverShapes: (on: boolean) => void;
+  /** "Sky" and "Ground & horizon": this device's settings, also used by the Family Staircase. */
+  sky: boolean;
+  onSky: (on: boolean) => void;
+  ground: boolean;
+  onGround: (on: boolean) => void;
   /** "Replay new-book drop": the newest books fall onto the pile here again. */
   onReplay: (count: number) => void;
   readout: Readout;
@@ -711,6 +747,10 @@ function MeasurePanel({
   onGap,
   coverShapes,
   onCoverShapes,
+  sky,
+  onSky,
+  ground,
+  onGround,
   onReplay,
   readout,
   onReset,
@@ -719,7 +759,9 @@ function MeasurePanel({
   const coversNoteId = useId();
   const gapNoteId = useId();
   const shapesNoteId = useId();
-  const lines = readoutLines(readout, count, mode, twist, settle, raster, covers, gap, coverShapes);
+  const skyNoteId = useId();
+  const groundNoteId = useId();
+  const lines = readoutLines(readout, count, mode, twist, settle, raster, covers, gap, coverShapes, sky, ground);
 
   const copy = async () => {
     const parts = [version, t.stackTitle, ...lines.map(([label, value]) => `${label}: ${value}`)];
@@ -788,6 +830,18 @@ function MeasurePanel({
           </button>
           <p id={shapesNoteId} className="small muted">
             {t.measureShapesNote}
+          </p>
+          <button type="button" className="chip" aria-pressed={sky} aria-describedby={skyNoteId} onClick={() => onSky(!sky)}>
+            {t.measureSky}
+          </button>
+          <p id={skyNoteId} className="small muted">
+            {t.measureSkyNote}
+          </p>
+          <button type="button" className="chip" aria-pressed={ground} aria-describedby={groundNoteId} onClick={() => onGround(!ground)}>
+            {t.measureGround}
+          </button>
+          <p id={groundNoteId} className="small muted">
+            {t.measureGroundNote}
           </p>
         </div>
       )}
