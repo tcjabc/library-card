@@ -61,10 +61,41 @@ export function faceSpan(faces: readonly ProjectedFace[]): { top: number; bottom
 
 // ---- Page-edge detail ----
 
-/** Page edges further than this many books from the camera are drawn flat. */
+/** The page lines' range when slow frames have cut it back ('near'; the only range up to 1.17.0): books from the camera. */
 export const LOD_DISTANCE = 4;
-/** …and so are page faces thinner than this on screen (px). */
+/** Page faces thinner than this on screen (px) are drawn flat, without lines. */
 export const LOD_MIN_PX = 6;
+/** Past its range the lines fade out over this many books, instead of stopping at once. */
+export const PAGE_FADE_BOOKS = 2.5;
+/** …and from LOD_MIN_PX they fade in over this many px of face thickness, as a book turns its side towards you. */
+export const PAGE_THIN_FADE_PX = 3;
+
+/** How far the page lines reach: every book drawn, or (cut back for slow frames, this visit) the few nearest the eye line. */
+export type PageLines = 'all' | 'near';
+/** Books from the camera with full lines, by level: every drawn book (the draw window's cap) or LOD_DISTANCE. */
+export const PAGE_RANGE: Record<PageLines, number> = { all: FAN_CAP, near: LOD_DISTANCE };
+/** When the range is cut back it shrinks at this many books a second (no sudden change; at once with reduced motion). */
+export const PAGE_RANGE_EASE = 20;
+
+/**
+ * How strongly a page face shows its lines (0–1), over the flat paper-and-outline face: full up to
+ * `range` books from the camera, fading to none over PAGE_FADE_BOOKS past it, and fading in from
+ * LOD_MIN_PX over PAGE_THIN_FADE_PX of face thickness, so no book's lines pop on or off.
+ */
+export function pageLineAlpha(booksFromCamera: number, thicknessPx: number, range: number): number {
+  const away = Math.abs(booksFromCamera) - Math.max(0, range);
+  const near = away <= 0 ? 1 : Math.max(0, 1 - away / PAGE_FADE_BOOKS);
+  const thick = Math.min(1, Math.max(0, (thicknessPx - LOD_MIN_PX) / PAGE_THIN_FADE_PX));
+  const alpha = near * thick;
+  return Number.isFinite(alpha) ? alpha : 0;
+}
+
+/** The page lines' range after `dtMs`, moving towards `target` at PAGE_RANGE_EASE books a second (at once with reduced motion, or the first time). */
+export function easePageRange(current: number, target: number, dtMs: number, reduced: boolean): number {
+  if (reduced || !Number.isFinite(current)) return target;
+  const step = (PAGE_RANGE_EASE * Math.max(0, Math.min(dtMs, 100))) / 1000;
+  return current > target ? Math.max(target, current - step) : Math.min(target, current + step);
+}
 
 /** How thin a face is on screen (px): its area over its longest edge. */
 export function faceThickness(face: Pick<ProjectedFace, 'u' | 'v'>): number {
@@ -73,10 +104,6 @@ export function faceThickness(face: Pick<ProjectedFace, 'u' | 'v'>): number {
   return longest > 0 ? area / longest : 0;
 }
 
-/** Striped page edges up close, a flat fill with an outline far away or edge-on. */
-export function pageDetail(booksFromCamera: number, thicknessPx: number): 'striped' | 'flat' {
-  return Math.abs(booksFromCamera) > LOD_DISTANCE || thicknessPx < LOD_MIN_PX ? 'flat' : 'striped';
-}
 
 // ---- Overlays ----
 
@@ -158,18 +185,23 @@ export function lowerDecor(decor: Decor): Decor {
 export interface Budget {
   decor: Decor;
   scale: number;
+  /** How far the page lines reach (left out: not part of this budget). */
+  pages?: PageLines;
 }
 
 /**
  * The budget for the rest of the visit after a second of motion: unchanged unless the frames were
- * slow (as nextScale decides); slow, decor goes down a level first (full → reduced → none), and
- * only once it's at none does the resolution step down. Never back up. `current.decor` is the
- * decor in effect (none when there's none to lose: clouds off, or the reader's own choice).
+ * slow (as nextScale decides); slow, decor goes down a level first (full → reduced → none), then
+ * the page lines are cut back to the books near the eye line (all → near), and only then does the
+ * resolution step down. One step per decision, never back up (so nothing flips on and off).
+ * `current.decor` is the decor in effect (none when there's none to lose: clouds off, or the
+ * reader's own choice).
  */
 export function nextBudget(current: Budget, averageFrameMs: number, frames: number = MIN_FRAMES_TO_DECIDE): Budget {
   if (frames < MIN_FRAMES_TO_DECIDE || !(averageFrameMs > SLOW_FRAME_MS)) return current;
-  if (current.decor !== 'none') return { decor: lowerDecor(current.decor), scale: current.scale };
-  return { decor: 'none', scale: nextScale(current.scale, averageFrameMs, frames) };
+  if (current.decor !== 'none') return { ...current, decor: lowerDecor(current.decor) };
+  if (current.pages === 'all') return { ...current, pages: 'near' };
+  return { ...current, scale: nextScale(current.scale, averageFrameMs, frames) };
 }
 
 /** Why the decor in effect is what it is: the device's setting, slow frames this visit, reduced motion, or the benchmark. */

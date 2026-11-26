@@ -272,6 +272,8 @@ interface Readout {
   clouds: number;
   cloudsFg: number;
   decor: DrawStats['decor'] | null;
+  /** The page lines at the latest frame (null before the first frame). */
+  pages: DrawStats['pages'] | null;
   dropped: number;
   /** null where the browser can't report long tasks. */
   longTasks: number | null;
@@ -286,7 +288,7 @@ function supportsLongTasks(): boolean {
 }
 
 function emptyReadout(): Readout {
-  return { fps: null, renders: null, draw: null, faces: null, ops: null, canvas: null, raster: null, breakdown: null, rebuilds: 0, coverPictures: null, sky: null, ground: false, clouds: 0, cloudsFg: 0, decor: null, dropped: 0, longTasks: supportsLongTasks() ? 0 : null, longTaskMs: 0, nodes: 0, viewport: '', dpr: 1 };
+  return { fps: null, renders: null, draw: null, faces: null, ops: null, canvas: null, raster: null, breakdown: null, rebuilds: 0, coverPictures: null, sky: null, ground: false, clouds: 0, cloudsFg: 0, decor: null, pages: null, dropped: 0, longTasks: supportsLongTasks() ? 0 : null, longTaskMs: 0, nodes: 0, viewport: '', dpr: 1 };
 }
 
 /** Times every frame while the pile is scrolling, counts late frames and long tasks. */
@@ -305,6 +307,7 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
     clouds: 0,
     cloudsFg: 0,
     decor: null as Readout['decor'],
+    pages: null as Readout['pages'],
     lastBreakdown: null as Readout['breakdown'],
     last: 0,
     /** bookRenders() at the last frame. */
@@ -395,6 +398,7 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
         ground: s.ground,
         clouds: s.clouds,
         cloudsFg: s.cloudsFg,
+        pages: s.pages,
         decor: s.decor,
         dropped: s.dropped,
         longTasks: longTasks ? s.longTasks : null,
@@ -433,6 +437,7 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
     s.ground = stats.ground;
     s.clouds = stats.clouds;
     s.cloudsFg = stats.cloudsFg;
+    s.pages = stats.pages;
     s.decor = stats.decor;
     if (stats.raster !== undefined) s.flushes.push({ at: now, ms: stats.raster });
     if (now <= s.scrollingUntil + FRAME_MS) {
@@ -633,6 +638,14 @@ function readoutLines(
     ],
     [t.measureCloudsDrawn, canvas ? String(readout.clouds) : t.measureDrawCanvasOnly],
     [t.measureForegroundDrawn, canvas ? String(readout.cloudsFg) : t.measureDrawCanvasOnly],
+    [
+      t.measurePages,
+      !canvas
+        ? t.measureDrawCanvasOnly
+        : readout.pages === null
+          ? t.measureFpsNone
+          : fmt(t.measurePagesValue, { level: t.pagesLevel[readout.pages.level], range: readout.pages.range.toFixed(1) }),
+    ],
     [t.measureSlow, canvas ? (slow ? t.measureOn : t.measureOff) : t.measureDrawCanvasOnly],
     [
       t.measureShapeConstants,

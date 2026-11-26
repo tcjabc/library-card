@@ -88,6 +88,31 @@ describe('budgetDue: a slow device gets a verdict too', () => {
   });
 });
 
+describe('nextBudget with the page lines: decor, then the page lines, then the resolution', () => {
+  it('slow frames take decor first, then cut the page lines back to near, then step the scale down', () => {
+    let b: Budget = { decor: 'full', pages: 'all', scale: 2 };
+    const seen: Budget[] = [];
+    for (let k = 0; k < 6; k++) {
+      b = nextBudget(b, SLOW, MIN_FRAMES_TO_DECIDE);
+      seen.push(b);
+    }
+    expect(seen).toEqual([
+      { decor: 'reduced', pages: 'all', scale: 2 },
+      { decor: 'none', pages: 'all', scale: 2 },
+      { decor: 'none', pages: 'near', scale: 2 },
+      { decor: 'none', pages: 'near', scale: 1.5 },
+      { decor: 'none', pages: 'near', scale: 1.25 },
+      { decor: 'none', pages: 'near', scale: 1 },
+    ]);
+  });
+
+  it('never back up: fast frames keep the page lines where they are (no flipping each decision)', () => {
+    const cut = nextBudget({ decor: 'none', pages: 'all', scale: 2 }, SLOW);
+    expect(cut.pages).toBe('near');
+    for (let k = 0; k < 5; k++) expect(nextBudget(cut, FAST)).toEqual(cut);
+  });
+});
+
 describe('decorInEffect: the least of the setting, the per-visit cap and reduced motion', () => {
   it('is min(setting, cap)', () => {
     for (const setting of DECOR_LEVELS) {

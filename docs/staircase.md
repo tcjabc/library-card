@@ -154,9 +154,10 @@ three layers (`LAYERS`). Only with the sky on.
   device"). The developer tools' decor chips are the same setting; both follow it live, and so does an open pile.
 - **The drop-out rule** (`nextBudget({ decor, scale }, averageFrameMs, frames)`): after each second of motion,
   slow frames (over 22 ms on average, at least 30 frames) lower the decor one level first, Full → Reduced → None
-  (so the wisps go first, then the backdrop), and only once it's at None does the resolution step down as before
-  (2 → 1.5 → 1.25 → 1). A device drawing under 30 frames a second keeps counting past the second until it has 30
-  (`budgetDue`); up to 1.17.0 it reset every second and so never got a verdict at all. Never back up. Like the resolution cap it's per visit, never saved. With the clouds or the
+  (so the wisps go first, then the backdrop), then cut the page lines back to the books near the eye line (see
+  "Page edges"), and only then does the resolution step down as before (2 → 1.5 → 1.25 → 1). A device drawing
+  under 30 frames a second keeps counting past the second until it has 30 (`budgetDue`); up to 1.17.0 it reset
+  every second and so never got a verdict at all. Never back up. Like the resolution cap it's per visit, never saved. With the clouds or the
   sky off there's no decor to lose, so the resolution steps down at once.
 - **Decor in effect**: the least of the setting, this visit's cap and, with reduced motion, Reduced
   (`decorInEffect`, which also says why).
@@ -174,6 +175,28 @@ every moving frame counts as at least `PRETEND_SLOW_FRAME_MS`, 40 ms, for the bu
 seen on a fast device). All apply on the Family Staircase on this device too. The readout shows the decor drawn and
 why (the setting, this visit's cap, reduced motion), and the clouds behind the pile and the foreground wisps drawn
 at the latest frame.
+
+## Page edges
+
+The paper sides of each book (`drawFace` in `CanvasStack.tsx`, rules in `drawBudget.ts`).
+
+- **Two looks**: the page lines (a cached stripe sprite per thickness, 2 px wide, a strip of paper then a thin
+  line repeated down the edge, stretched across the face in one `drawImage`), or a flat paper fill with an outline
+  (a fill and a stroke).
+- **Range** (since 1.17.1): every book the renderer draws has its lines (`PAGE_RANGE.all` = `FAN_CAP`, 14 books
+  either side of the camera), so a book already has them when it scrolls into view. Up to 1.17.0 only the books
+  within 4 of the camera had them (`LOD_DISTANCE`), and they switched on and off as books crossed that line, a
+  visible pop. Measured at 1,000 books on the phone profile (6× CPU throttle, headless) the wider range costs
+  nothing measurable in JavaScript (5.84 ms a frame either way) and saves about 33 canvas calls a frame, since a
+  striped face is one call and a flat one two.
+- **No pops** (`pageLineAlpha`): the lines fade out over `PAGE_FADE_BOOKS` (2.5) books past the range, and fade in
+  from `LOD_MIN_PX` (6 px) over `PAGE_THIN_FADE_PX` (3 px) of face thickness as a book turns its side towards you
+  (thinner faces are flat). In between, the stripes are drawn over the flat face at that strength.
+- **Slow frames**: after the decor, the drop-out rule cuts the page lines back to the books within `LOD_DISTANCE` of
+  the camera (`PageLines` 'near'), once per visit and never back up, before the resolution steps down. The range
+  then shrinks over about half a second (`easePageRange`, `PAGE_RANGE_EASE` books a second; at once with reduced
+  motion), and the fade past it means no book loses its lines at once.
+- **Dev readout**: "Page lines" shows the level and the range drawn at the latest frame.
 
 ## Book sizes from the covers
 

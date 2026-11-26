@@ -4,13 +4,18 @@ import {
   INSET_EVERY,
   LOD_DISTANCE,
   LOD_MIN_PX,
+  PAGE_FADE_BOOKS,
+  PAGE_RANGE,
+  PAGE_RANGE_EASE,
+  PAGE_THIN_FADE_PX,
+  easePageRange,
+  pageLineAlpha,
   MIN_FRAMES_TO_DECIDE,
   SLOW_FRAME_MS,
   faceSpan,
   faceThickness,
   insetDue,
   nextScale,
-  pageDetail,
   tagChanged,
   visibleRange,
 } from '../drawBudget';
@@ -77,18 +82,60 @@ describe('faceSpan and faceThickness', () => {
   });
 });
 
-describe('pageDetail', () => {
-  it('stripes the page edges near the camera and flattens them further away', () => {
-    expect(pageDetail(0, 30)).toBe('striped');
-    expect(pageDetail(LOD_DISTANCE, 30)).toBe('striped');
-    expect(pageDetail(-LOD_DISTANCE, 30)).toBe('striped');
-    expect(pageDetail(LOD_DISTANCE + 0.01, 30)).toBe('flat');
-    expect(pageDetail(-9, 30)).toBe('flat');
+describe('pageLineAlpha: page lines by distance and thickness, without pops', () => {
+  it('full lines for every book within the range: by default every drawn book', () => {
+    expect(PAGE_RANGE.all).toBe(FAN_CAP);
+    for (const d of [0, 1, -4, 8, -FAN_CAP, FAN_CAP]) expect(pageLineAlpha(d, 30, PAGE_RANGE.all)).toBe(1);
   });
 
-  it('flattens faces thinner than LOD_MIN_PX on screen, even up close', () => {
-    expect(pageDetail(1, LOD_MIN_PX - 0.1)).toBe('flat');
-    expect(pageDetail(1, LOD_MIN_PX)).toBe('striped');
+  it('cut back to the near range (slow frames), the lines fade out over PAGE_FADE_BOOKS past it instead of stopping', () => {
+    const range = PAGE_RANGE.near;
+    expect(range).toBe(LOD_DISTANCE);
+    expect(pageLineAlpha(range, 30, range)).toBe(1);
+    expect(pageLineAlpha(range + PAGE_FADE_BOOKS / 2, 30, range)).toBeCloseTo(0.5, 9);
+    expect(pageLineAlpha(-(range + PAGE_FADE_BOOKS / 2), 30, range)).toBeCloseTo(0.5, 9);
+    expect(pageLineAlpha(range + PAGE_FADE_BOOKS, 30, range)).toBe(0);
+    expect(pageLineAlpha(-9, 30, range)).toBe(0);
+    // Smooth: a small step in the camera never changes the lines by much.
+    for (let d = 0; d < 10; d += 0.05) {
+      expect(Math.abs(pageLineAlpha(d + 0.05, 30, range) - pageLineAlpha(d, 30, range))).toBeLessThanOrEqual(0.05 / PAGE_FADE_BOOKS + 1e-9);
+    }
+  });
+
+  it('fades in from LOD_MIN_PX over PAGE_THIN_FADE_PX as a face turns towards you; none on a thinner face', () => {
+    expect(pageLineAlpha(1, LOD_MIN_PX - 0.1, PAGE_RANGE.all)).toBe(0);
+    expect(pageLineAlpha(1, LOD_MIN_PX, PAGE_RANGE.all)).toBe(0);
+    expect(pageLineAlpha(1, LOD_MIN_PX + PAGE_THIN_FADE_PX / 2, PAGE_RANGE.all)).toBeCloseTo(0.5, 9);
+    expect(pageLineAlpha(1, LOD_MIN_PX + PAGE_THIN_FADE_PX, PAGE_RANGE.all)).toBe(1);
+  });
+
+  it('clamps: never below 0 or above 1, nonsense gives none', () => {
+    for (const d of [-100, -3, 0, 3, 100]) {
+      for (const px of [-5, 0, 7, 100]) {
+        const a = pageLineAlpha(d, px, PAGE_RANGE.near);
+        expect(a).toBeGreaterThanOrEqual(0);
+        expect(a).toBeLessThanOrEqual(1);
+      }
+    }
+    expect(pageLineAlpha(Number.NaN, 30, 4)).toBe(0);
+    expect(pageLineAlpha(0, Number.NaN, 4)).toBe(0);
+    expect(pageLineAlpha(0, 30, -3)).toBe(1);
+  });
+});
+
+describe('easePageRange: the range shrinks over a moment, not at once', () => {
+  it(`moves ${PAGE_RANGE_EASE} books a second towards the target, and stops there`, () => {
+    expect(easePageRange(14, 4, 100, false)).toBeCloseTo(14 - PAGE_RANGE_EASE / 10, 9);
+    let r = 14;
+    for (let k = 0; k < 40; k++) r = easePageRange(r, 4, 16, false);
+    expect(r).toBe(4);
+    expect(easePageRange(4, 14, 16, false)).toBeGreaterThan(4);
+  });
+
+  it('a long gap between frames counts as at most 100 ms; reduced motion (and the first frame) jump', () => {
+    expect(easePageRange(14, 4, 5000, false)).toBeCloseTo(14 - PAGE_RANGE_EASE / 10, 9);
+    expect(easePageRange(14, 4, 16, true)).toBe(4);
+    expect(easePageRange(Number.NaN, 4, 16, false)).toBe(4);
   });
 });
 

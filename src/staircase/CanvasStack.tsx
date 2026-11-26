@@ -88,14 +88,17 @@ import {
   decorInEffect,
   faceSpan,
   faceThickness,
+  PAGE_RANGE,
+  easePageRange,
   insetDue,
   nextBudget,
-  pageDetail,
+  pageLineAlpha,
   tagChanged,
   visibleRange,
   type Decor,
   type DecorWhy,
   type InsetState,
+  type PageLines,
   type StackOverrides,
 } from './drawBudget';
 import { READER_COLOURS, atNewest, firstMarkerFrom, followPile, markerTop, type LabelPart, type StackItem, type StackMarkers } from './stackItems';
@@ -139,10 +142,13 @@ import './canvasStack.css';
  *
  * Per frame (drawBudget.ts): only the books on screen plus one spare each way are drawn (at most
  * FAN_CAP either side), bottom to top; each spine and each thickness of page edge is drawn once
- * to a small canvas and reused, and far or edge-on page edges are a flat fill. The canvas is
+ * to a small canvas and reused. Every drawn book's page edges have their lines (fading out past
+ * the range, and in as a side turns towards you, so none pop on or off); edge-on ones are a flat
+ * fill. The canvas is
  * opaque: each frame starts with the scenery (scenery.ts: the sky as one gradient by altitude,
  * then the meadow, its horizon and the base book's shadow), or the page's plain background with
- * the sky off. If frames are slow it steps its resolution down for the rest of the visit. The tag
+ * the sky off. If frames are slow it lowers the decor, then cuts the page lines back to the books
+ * near the eye line, then steps its resolution down, for the rest of the visit. The tag
  * and the top-down inset only redraw when they change.
  *
  * Scenery (`sky`, `ground`, scenery.ts): the sky's colour goes by altitude (absolute, so a pile's
@@ -240,6 +246,8 @@ export interface DrawStats {
   /** Backdrop clouds drawn this frame (the still layer's with reduced motion), and foreground wisps. */
   clouds: number;
   cloudsFg: number;
+  /** The page lines: how far they may reach this visit, and the range drawn this frame (books from the camera). */
+  pages: { level: PageLines; range: number };
   /** The decor: the device's setting, this visit's cap (slow frames), what's drawn, and why. */
   decor: { setting: Decor; cap: Decor; drawn: Decor; why: DecorWhy };
 }
@@ -822,6 +830,8 @@ interface FaceKit {
   fading: boolean;
   /** Cover shapes: labels and page edges per size bucket, spine text scaled to the thickness. */
   shaped: boolean;
+  /** Books from the camera whose page faces have full lines this frame (pageLineAlpha). */
+  pageRange: number;
 }
 
 const NO_FADE: CoverFade = { colour: 1, picture: 1, shape: 1 };
@@ -938,27 +948,33 @@ function drawFace(ctx: CanvasRenderingContext2D, face: ProjectedFace, book: Book
       ctx.fillRect(0, 0, 1, 1);
       ops += 1;
     }
-  } else if (pageDetail(fromCamera, faceThickness(face)) === 'striped') {
-    // Page edges up close: the cached stripes, one drawImage.
-    const thickness = kit.shaped ? sizeBucket(shape.thickness, THICKNESS_BUCKET) : book.thickness;
-    let pages = paint.pages.get(thickness);
-    if (!pages) {
-      pages = renderPages(thickness, theme, scale);
-      paint.pages.set(thickness, pages);
-    }
-    ctx.setTransform(...faceTransform(face, scale));
-    ctx.drawImage(pages, 0, 0, face.width, face.height);
-    ops += 1;
   } else {
-    // Far away or edge-on: paper colour and an outline.
-    ctx.setTransform(scale, 0, 0, scale, 0, 0);
-    tracePath(ctx, face);
-    ctx.fillStyle = theme.pages;
-    ctx.fill();
-    ctx.strokeStyle = theme.pageLine;
-    ctx.lineWidth = theme.borderThin;
-    ctx.stroke();
-    ops += 2;
+    // Page edges: the cached stripes (one drawImage) within the range, the flat paper with an
+    // outline past it or edge-on, and the stripes fading in over the flat face in between.
+    const lines = pageLineAlpha(fromCamera, faceThickness(face), kit.pageRange);
+    if (lines < 1) {
+      ctx.setTransform(scale, 0, 0, scale, 0, 0);
+      tracePath(ctx, face);
+      ctx.fillStyle = theme.pages;
+      ctx.fill();
+      ctx.strokeStyle = theme.pageLine;
+      ctx.lineWidth = theme.borderThin;
+      ctx.stroke();
+      ops += 2;
+    }
+    if (lines > 0) {
+      const thickness = kit.shaped ? sizeBucket(shape.thickness, THICKNESS_BUCKET) : book.thickness;
+      let pages = paint.pages.get(thickness);
+      if (!pages) {
+        pages = renderPages(thickness, theme, scale);
+        paint.pages.set(thickness, pages);
+      }
+      ctx.setTransform(...faceTransform(face, scale));
+      ctx.globalAlpha = lines;
+      ctx.drawImage(pages, 0, 0, face.width, face.height);
+      ctx.globalAlpha = 1;
+      ops += 1;
+    }
   }
 }
 
@@ -1223,6 +1239,10 @@ function CanvasStack({
     scaleCap: Infinity,
     /** Nor the decor (clouds) above this: slow frames lower it first (drawBudget.nextBudget). */
     decorCap: 'full' as Decor,
+    /** Nor the page lines past this (slow frames cut them back after the decor), and the range now (easing to it) and when it was last eased. */
+    pagesCap: 'all' as PageLines,
+    pageRange: Number.NaN,
+    pageRangeAt: 0,
     /** The budget's time for the moving frames since the last decision (ms; "Pretend slow frames" makes it more). */
     motionCost: 0,
     tag: null as { step: number; degrees: number } | null,
@@ -1237,7 +1257,7 @@ function CanvasStack({
     rebuilds: 0,
     /** The benchmark's fixed set-up, and what to go back to afterwards. */
     overrides: null as StackOverrides | null,
-    saved: null as { scale: number; scaleCap: number; decorCap: Decor; scrollTop: number } | null,
+    saved: null as { scale: number; scaleCap: number; decorCap: Decor; pagesCap: PageLines; scrollTop: number } | null,
     listener: null as ((stats: DrawStats) => void) | null,
     /** Drawing is paused (the pile is covered); `missed`: a frame was skipped meanwhile. */
     paused,
@@ -1513,6 +1533,11 @@ function CanvasStack({
         from = range.start;
         to = range.end;
         c.drawnRange = { base, from, to };
+        // The page lines' range: every drawn book, unless slow frames cut it back (eased, so it never jumps).
+        const pagesTarget = PAGE_RANGE[o ? 'all' : c.pagesCap];
+        c.pageRange = easePageRange(c.pageRange, pagesTarget, started - c.pageRangeAt, c.reduced);
+        c.pageRangeAt = started;
+        if (c.pageRange !== pagesTarget) shapeFading = true;
         kit = {
           scale,
           labels,
@@ -1524,6 +1549,7 @@ function CanvasStack({
           now: started,
           fading: false,
           shaped: scene.current.coverShapes,
+          pageRange: c.pageRange,
         };
         const marks = placed.current;
         marks.sprites.length = 0;
@@ -1814,6 +1840,7 @@ function CanvasStack({
         ground: groundNow,
         clouds: backdrop.length,
         cloudsFg: wisps.length,
+        pages: { level: o ? 'all' : c.pagesCap, range: Number.isFinite(c.pageRange) ? c.pageRange : PAGE_RANGE.all },
         decor: { setting: scene.current.decor, cap: c.decorCap, drawn: decorNow.decor, why: decorNow.why },
       };
       c.cameraMs = 0;
@@ -1850,11 +1877,12 @@ function CanvasStack({
         if (budgetDue(c.motionMs, c.motionFrames)) {
           // Only decor that's drawn can be lost: none with the clouds or the sky off.
           const shown = scene.current.clouds && scene.current.sky ? decorInEffect(scene.current.decor, c.decorCap, c.reduced).decor : 'none';
-          const next = nextBudget({ decor: shown, scale: size.current.scale }, c.motionCost / c.motionFrames, c.motionFrames);
+          const next = nextBudget({ decor: shown, pages: c.pagesCap, scale: size.current.scale }, c.motionCost / c.motionFrames, c.motionFrames);
           c.motionFrames = 0;
           c.motionMs = 0;
           c.motionCost = 0;
           if (next.decor !== shown) c.decorCap = next.decor;
+          if (next.pages && next.pages !== c.pagesCap) c.pagesCap = next.pages;
           if (next.scale < size.current.scale) {
             c.scaleCap = next.scale;
             applyScale(next.scale);
@@ -2282,7 +2310,7 @@ function CanvasStack({
     };
     const handle: StackBench = {
       setOverrides(next) {
-        if (next && !c.overrides) c.saved = { scale: size.current.scale, scaleCap: c.scaleCap, decorCap: c.decorCap, scrollTop: c.scrollTop };
+        if (next && !c.overrides) c.saved = { scale: size.current.scale, scaleCap: c.scaleCap, decorCap: c.decorCap, pagesCap: c.pagesCap, scrollTop: c.scrollTop };
         // A bigger label cache while benchmarking, the normal one afterwards.
         labels.resize(next ? Math.max(LABEL_CACHE_SIZE, next.labelCache) : LABEL_CACHE_SIZE);
         const plainChanged = (c.overrides?.plainAvatars ?? false) !== (next?.plainAvatars ?? false);
@@ -2302,6 +2330,7 @@ function CanvasStack({
           c.saved = null;
           c.scaleCap = saved.scaleCap;
           c.decorCap = saved.decorCap;
+          c.pagesCap = saved.pagesCap;
           if (size.current.scale !== saved.scale) applyScale(saved.scale);
           jumpTo(saved.scrollTop);
         }
@@ -2321,6 +2350,7 @@ function CanvasStack({
           now: performance.now(),
           fading: false,
           shaped: scene.current.coverShapes,
+          pageRange: Number.isFinite(c.pageRange) ? c.pageRange : PAGE_RANGE.all,
         };
         const { shapes: all, coverShapes: shaped } = scene.current;
         for (let i = Math.max(0, from); i < Math.min(items.length, to); i++) {
