@@ -28,18 +28,32 @@ import {
 } from '../scene';
 
 describe('scenes: which journeys have one', () => {
-  it('five journeys have a scene (1.18.0: Hot-Air Balloon, Ocean Deep; 1.19.0: Redwood Tree, Ocean Cliff, Skyscraper); the others keep their plain track', () => {
-    expect(Object.keys(SCENES).sort()).toEqual(['hot_air_balloon', 'ocean_cliff', 'ocean_deep', 'redwood_tree', 'skyscraper']);
+  it('all eight journeys have a scene (1.18.0: Hot-Air Balloon, Ocean Deep; 1.19.0: Redwood Tree, Ocean Cliff, Skyscraper; 1.20.0: Rapunzel’s Tower, Ladder to the Moon, Rocket Through Space)', () => {
+    expect(Object.keys(SCENES).sort()).toEqual([
+      'hot_air_balloon',
+      'ladder_to_the_moon',
+      'ocean_cliff',
+      'ocean_deep',
+      'rapunzel_tower',
+      'redwood_tree',
+      'rocket_through_space',
+      'skyscraper',
+    ]);
     for (const journey of JOURNEYS) expect(sceneFor(journey.id) !== null).toBe(journey.id in SCENES);
     expect(sceneFor('nope')).toBeNull();
   });
 
-  it('each scene’s travel grows with its steps (about 30–40 px a step) and stays within MAX_TRAVEL', () => {
+  it('every journey id has a scene (the emoji fallback stays in the code, unused)', () => {
+    for (const journey of JOURNEYS) expect(sceneFor(journey.id), journey.id).not.toBeNull();
+  });
+
+  it('each scene’s travel grows with its steps (about 30–40 px a step) and stays within MAX_TRAVEL (long journeys take the whole of it)', () => {
     for (const journey of JOURNEYS) {
       const config = sceneFor(journey.id);
       if (!config) continue;
       expect(config.travel).toBeLessThanOrEqual(MAX_TRAVEL);
-      expect(config.travel / journey.steps).toBeGreaterThanOrEqual(28);
+      if (journey.steps * 28 > MAX_TRAVEL) expect(config.travel).toBe(MAX_TRAVEL);
+      else expect(config.travel / journey.steps).toBeGreaterThanOrEqual(28);
       expect(config.travel / journey.steps).toBeLessThanOrEqual(40);
       for (const layer of SCENE_LAYERS) expect(config.factors[layer]).toBeLessThanOrEqual(MAX_FACTOR);
     }

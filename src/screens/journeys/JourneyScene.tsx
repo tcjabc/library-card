@@ -13,6 +13,9 @@ const ART: Partial<Record<JourneyId, LazyExoticComponent<SceneArt>>> = {
   redwood_tree: lazy(() => import('./scenes/RedwoodTreeScene')),
   ocean_cliff: lazy(() => import('./scenes/OceanCliffScene')),
   skyscraper: lazy(() => import('./scenes/SkyscraperScene')),
+  rapunzel_tower: lazy(() => import('./scenes/RapunzelTowerScene')),
+  ladder_to_the_moon: lazy(() => import('./scenes/LadderToTheMoonScene')),
+  rocket_through_space: lazy(() => import('./scenes/RocketThroughSpaceScene')),
 };
 
 function prefersReducedMotion(): boolean {

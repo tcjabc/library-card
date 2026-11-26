@@ -42,6 +42,9 @@ export const SCENES: Partial<Record<JourneyId, SceneConfig>> = {
   redwood_tree: { travel: 300, factors: { far: 0.2, mid: 0.6, near: 1 } },
   ocean_cliff: { travel: 360, factors: { far: 0.2, mid: 0.6, near: 1 } },
   skyscraper: { travel: 420, factors: { far: 0.2, mid: 0.6, near: 1 } },
+  rapunzel_tower: { travel: 480, factors: { far: 0.2, mid: 0.6, near: 1 } },
+  ladder_to_the_moon: { travel: 640, factors: { far: 0.2, mid: 0.6, near: 1 } },
+  rocket_through_space: { travel: 640, factors: { far: 0.2, mid: 0.6, near: 1 } },
 };
 
 export function sceneFor(id: string): SceneConfig | null {

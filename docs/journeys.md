@@ -16,8 +16,9 @@ completion sends the reader to the gallery with the celebration. Checks never ov
 
 ## Scenes (since 1.18.0)
 
-Journeys with a scene show flat art behind the track instead of the plain tinted track. The others keep their
-emoji and colour until their scenes come (Rapunzel's Tower, Ladder to the Moon and Rocket Through Space: 1.20.0).
+Journeys with a scene show flat art behind the track instead of the plain tinted track. Since 1.20.0 all eight
+have one (a unit test checks every journey id). The plain track with the journey's emoji and colour is still in the
+code (`JourneyScreen.tsx`, for a journey without a scene config) but is now unused; it is kept for the next journey.
 The gallery, the hub tile and the celebration are unchanged.
 
 | Journey | Since | Steps | Travel (px) | Factors far / mid / near | Loops | Far | Mid | Near |
@@ -26,15 +27,20 @@ The gallery, the hub tile and the celebration are unchanged.
 | Redwood Tree | 1.19.0 | 8 | 300 | 0.2 / 0.6 / 1 | 8 | forest-morning sky, misty hills, tiny birds | the trunk with bark and branches, a bird, falling leaves, the canopy at the top | needle clusters at both edges, ferns, the forest floor |
 | Ocean Cliff | 1.19.0 | 10 | 360 | 0.2 / 0.6 / 1 | 9 | warm sky, faint clouds, the sea and a sailboat | the rock face with ledges and grass, two gulls, the lighthouse at the top (its lamp glimmers) | waves and foam, a rock outcrop, rising spray, a cloud passing |
 | Skyscraper | 1.19.0 | 12 | 420 | 0.2 / 0.6 / 1 | 7 | city dawn, a distant skyline, a plane trail | the glass tower with windows (some lit, three twinkling), the antenna's blinking light at the top, a helicopter | neighbouring buildings, a crane arm, the street and a tiny car, a cloud passing |
+| Rapunzel's Tower | 1.20.0 | 15 | 480 | 0.2 / 0.6 / 1 | 10 | storybook dawn (peach, lilac, light blue), rolling hills, a distant castle, tiny birds | the stone tower with brick courses and ivy, two arched windows glimmering, the slate roof with a swaying flag and the braid window at the top, a bird | leafy branches from both edges (sway), falling petals, a cloud passing, the meadow with flowers |
 | Hot-Air Balloon | 1.18.0 | 20 | 640 | 0.2 / 0.6 / 1 | 7 | sky bands, faint clouds, a distant balloon | the finish balloon at the top, two clouds | two big clouds, the hills and a tree |
+| Ladder to the Moon | 1.20.0 | 25 | 640 | 0.2 / 0.6 / 1 | 11 | night bands (twilight in light), small stars with four twinkling, the moon at the top, a faint planet | the long wooden ladder, two shooting stars, an owl gliding | two night clouds, two big stars glimmering, rooftops on a hill with lit windows |
+| Rocket Through Space | 1.20.0 | 30 | 640 | 0.2 / 0.6 / 1 | 11 | pale blue into navy and violet, stars with three twinkling, a faint nebula, a ringed planet at the top | the rocket at the top (bobbing, flame flickering), two satellites, a star cluster | two streaks, two asteroids drifting, the planet's curve and horizon glow |
 
 Travel grows with the steps, about 30–40 px a step (a unit test keeps it there, and within `MAX_TRAVEL`), so a
-short journey still shows its finish-end art (the canopy, the lighthouse, the antenna) near the finish.
+short journey still shows its finish-end art (the canopy, the lighthouse, the antenna) near the finish. Journeys
+longer than `MAX_TRAVEL` / 28 steps (Ladder to the Moon's 25, Rocket Through Space's 30) take the whole 640 px
+(about 26 and 21 px a step): the cap wins, and the test expects exactly `MAX_TRAVEL` for them.
 
 - **Where**: `src/journeys/scene.ts` (pure, unit-tested: which journeys have a scene, the layers, the shift, the
   settle, the motion rules), `src/journeys/journeySeen.ts` (the seen step), `src/screens/journeys/JourneyScene.tsx`
   (the layers and their motion), `src/screens/journeys/scenes/*.tsx` (each scene's art, one lazy chunk each, about
-  1.1–1.6 KB gzipped; `parts.tsx` holds the shared cloud), `src/screens/journeys/journeyScene.css`. The journey screen itself is a lazy chunk too.
+  1.1–1.7 KB gzipped; `parts.tsx` holds the shared cloud, which takes a token pair, and the star sparkle), `src/screens/journeys/journeyScene.css`. The journey screen itself is a lazy chunk too.
 - **Layers**: far (slowest), mid and near (fastest), each an inline SVG group in a fixed backdrop behind the page
   (`position: fixed`, the large viewport's height, so no gap when a phone's browser bar slides away). The track's
   rows (stage label, numbered dot, cover, the reader's avatar) are real DOM rows over it and never move with it.
@@ -60,15 +66,15 @@ short journey still shows its finish-end art (the canopy, the lighthouse, the an
   cleared by "Reset this device" with the app's other `library-card:` keys. Decided while rendering by reading only,
   written in an effect (the Family Staircase's `stackSeen.ts` pattern).
 - **Motion** (`sceneMotion`), from Grown-ups → Settings → Sky decoration (`library-card:stack-decor`, shared with
-  the Family Staircase's clouds): Full = gentle ambient loops (bob, drift, rise, sway, glimmer: CSS animations only,
+  the Family Staircase's clouds): Full = gentle ambient loops (bob, drift, rise, sway, glimmer, fall, blink, flicker: CSS animations only,
   at most `MAX_LOOPS` 15 per scene) and parallax; Reduced = parallax and the settle, no loops; None = a still
   picture at the reader's step. The system's reduced motion is always still: no loops, no parallax, no settle (and
   the avatar stops bouncing, as before).
 - **Colours**: tokens only, `--journey-scene-*` in `src/theme.css` with light and dark (dusk) values; the art never
   holds a colour (`paint('…')` / `ink('…')` in `scenes/art.ts`). Text and dots over a scene sit on a backing
   (`--journey-scene-backing`: the nav row, the title block, stage labels, the start and finish rows, a ring round
-  each dot), and the track's path is `--journey-scene-path`. The two pilots' `--journey-*` colours have dark values
-  too (still 4.5:1 with white text). A unit test checks every token a scene uses has both values.
+  each dot), and the track's path is `--journey-scene-path`. Every scene journey's `--journey-*` colour has a dark
+  value too (still 4.5:1 with white text). A unit test checks every token a scene uses has both values.
 - **Accessibility**: the art is decorative (`aria-hidden`); the track keeps its labels. In phone landscape the scene
   fills the width behind the track, which stays a scrolling column.
 
@@ -80,7 +86,10 @@ short journey still shows its finish-end art (the canopy, the lighthouse, the an
    returning that layer's SVG, every colour through `paint` / `ink`, positions through `at` (top/bottom % of the
    layer's height; things at the track's top end near the top of their layer, at the bottom end near its bottom).
    Mark looping pieces `scene-loop scene-loop--<kind>` (bob, bob-slow, drift, drift-back, drift-slow, rise,
-   rise-slow, sway, sway-back, glimmer, glimmer-slow, blink, fall, fall-slow, pass), at most 15.
+   rise-slow, sway, sway-back, glimmer, glimmer-slow, blink, fall, fall-slow, pass, flicker), at most 15. Put
+   the class on a whole `<svg>` (or a wrapping box), not on a shape inside one: that keeps each loop a transform
+   or opacity change the browser can composite. `flicker` stretches an element from its top edge (the rocket's
+   flame); a test checks every kind used has its CSS.
 3. Add its lazy import to `ART` in `JourneyScene.tsx`, and its tokens (light and dark) to `src/theme.css`, plus a
    background colour for `.journey-scene--<id>` in `journeyScene.css` (shown while the art loads).
 4. Add it to `ART` in `src/journeys/__tests__/sceneArt.test.ts` (loops, tokens only, both theme values).

@@ -184,6 +184,73 @@
   --journey-scene-tower-street-line: #f8f9fa;
   --journey-scene-tower-car: #1c7ed6;
 
+  --journey-scene-rapunzel-sky-high: #a9d4f2;
+  --journey-scene-rapunzel-sky-mid: #dccff0;
+  --journey-scene-rapunzel-sky-low: #ffdcc8;
+  --journey-scene-rapunzel-hill-far: #9cc49a;
+  --journey-scene-rapunzel-hill-near: #79ab7c;
+  --journey-scene-rapunzel-castle: #8f8aa8;
+  --journey-scene-rapunzel-bird: #5a5470;
+  --journey-scene-rapunzel-stone: #b8aea2;
+  --journey-scene-rapunzel-brick: #9a8f83;
+  --journey-scene-rapunzel-ivy: #4f8f4e;
+  --journey-scene-rapunzel-roof: #5a6e8f;
+  --journey-scene-rapunzel-roof-line: #3f4f6b;
+  --journey-scene-rapunzel-flag: #e64980;
+  --journey-scene-rapunzel-window: #4a3f3a;
+  --journey-scene-rapunzel-glow: #ffc95c;
+  --journey-scene-rapunzel-braid: #f2c14e;
+  --journey-scene-rapunzel-petal: #f7a8c4;
+  --journey-scene-rapunzel-branch: #7a5230;
+  --journey-scene-rapunzel-leaves: #5fa35a;
+  --journey-scene-rapunzel-leaves-dark: #3f8a4a;
+  --journey-scene-rapunzel-meadow: #7cbf6a;
+  --journey-scene-rapunzel-flower-pink: #f06595;
+  --journey-scene-rapunzel-flower-yellow: #fcc419;
+  --journey-scene-rapunzel-flower-white: #ffffff;
+
+  --journey-scene-ladder-sky-high: #8a8fd8;
+  --journey-scene-ladder-sky-mid: #5f66b8;
+  --journey-scene-ladder-sky-low: #3c4590;
+  --journey-scene-ladder-star: #fff8dc;
+  --journey-scene-ladder-star-bright: #ffe680;
+  --journey-scene-ladder-moon-glow: rgba(255, 248, 220, 0.25);
+  --journey-scene-ladder-moon: #fdf3c8;
+  --journey-scene-ladder-crater: #e6d9a2;
+  --journey-scene-ladder-planet: #e8a87c;
+  --journey-scene-ladder-wood: #a0703f;
+  --journey-scene-ladder-rung: #c08a52;
+  --journey-scene-ladder-streak: rgba(255, 255, 255, 0.7);
+  --journey-scene-ladder-owl: #4a3f5e;
+  --journey-scene-ladder-owl-face: #c9b8a0;
+  --journey-scene-ladder-cloud: #4a5299;
+  --journey-scene-ladder-cloud-shade: #3c4485;
+  --journey-scene-ladder-hill: #2a2f66;
+  --journey-scene-ladder-window: #ffd86b;
+
+  --journey-scene-rocket-sky-high: #3b2f7a;
+  --journey-scene-rocket-sky-mid: #1f2a66;
+  --journey-scene-rocket-sky-edge: #4a6fb8;
+  --journey-scene-rocket-sky-low: #9fd0f2;
+  --journey-scene-rocket-star: #fff8dc;
+  --journey-scene-rocket-nebula-a: rgba(240, 101, 149, 0.2);
+  --journey-scene-rocket-nebula-b: rgba(116, 143, 252, 0.22);
+  --journey-scene-rocket-ringed: #f0a35a;
+  --journey-scene-rocket-ring: #ffd8a8;
+  --journey-scene-rocket-flame: #ff922b;
+  --journey-scene-rocket-flame-core: #ffe066;
+  --journey-scene-rocket-body: #f8f9fa;
+  --journey-scene-rocket-red: #e03131;
+  --journey-scene-rocket-window: #4dabf7;
+  --journey-scene-rocket-panel: #4c6ef5;
+  --journey-scene-rocket-satellite: #ced4da;
+  --journey-scene-rocket-streak: rgba(255, 255, 255, 0.6);
+  --journey-scene-rocket-asteroid: #8c7b6b;
+  --journey-scene-rocket-asteroid-dark: #6b5d50;
+  --journey-scene-rocket-glow: rgba(200, 235, 255, 0.75);
+  --journey-scene-rocket-planet: #3b8fd6;
+  --journey-scene-rocket-planet-band: #5fb0e8;
+
   /* Family Staircase: a colour per reader (picked from the reader id). */
   /* Eight clearly different hues, so siblings never look alike. */
   --reader-1: #e8590c; /* orange */
@@ -367,6 +434,7 @@
   --duration-scene-pass: 48s;
   --duration-scene-blink: 1.2s;
   --duration-scene-fall: 9s;
+  --duration-scene-flicker: 0.9s;
 
   /* Layering */
   --z-sheet: 50;
@@ -595,6 +663,77 @@
     --journey-scene-tower-street: #262a30;
     --journey-scene-tower-street-line: #9aa0a8;
     --journey-scene-tower-car: #2f6fb0;
+
+    --journey-rapunzel-tower: #9a3fb0;
+    --journey-ladder-to-the-moon: #4a63d6;
+    --journey-rocket-through-space: #4a4f9e;
+
+    --journey-scene-rapunzel-sky-high: #222a55;
+    --journey-scene-rapunzel-sky-mid: #3f3a6e;
+    --journey-scene-rapunzel-sky-low: #6b4f6e;
+    --journey-scene-rapunzel-hill-far: #2f4a3e;
+    --journey-scene-rapunzel-hill-near: #263e33;
+    --journey-scene-rapunzel-castle: #3a3556;
+    --journey-scene-rapunzel-bird: #c8cdd8;
+    --journey-scene-rapunzel-stone: #6b645c;
+    --journey-scene-rapunzel-brick: #57514a;
+    --journey-scene-rapunzel-ivy: #2c6638;
+    --journey-scene-rapunzel-roof: #2c3550;
+    --journey-scene-rapunzel-roof-line: #4a5a7a;
+    --journey-scene-rapunzel-flag: #c2255c;
+    --journey-scene-rapunzel-window: #2a2420;
+    --journey-scene-rapunzel-glow: #ffd86b;
+    --journey-scene-rapunzel-braid: #d9ad3a;
+    --journey-scene-rapunzel-petal: #c7709c;
+    --journey-scene-rapunzel-branch: #5a3f25;
+    --journey-scene-rapunzel-leaves: #2f6338;
+    --journey-scene-rapunzel-leaves-dark: #1f4a2a;
+    --journey-scene-rapunzel-meadow: #2f5a33;
+    --journey-scene-rapunzel-flower-pink: #c2557a;
+    --journey-scene-rapunzel-flower-yellow: #c9a22a;
+    --journey-scene-rapunzel-flower-white: #c9cfe0;
+
+    --journey-scene-ladder-sky-high: #3a3f8a;
+    --journey-scene-ladder-sky-mid: #23285e;
+    --journey-scene-ladder-sky-low: #12163a;
+    --journey-scene-ladder-star: #e8e4c8;
+    --journey-scene-ladder-star-bright: #ffd86b;
+    --journey-scene-ladder-moon-glow: rgba(255, 248, 220, 0.14);
+    --journey-scene-ladder-moon: #e8dfb4;
+    --journey-scene-ladder-crater: #c9bd8c;
+    --journey-scene-ladder-planet: #b8805a;
+    --journey-scene-ladder-wood: #7a5230;
+    --journey-scene-ladder-rung: #94603e;
+    --journey-scene-ladder-streak: rgba(255, 255, 255, 0.5);
+    --journey-scene-ladder-owl: #2e2640;
+    --journey-scene-ladder-owl-face: #8a7a66;
+    --journey-scene-ladder-cloud: #2c3266;
+    --journey-scene-ladder-cloud-shade: #22285a;
+    --journey-scene-ladder-hill: #0c0f2a;
+    --journey-scene-ladder-window: #e6b84a;
+
+    --journey-scene-rocket-sky-high: #241a4a;
+    --journey-scene-rocket-sky-mid: #12173f;
+    --journey-scene-rocket-sky-edge: #1f3362;
+    --journey-scene-rocket-sky-low: #2f4f7a;
+    --journey-scene-rocket-star: #e8e4c8;
+    --journey-scene-rocket-nebula-a: rgba(194, 85, 122, 0.18);
+    --journey-scene-rocket-nebula-b: rgba(92, 110, 200, 0.2);
+    --journey-scene-rocket-ringed: #c27e45;
+    --journey-scene-rocket-ring: #d9b088;
+    --journey-scene-rocket-flame: #e8590c;
+    --journey-scene-rocket-flame-core: #fcc419;
+    --journey-scene-rocket-body: #d9dde6;
+    --journey-scene-rocket-red: #c92a2a;
+    --journey-scene-rocket-window: #339af0;
+    --journey-scene-rocket-panel: #3b5bdb;
+    --journey-scene-rocket-satellite: #9aa3b5;
+    --journey-scene-rocket-streak: rgba(255, 255, 255, 0.4);
+    --journey-scene-rocket-asteroid: #6b5d50;
+    --journey-scene-rocket-asteroid-dark: #4e4339;
+    --journey-scene-rocket-glow: rgba(120, 170, 220, 0.5);
+    --journey-scene-rocket-planet: #1f5f8f;
+    --journey-scene-rocket-planet-band: #2f78ad;
     /* Clouds at dusk: tinted by the last of the light, shaded towards the evening. */
     --stack-cloud: #8c7c9f;
     --stack-cloud-shade: #5d5578;

@@ -38,6 +38,18 @@
   background: var(--journey-scene-tower-sky-mid);
 }
 
+.journey-scene--rapunzel_tower {
+  background: var(--journey-scene-rapunzel-sky-mid);
+}
+
+.journey-scene--ladder_to_the_moon {
+  background: var(--journey-scene-ladder-sky-mid);
+}
+
+.journey-scene--rocket_through_space {
+  background: var(--journey-scene-rocket-sky-mid);
+}
+
 .journey-scene__layer {
   position: absolute;
   top: 0;
@@ -64,6 +76,13 @@
   position: absolute;
   display: block;
   overflow: visible;
+}
+
+/* The rocket's body over its flame, in the box that bobs (RocketThroughSpaceScene). */
+.scene-rocket {
+  position: relative;
+  display: block;
+  width: 100%;
 }
 
 .scene-art--faint {
@@ -173,6 +192,12 @@
   animation: scene-pass var(--duration-scene-pass) linear infinite;
 }
 
+/* A flame: it stretches from its own top edge (the rocket's nozzle). */
+.journey-scene--loops .scene-loop--flicker {
+  transform-origin: 50% 0;
+  animation: scene-flicker var(--duration-scene-flicker) ease-in-out infinite alternate;
+}
+
 @keyframes scene-bob {
   to {
     transform: translateY(calc(var(--space-2) * -1));
@@ -237,6 +262,15 @@
   to {
     opacity: 0;
     transform: translate(var(--space-6), calc(var(--space-7) * 3)) rotate(200deg);
+  }
+}
+
+@keyframes scene-flicker {
+  from {
+    transform: scaleY(0.78);
+  }
+  to {
+    transform: scaleY(1);
   }
 }
 

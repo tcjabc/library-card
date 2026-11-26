@@ -3,9 +3,12 @@ import { createElement, type ComponentType } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import HotAirBalloonScene from '../../screens/journeys/scenes/HotAirBalloonScene';
+import LadderToTheMoonScene from '../../screens/journeys/scenes/LadderToTheMoonScene';
 import OceanCliffScene from '../../screens/journeys/scenes/OceanCliffScene';
 import OceanDeepScene from '../../screens/journeys/scenes/OceanDeepScene';
+import RapunzelTowerScene from '../../screens/journeys/scenes/RapunzelTowerScene';
 import RedwoodTreeScene from '../../screens/journeys/scenes/RedwoodTreeScene';
+import RocketThroughSpaceScene from '../../screens/journeys/scenes/RocketThroughSpaceScene';
 import SkyscraperScene from '../../screens/journeys/scenes/SkyscraperScene';
 import { getJourney } from '../journeys';
 import { MAX_LOOPS, SCENES, SCENE_LAYERS, type SceneLayer } from '../scene';
@@ -18,6 +21,9 @@ const ART: Record<string, ComponentType<{ layer: SceneLayer }>> = {
   redwood_tree: RedwoodTreeScene,
   ocean_cliff: OceanCliffScene,
   skyscraper: SkyscraperScene,
+  rapunzel_tower: RapunzelTowerScene,
+  ladder_to_the_moon: LadderToTheMoonScene,
+  rocket_through_space: RocketThroughSpaceScene,
 };
 
 const markup = (id: string) => SCENE_LAYERS.map((layer) => renderToStaticMarkup(createElement(ART[id], { layer }))).join('');
@@ -77,6 +83,12 @@ describe('the journey scenes', () => {
         expect(1.05 / (luminance(value) + 0.05)).toBeGreaterThanOrEqual(4.5);
       }
     }
+  });
+
+  it('every loop kind the art uses has its animation in journeyScene.css', () => {
+    const css = readFileSync(new URL('../../screens/journeys/journeyScene.css', import.meta.url), 'utf8');
+    const kinds = new Set(Object.keys(ART).flatMap((id) => [...markup(id).matchAll(/scene-loop--([\w-]+)/g)].map((m) => m[1])));
+    for (const kind of kinds) expect(css, kind).toContain(`.journey-scene--loops .scene-loop--${kind}`);
   });
 
   it('the backing behind text and dots over a scene, and the path, have both values', () => {
