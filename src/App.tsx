@@ -9,7 +9,6 @@ import { Hub } from './screens/Hub';
 import { CelebrationHost } from './screens/journeys/CelebrationHost';
 import { FamilyStaircase } from './screens/journeys/FamilyStaircase';
 import { JourneyGallery } from './screens/journeys/JourneyGallery';
-import { JourneyScreen } from './screens/journeys/JourneyScreen';
 import { LibraryBooks } from './screens/library/LibraryBooks';
 import { Shelf } from './screens/Shelf';
 import { Splash } from './screens/Splash';
@@ -21,6 +20,8 @@ import { ToastProvider } from './ui/Toast';
 import { UpdatingNotice } from './ui/UpdatingNotice';
 
 const FamilyStack = lazy(() => import('./screens/journeys/FamilyStack'));
+// The journey screen and its scenes load on demand (each scene its own chunk, JourneyScene.tsx).
+const JourneyScreen = lazy(() => import('./screens/journeys/JourneyScreen').then((m) => ({ default: m.JourneyScreen })));
 const DevPage = lazy(() => import('./dev/DevPage'));
 const StackDevPage = lazy(() => import('./dev/StackDevPage'));
 const GrownUpsArea = lazy(() => import('./grownups/GrownUpsArea'));
@@ -82,7 +83,15 @@ function Routes() {
     case '/journeys':
       return <RequireReader>{(reader) => <JourneyGallery reader={reader} />}</RequireReader>;
     case '/journey':
-      return <RequireReader>{(reader) => <JourneyScreen reader={reader} />}</RequireReader>;
+      return (
+        <RequireReader>
+          {(reader) => (
+            <Suspense fallback={<p className="page muted">{strings.common.loading}</p>}>
+              <JourneyScreen reader={reader} />
+            </Suspense>
+          )}
+        </RequireReader>
+      );
     case '/check':
       return <RequireReader>{(reader) => <CheckReads reader={reader} />}</RequireReader>;
     case '/staircase':

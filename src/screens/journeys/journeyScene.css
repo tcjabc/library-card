@@ -1,0 +1,202 @@
+/*
+ * Journey scenes (JourneyScene.tsx, docs/journeys.md): a fixed backdrop behind
+ * the journey page in three layers. Each layer is taller than the view by its
+ * travel (--travel) and moves up by --journey-shift × --travel; the settle after
+ * a step change is a transform on its inner box. The track's rows stay put.
+ */
+
+.journey-scene {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* The large viewport: no gap at the bottom when a phone's browser bar slides away. */
+  height: 100vh;
+  height: 100lvh;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.journey-scene--hot_air_balloon {
+  background: var(--journey-scene-balloon-sky-mid);
+}
+
+.journey-scene--ocean_deep {
+  background: var(--journey-scene-ocean-water-mid);
+}
+
+.journey-scene__layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: calc(100% + var(--travel, 0px));
+  transform: translate3d(0, calc(var(--journey-shift, 0) * var(--travel, 0px) * -1), 0);
+}
+
+.journey-scene__inner {
+  position: absolute;
+  inset: 0;
+}
+
+/* A layer's backdrop (sky or water bands), stretched over the whole layer. */
+.scene-fill {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.scene-art {
+  position: absolute;
+  display: block;
+  overflow: visible;
+}
+
+.scene-art--faint {
+  opacity: var(--journey-scene-faint);
+}
+
+/* The page over its scene: everything above the backdrop, with backings so text and dots read on any part of it. */
+.journey-page--scene > :not(.journey-scene) {
+  position: relative;
+  z-index: 1;
+}
+
+.journey-page--scene .journey-page__nav,
+.journey-page--scene .journey-page__head {
+  border-radius: var(--radius-xl);
+  background: var(--journey-scene-backing);
+  padding: var(--space-2) var(--space-3);
+}
+
+.journey-page--scene .journey-track {
+  background: transparent;
+}
+
+.journey-page--scene .journey-track::before {
+  background: var(--journey-scene-path);
+  opacity: 1;
+}
+
+.journey-page--scene .journey-step__stage:not(:empty),
+.journey-page--scene .journey-track__end {
+  justify-self: end;
+  border-radius: var(--radius-full);
+  background: var(--journey-scene-backing);
+  padding: var(--space-1) var(--space-3);
+}
+
+.journey-page--scene .journey-track__end {
+  align-self: center;
+  border-radius: var(--radius-lg);
+}
+
+.journey-page--scene .journey-step__dot,
+.journey-page--scene .journey-track__end .journey-avatar {
+  box-shadow: 0 0 0 var(--border-thick) var(--journey-scene-backing);
+}
+
+/* Ambient loops: Full decor only (journey-scene--loops), never with reduced motion. */
+.journey-scene--loops .scene-loop--bob {
+  animation: scene-bob var(--duration-scene-bob) ease-in-out infinite alternate;
+}
+
+.journey-scene--loops .scene-loop--bob-slow {
+  animation: scene-bob calc(var(--duration-scene-bob) * 1.6) ease-in-out infinite alternate;
+}
+
+.journey-scene--loops .scene-loop--drift {
+  animation: scene-drift var(--duration-scene-drift) ease-in-out infinite alternate;
+}
+
+.journey-scene--loops .scene-loop--drift-back {
+  animation: scene-drift var(--duration-scene-drift) ease-in-out infinite alternate-reverse;
+}
+
+.journey-scene--loops .scene-loop--drift-slow {
+  animation: scene-drift var(--duration-scene-drift-slow) ease-in-out infinite alternate;
+}
+
+.journey-scene--loops .scene-loop--rise {
+  animation: scene-rise var(--duration-scene-rise) linear infinite;
+}
+
+.journey-scene--loops .scene-loop--rise-slow {
+  animation: scene-rise calc(var(--duration-scene-rise) * 1.5) linear infinite;
+}
+
+.journey-scene--loops .scene-loop--sway {
+  transform-origin: 50% 100%;
+  animation: scene-sway var(--duration-scene-sway) ease-in-out infinite alternate;
+}
+
+.journey-scene--loops .scene-loop--sway-back {
+  transform-origin: 50% 100%;
+  animation: scene-sway var(--duration-scene-sway) ease-in-out infinite alternate-reverse;
+}
+
+.journey-scene--loops .scene-loop--glimmer {
+  animation: scene-glimmer var(--duration-scene-glimmer) ease-in-out infinite alternate;
+}
+
+.journey-scene--loops .scene-loop--pass {
+  animation: scene-pass var(--duration-scene-pass) linear infinite;
+}
+
+@keyframes scene-bob {
+  to {
+    transform: translateY(calc(var(--space-2) * -1));
+  }
+}
+
+@keyframes scene-drift {
+  to {
+    transform: translateX(var(--space-6));
+  }
+}
+
+@keyframes scene-rise {
+  from {
+    opacity: 0;
+    transform: translateY(0);
+  }
+  15% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(calc(var(--space-7) * -2));
+  }
+}
+
+@keyframes scene-sway {
+  from {
+    transform: rotate(-4deg);
+  }
+  to {
+    transform: rotate(4deg);
+  }
+}
+
+@keyframes scene-glimmer {
+  from {
+    opacity: 0.55;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes scene-pass {
+  to {
+    transform: translateX(160vw);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .journey-scene .scene-loop {
+    animation: none;
+  }
+}

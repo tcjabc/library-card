@@ -1,0 +1,75 @@
+# Reading Journeys
+
+A reader picks a journey in the gallery (`#/journeys`); every book they read for the first time after starting
+climbs one step (re-reads don't count). The journey screen (`#/journey`) shows the steps as a vertical track: the
+finish at the top for rising journeys, at the bottom for Ocean Deep (it goes down). Config: `src/journeys/journeys.ts`
+(steps, direction, stage labels in `src/strings/en.ts`, a theme colour `--journey-*` each). Progress:
+`src/journeys/progress.ts`. Completion: `src/journeys/completion.ts`.
+
+## Completion
+
+`checkJourneyCompletion` finishes the active journey once every step is filled. It runs after every read, and while
+the hub, the gallery or the journey screen is open (`useCompletionCheck` → `watchJourneyCompletion`): when the
+screen opens and again after every change to reads or journeys, from this tab, another tab or another device (a
+grown-up confirming a read elsewhere, a sync). So the journey screen never sits at "0 more books to go!": the
+completion sends the reader to the gallery with the celebration. Checks never overlap.
+
+## Scenes (since 1.18.0)
+
+Journeys with a scene show flat art behind the track instead of the plain tinted track. In 1.18.0 that's
+Hot-Air Balloon and Ocean Deep; the others keep their emoji and colour until their scenes come. The gallery, the
+hub tile and the celebration are unchanged.
+
+- **Where**: `src/journeys/scene.ts` (pure, unit-tested: which journeys have a scene, the layers, the shift, the
+  settle, the motion rules), `src/journeys/journeySeen.ts` (the seen step), `src/screens/journeys/JourneyScene.tsx`
+  (the layers and their motion), `src/screens/journeys/scenes/*.tsx` (each scene's art, one lazy chunk each, about
+  1.1–1.4 KB gzipped), `src/screens/journeys/journeyScene.css`. The journey screen itself is a lazy chunk too.
+- **Layers**: far (slowest), mid and near (fastest), each an inline SVG group in a fixed backdrop behind the page
+  (`position: fixed`, the large viewport's height, so no gap when a phone's browser bar slides away). The track's
+  rows (stage label, numbered dot, cover, the reader's avatar) are real DOM rows over it and never move with it.
+  Each layer is taller than the view by its travel (`layerTravel`: its factor × the scene's travel, both clamped:
+  `MAX_FACTOR` 1.5, `MAX_TRAVEL` 640 px) and sits `--journey-shift` × its travel up. Near art (hills, sea floor)
+  extends past the screen's edges so a shift never shows a gap.
+- **The shift** (`--journey-shift`, 0–1): how far down the page the reader has scrolled (`scrollShift`: 0 at the
+  top end of the track, 1 at the bottom end). Rising journeys start at the bottom, so as the reader climbs the
+  world moves down; Ocean Deep starts at the top, so as they dive it moves up. A page that can scroll less than half
+  a view (Ocean Deep's five steps on a tall screen) uses the reader's step instead (`stepShift`). One scroll
+  listener per screen sets the variable in an animation frame; no other script runs while scrolling.
+- **The settle**: when the reader's step has changed since they last saw the screen, each layer starts where the
+  old step put it (`settleOffsets`; the near layer at least `MIN_SETTLE_PX`, 60 px, and at most its travel, far
+  and mid scaled by their factors, so even one step of a long journey shows) and glides to where the new one does
+  over `SETTLE_MS` (1.2 s), a transform on
+  the layer's inner box with `will-change` only while it runs. First visit: no settle. It never replays: the seen
+  step is recorded on every visit, whatever the motion setting. While the screen is open, a step change (a read
+  arriving) settles too.
+- **The seen step** (`journeySeen.ts`): localStorage `library-card:journey-seen:<readerId>:<journeyRecordId>`, the
+  step the reader last saw for that journey (a new journey starts fresh). Device-local: not synced, not in backups,
+  cleared by "Reset this device" with the app's other `library-card:` keys. Decided while rendering by reading only,
+  written in an effect (the Family Staircase's `stackSeen.ts` pattern).
+- **Motion** (`sceneMotion`), from Grown-ups → Settings → Sky decoration (`library-card:stack-decor`, shared with
+  the Family Staircase's clouds): Full = gentle ambient loops (bob, drift, rise, sway, glimmer: CSS animations only,
+  at most `MAX_LOOPS` 15 per scene) and parallax; Reduced = parallax and the settle, no loops; None = a still
+  picture at the reader's step. The system's reduced motion is always still: no loops, no parallax, no settle (and
+  the avatar stops bouncing, as before).
+- **Colours**: tokens only, `--journey-scene-*` in `src/theme.css` with light and dark (dusk) values; the art never
+  holds a colour (`paint('…')` / `ink('…')` in `scenes/art.ts`). Text and dots over a scene sit on a backing
+  (`--journey-scene-backing`: the nav row, the title block, stage labels, the start and finish rows, a ring round
+  each dot), and the track's path is `--journey-scene-path`. The two pilots' `--journey-*` colours have dark values
+  too (still 4.5:1 with white text). A unit test checks every token a scene uses has both values.
+- **Accessibility**: the art is decorative (`aria-hidden`); the track keeps its labels. In phone landscape the scene
+  fills the width behind the track, which stays a scrolling column.
+
+### Adding the next scene
+
+1. Add the journey to `SCENES` in `src/journeys/scene.ts`: its travel (px, ≤ 640: longer journeys usually want more)
+   and the three factors (far < mid < near; 0.2 / 0.5–0.6 / 1 so far).
+2. Write `src/screens/journeys/scenes/<Name>Scene.tsx`: a default-exported component taking `{ layer }` and
+   returning that layer's SVG, every colour through `paint` / `ink`, positions through `at` (top/bottom % of the
+   layer's height; things at the track's top end near the top of their layer, at the bottom end near its bottom).
+   Mark looping pieces `scene-loop scene-loop--<kind>` (bob, bob-slow, drift, drift-back, drift-slow, rise,
+   rise-slow, sway, sway-back, glimmer, pass), at most 15.
+3. Add its lazy import to `ART` in `JourneyScene.tsx`, and its tokens (light and dark) to `src/theme.css`, plus a
+   background colour for `.journey-scene--<id>` in `journeyScene.css` (shown while the art loads).
+4. Add it to `ART` in `src/journeys/__tests__/sceneArt.test.ts` (loops, tokens only, both theme values).
+5. Check it on a phone and a tablet, portrait and landscape, light and dark, at the start, middle and finish, with
+   Sky decoration Full / Reduced / None and with reduced motion.

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useDataQuery, type Book, type DataStore, type Reader } from '../../data';
 import { stageAt } from '../../journeys/journeys';
+import { sceneFor } from '../../journeys/scene';
 import { booksToGo } from '../../journeys/progress';
 import { href, navigate } from '../../router';
 import { fmt, strings } from '../../strings';
 import { BookCover } from '../../ui/BookCover';
 import { BackToHub } from '../BackToHub';
+import { JourneyScene } from './JourneyScene';
 import { journeyStyle } from './journeyStyle';
 import { useCompletionCheck, useJourneyStatus } from './useJourneyStatus';
 import './journeys.css';
@@ -14,7 +16,9 @@ import './journeys.css';
  * #/journey — the active journey as a vertical track: the finish at the top
  * (at the bottom for journeys that go down), numbered steps, stage labels,
  * covers of the books that filled each step and the reader's avatar on the
- * step they've reached. No active journey: go to the gallery.
+ * step they've reached. No active journey: go to the gallery. Journeys with a
+ * scene (journeys/scene.ts) show it behind the track, in depth layers that slide
+ * as the reader moves along it; the others keep the plain tinted track.
  */
 export function JourneyScreen({ reader }: { reader: Reader }) {
   const t = strings.journey;
@@ -36,6 +40,7 @@ export function JourneyScreen({ reader }: { reader: Reader }) {
 
   // Start with the avatar in view (long journeys are taller than the screen).
   const here = useRef<HTMLLIElement>(null);
+  const track = useRef<HTMLOListElement>(null);
   const scrolledFor = useRef<string | null>(null);
   useEffect(() => {
     if (!status || scrolledFor.current === status.record.id || !here.current) return;
@@ -51,6 +56,7 @@ export function JourneyScreen({ reader }: { reader: Reader }) {
   const fillByStep = new Map(status.filled.map((f) => [f.step, f]));
   const steps = Array.from({ length: journey.steps }, (_, i) => i + 1);
   const ordered = down ? steps : [...steps].reverse();
+  const scene = sceneFor(journey.id) !== null;
 
   const finish = (
     <li className="journey-track__end journey-track__end--finish">
@@ -68,14 +74,15 @@ export function JourneyScreen({ reader }: { reader: Reader }) {
   );
 
   return (
-    <main className="page page--kid journey-page" style={journeyStyle(journey)}>
+    <main className={`page page--kid journey-page${scene ? ' journey-page--scene' : ''}`} style={journeyStyle(journey)}>
+      {scene && <JourneyScene journey={journey} progress={progress} readerId={reader.id} recordId={status.record.id} trackRef={track} />}
       <div className="row journey-page__nav">
         <BackToHub />
         <a className="link-quiet journey-page__change" href={href('/journeys')}>
           {t.change}
         </a>
       </div>
-      <header className="center-stack">
+      <header className="center-stack journey-page__head">
         <h1 className="kid-title">
           <span aria-hidden="true">{journey.emoji}</span> {journey.title}
         </h1>
@@ -83,6 +90,7 @@ export function JourneyScreen({ reader }: { reader: Reader }) {
       </header>
 
       <ol
+        ref={track}
         className={`journey-track${down ? ' journey-track--down' : ''}`}
         aria-label={fmt(t.trackLabel, { journey: journey.title, progress, steps: journey.steps })}
       >

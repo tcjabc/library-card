@@ -86,6 +86,46 @@
   --color-journey-done: #2b8a3e;
   --color-on-journey-done: #ffffff;
 
+  /* Journey scenes (src/screens/journeys/scenes, docs/journeys.md): flat art behind the track. */
+  /* The backing behind text and dots over a scene, the track's path, and faint far art. */
+  --journey-scene-backing: rgba(255, 255, 255, 0.84);
+  --journey-scene-path: rgba(255, 255, 255, 0.72);
+  --journey-scene-faint: 0.55;
+  --journey-scene-cloud: #ffffff;
+  --journey-scene-cloud-shade: #e3eef7;
+  /* Hot-Air Balloon: a sky pale at the bottom to deeper blue at the top, the balloons, the hills. */
+  --journey-scene-balloon-sky-low: #d9eefb;
+  --journey-scene-balloon-sky-mid: #b5dcf6;
+  --journey-scene-balloon-sky-high: #8ec9f0;
+  --journey-scene-balloon-red: #e5484d;
+  --journey-scene-balloon-stripe: #b8323a;
+  --journey-scene-balloon-yellow: #f5c542;
+  --journey-scene-balloon-basket: #8b5a2b;
+  --journey-scene-balloon-rope: #6b4a2b;
+  --journey-scene-balloon-far: #f08c4a;
+  --journey-scene-balloon-hill-back: #6ab36a;
+  --journey-scene-balloon-hill-front: #4e9a58;
+  --journey-scene-balloon-trunk: #7a5230;
+  --journey-scene-balloon-tree: #3f8a4a;
+  /* Ocean Deep: water light at the top to deep navy at the bottom, its creatures and the sea floor. */
+  --journey-scene-ocean-water-top: #4fb3e8;
+  --journey-scene-ocean-water-mid: #1f6db0;
+  --journey-scene-ocean-water-deep: #112b66;
+  --journey-scene-ocean-wave: #bfe6fa;
+  --journey-scene-ocean-ray: rgba(255, 255, 255, 0.07);
+  --journey-scene-ocean-fish-faint: rgba(255, 255, 255, 0.22);
+  --journey-scene-ocean-bubble: rgba(255, 255, 255, 0.7);
+  --journey-scene-ocean-fish-orange: #f28c38;
+  --journey-scene-ocean-fish-teal: #2bb5a6;
+  --journey-scene-ocean-jelly: #f28dc1;
+  --journey-scene-ocean-shadow: rgba(10, 20, 50, 0.35);
+  --journey-scene-ocean-sand: #e8d29a;
+  --journey-scene-ocean-sand-shade: #d4bc7e;
+  --journey-scene-ocean-weed: #3e9e5a;
+  --journey-scene-ocean-chest: #8b5a2b;
+  --journey-scene-ocean-chest-lid: #a9743f;
+  --journey-scene-ocean-clasp: #f5c542;
+
   /* Family Staircase: a colour per reader (picked from the reader id). */
   /* Eight clearly different hues, so siblings never look alike. */
   --reader-1: #e8590c; /* orange */
@@ -259,6 +299,14 @@
   /* The book sheet opening and closing, and its content changing to the next book. */
   --duration-sheet: 240ms;
   --duration-crossfade: 160ms;
+  /* Journey scenes' gentle loops (Full Sky decoration only). */
+  --duration-scene-bob: 5s;
+  --duration-scene-drift: 18s;
+  --duration-scene-drift-slow: 32s;
+  --duration-scene-rise: 7s;
+  --duration-scene-sway: 6s;
+  --duration-scene-glimmer: 7s;
+  --duration-scene-pass: 48s;
 
   /* Layering */
   --z-sheet: 50;
@@ -386,6 +434,45 @@
     --stack-ground-shadow: rgba(0, 0, 0, 0.45);
     --stack-line-on-light: #141821;
     --stack-line-on-dark: #eef0f5;
+    /* The two scene journeys' colours, a little lighter on dark pages (still 4.5:1 with white text). */
+    --journey-ocean-deep: #2b6cb3;
+    --journey-hot-air-balloon: #c73a35;
+    /* Journey scenes at dusk. */
+    --journey-scene-backing: rgba(20, 24, 33, 0.8);
+    --journey-scene-path: rgba(255, 255, 255, 0.34);
+    --journey-scene-faint: 0.5;
+    --journey-scene-cloud: #8c7c9f;
+    --journey-scene-cloud-shade: #5d5578;
+    --journey-scene-balloon-sky-low: #5b4f7a;
+    --journey-scene-balloon-sky-mid: #39406f;
+    --journey-scene-balloon-sky-high: #222a55;
+    --journey-scene-balloon-red: #c9443f;
+    --journey-scene-balloon-stripe: #9c2f33;
+    --journey-scene-balloon-yellow: #d9ad3a;
+    --journey-scene-balloon-basket: #6e4a2a;
+    --journey-scene-balloon-rope: #5a3f25;
+    --journey-scene-balloon-far: #b8683a;
+    --journey-scene-balloon-hill-back: #2f5a33;
+    --journey-scene-balloon-hill-front: #244a2a;
+    --journey-scene-balloon-trunk: #5a3f25;
+    --journey-scene-balloon-tree: #1f4a28;
+    --journey-scene-ocean-water-top: #1f5f8f;
+    --journey-scene-ocean-water-mid: #163f73;
+    --journey-scene-ocean-water-deep: #0a1a3f;
+    --journey-scene-ocean-wave: #5f9cc4;
+    --journey-scene-ocean-ray: rgba(255, 255, 255, 0.05);
+    --journey-scene-ocean-fish-faint: rgba(255, 255, 255, 0.16);
+    --journey-scene-ocean-bubble: rgba(255, 255, 255, 0.45);
+    --journey-scene-ocean-fish-orange: #c9732f;
+    --journey-scene-ocean-fish-teal: #23917f;
+    --journey-scene-ocean-jelly: #c7709c;
+    --journey-scene-ocean-shadow: rgba(0, 0, 0, 0.35);
+    --journey-scene-ocean-sand: #8a7a52;
+    --journey-scene-ocean-sand-shade: #6e6142;
+    --journey-scene-ocean-weed: #2c6e40;
+    --journey-scene-ocean-chest: #6e4a2a;
+    --journey-scene-ocean-chest-lid: #85603a;
+    --journey-scene-ocean-clasp: #d9ad3a;
     /* Clouds at dusk: tinted by the last of the light, shaded towards the evening. */
     --stack-cloud: #8c7c9f;
     --stack-cloud-shade: #5d5578;
