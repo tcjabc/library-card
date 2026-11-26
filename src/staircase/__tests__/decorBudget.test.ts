@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DECIDE_AFTER_MS,
   DECOR_LEVELS,
   MIN_FRAMES_TO_DECIDE,
+  budgetDue,
   PRETEND_SLOW_FRAME_MS,
   SLOW_FRAME_MS,
   budgetFrameMs,
@@ -70,6 +72,19 @@ describe('nextBudget: decor drops out before the resolution', () => {
   it('a scale of 1 (a desktop screen) still loses its decor', () => {
     expect(nextBudget({ decor: 'full', scale: 1 }, SLOW)).toEqual({ decor: 'reduced', scale: 1 });
     expect(nextBudget({ decor: 'none', scale: 1 }, SLOW)).toEqual({ decor: 'none', scale: 1 });
+  });
+});
+
+describe('budgetDue: a slow device gets a verdict too', () => {
+  it('needs a second of motion and at least MIN_FRAMES_TO_DECIDE frames; under 30 FPS it keeps counting past the second', () => {
+    expect(budgetDue(DECIDE_AFTER_MS, MIN_FRAMES_TO_DECIDE)).toBe(true);
+    expect(budgetDue(DECIDE_AFTER_MS - 1, 60)).toBe(false);
+    // 25 FPS: 25 frames after a second is not enough yet…
+    expect(budgetDue(1000, 25)).toBe(false);
+    // …but 1.2 s later there are 30, and the verdict comes.
+    expect(budgetDue(1200, 30)).toBe(true);
+    // 10 FPS: three seconds.
+    expect(budgetDue(3000, 30)).toBe(true);
   });
 });
 

@@ -116,6 +116,15 @@ export const MIN_FRAMES_TO_DECIDE = 30;
 /** How much motion to average over before deciding (ms). */
 export const DECIDE_AFTER_MS = 1000;
 
+/**
+ * Whether the motion so far is enough to decide on: at least DECIDE_AFTER_MS of it over at least
+ * MIN_FRAMES_TO_DECIDE frames. A device drawing under 30 frames a second takes longer than a
+ * second to get there, and until then keeps counting (so a slow device does get a verdict).
+ */
+export function budgetDue(motionMs: number, frames: number): boolean {
+  return motionMs >= DECIDE_AFTER_MS && frames >= MIN_FRAMES_TO_DECIDE;
+}
+
 /** The scale to draw at next: one step down if frames are slow, never up, never below 1. */
 export function nextScale(current: number, averageFrameMs: number, frames: number = MIN_FRAMES_TO_DECIDE): number {
   if (!(current > 1)) return Math.max(1, current || 1);

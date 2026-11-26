@@ -82,8 +82,8 @@ import {
   type PlacedCloud,
 } from './clouds';
 import {
-  DECIDE_AFTER_MS,
   FAN_CAP,
+  budgetDue,
   budgetFrameMs,
   decorInEffect,
   faceSpan,
@@ -1847,7 +1847,7 @@ function CanvasStack({
         c.motionFrames += 1;
         c.motionMs += dt;
         c.motionCost += budgetFrameMs(dt, scene.current.pretendSlow);
-        if (c.motionMs >= DECIDE_AFTER_MS) {
+        if (budgetDue(c.motionMs, c.motionFrames)) {
           // Only decor that's drawn can be lost: none with the clouds or the sky off.
           const shown = scene.current.clouds && scene.current.sky ? decorInEffect(scene.current.decor, c.decorCap, c.reduced).decor : 'none';
           const next = nextBudget({ decor: shown, scale: size.current.scale }, c.motionCost / c.motionFrames, c.motionFrames);

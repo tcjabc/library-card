@@ -155,7 +155,8 @@ three layers (`LAYERS`). Only with the sky on.
 - **The drop-out rule** (`nextBudget({ decor, scale }, averageFrameMs, frames)`): after each second of motion,
   slow frames (over 22 ms on average, at least 30 frames) lower the decor one level first, Full → Reduced → None
   (so the wisps go first, then the backdrop), and only once it's at None does the resolution step down as before
-  (2 → 1.5 → 1.25 → 1). Never back up. Like the resolution cap it's per visit, never saved. With the clouds or the
+  (2 → 1.5 → 1.25 → 1). A device drawing under 30 frames a second keeps counting past the second until it has 30
+  (`budgetDue`); up to 1.17.0 it reset every second and so never got a verdict at all. Never back up. Like the resolution cap it's per visit, never saved. With the clouds or the
   sky off there's no decor to lose, so the resolution steps down at once.
 - **Decor in effect**: the least of the setting, this visit's cap and, with reduced motion, Reduced
   (`decorInEffect`, which also says why).
