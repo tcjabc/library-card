@@ -7,7 +7,7 @@ import { href, navigate } from '../router';
 import { clearActiveReader } from '../session/activeReader';
 import { fmt, strings } from '../strings';
 import { GrownUpsLink } from './GrownUpsLink';
-import { useCompletionCheckOnOpen, useJourneyStatus } from './journeys/useJourneyStatus';
+import { useCompletionCheck, useJourneyStatus } from './journeys/useJourneyStatus';
 
 /** #/hub — the reader's home screen. */
 export function Hub({ reader }: { reader: Reader }) {
@@ -27,7 +27,7 @@ export function Hub({ reader }: { reader: Reader }) {
   const dueCount = (loans ?? []).filter((loan) => needsAttention(dueStatus(loan.due_date, today))).length;
   const { status, loading: journeyLoading, store } = useJourneyStatus(reader.id);
   const [writing, setWriting] = useState(false);
-  useCompletionCheckOnOpen(store, reader.id);
+  useCompletionCheck(store, reader.id);
 
   const notMe = () => {
     clearActiveReader();

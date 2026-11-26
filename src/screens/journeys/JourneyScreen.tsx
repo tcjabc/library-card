@@ -7,7 +7,7 @@ import { fmt, strings } from '../../strings';
 import { BookCover } from '../../ui/BookCover';
 import { BackToHub } from '../BackToHub';
 import { journeyStyle } from './journeyStyle';
-import { useCompletionCheckOnOpen, useJourneyStatus } from './useJourneyStatus';
+import { useCompletionCheck, useJourneyStatus } from './useJourneyStatus';
 import './journeys.css';
 
 /**
@@ -19,7 +19,7 @@ import './journeys.css';
 export function JourneyScreen({ reader }: { reader: Reader }) {
   const t = strings.journey;
   const { status, loading, store } = useJourneyStatus(reader.id);
-  useCompletionCheckOnOpen(store, reader.id);
+  useCompletionCheck(store, reader.id);
 
   const isbns = (status?.filled ?? []).map((f) => f.isbn).join('|');
   const booksQuery = useCallback(

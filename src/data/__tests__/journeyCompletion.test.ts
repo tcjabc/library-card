@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createLocalStore, type LocalDataStore } from '../adapters/local';
 import { nextCelebration, resetCelebrationsForTests } from '../../journeys/celebration';
-import { checkJourneyCompletion } from '../../journeys/completion';
+import { checkJourneyCompletion, watchJourneyCompletion } from '../../journeys/completion';
 
 // Journey completion (src/journeys/completion.ts) against a real local store.
 // It lives here because only src/data may open the adapter directly.
@@ -80,5 +80,41 @@ describe('checkJourneyCompletion', () => {
     await store.startJourney(readerId, 'retired_journey', '2026-03-01T00:00:00.000Z');
     await addBooks(40, '2026-03-02T00:00:00.000Z');
     expect(await checkJourneyCompletion(store, readerId)).toBeNull();
+  });
+});
+
+describe('watchJourneyCompletion: the check also runs on live updates', () => {
+  const settle = () => new Promise((r) => setTimeout(r, 50));
+
+  it('completes the journey when a read arrives while the screen is open, without reopening it', async () => {
+    await store.startJourney(readerId, 'ocean_deep', '2026-03-01T00:00:00.000Z');
+    await addBooks(4, '2026-03-02T00:00:00.000Z');
+    const completed: string[] = [];
+    const stop = watchJourneyCompletion(store, readerId, (_, journeyId) => completed.push(journeyId));
+    await settle();
+    expect(completed).toEqual([]);
+    expect(await store.getActiveJourney(readerId)).not.toBeNull();
+
+    // The last book, read on another device or confirmed by a grown-up elsewhere: a live change.
+    await store.markRead(readerId, '9780000000999', '2026-03-03T00:00:00.000Z');
+    await settle();
+    expect(completed).toEqual(['ocean_deep']);
+    expect(await store.getActiveJourney(readerId)).toBeNull();
+    stop();
+  });
+
+  it('checks once on start (a journey finished before the screen opened), and nothing after stopping', async () => {
+    await store.startJourney(readerId, 'ocean_deep', '2026-03-01T00:00:00.000Z');
+    await addBooks(5, '2026-03-02T00:00:00.000Z');
+    const completed: string[] = [];
+    const stop = watchJourneyCompletion(store, readerId, (_, id) => completed.push(id));
+    await settle();
+    expect(completed).toEqual(['ocean_deep']);
+    stop();
+
+    await store.startJourney(readerId, 'ocean_deep', '2026-03-04T00:00:00.000Z');
+    await addBooks(5, '2026-03-05T00:00:00.000Z');
+    await settle();
+    expect(completed).toEqual(['ocean_deep']);
   });
 });

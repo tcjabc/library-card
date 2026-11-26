@@ -7,7 +7,7 @@ import { Sheet } from '../../ui/Sheet';
 import { useToast } from '../../ui/Toast';
 import { BackToHub } from '../BackToHub';
 import { journeyStyle } from './journeyStyle';
-import { useCompletionCheckOnOpen, useJourneyStatus } from './useJourneyStatus';
+import { useCompletionCheck, useJourneyStatus } from './useJourneyStatus';
 import './journeys.css';
 
 /**
@@ -18,7 +18,7 @@ export function JourneyGallery({ reader }: { reader: Reader }) {
   const t = strings.journey;
   const toast = useToast();
   const { status, store } = useJourneyStatus(reader.id);
-  useCompletionCheckOnOpen(store, reader.id);
+  useCompletionCheck(store, reader.id);
   const countsQuery = useCallback((s: DataStore) => s.countCompletedJourneys(reader.id), [reader.id]);
   const { data: completed } = useDataQuery(countsQuery, ['reader_journeys']);
   const [confirming, setConfirming] = useState<Journey | null>(null);

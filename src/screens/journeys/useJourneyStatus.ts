@@ -1,6 +1,6 @@
 import { useCallback, useEffect } from 'react';
 import { useDataQuery, type DataStore, type ReaderJourney } from '../../data';
-import { checkJourneyCompletion } from '../../journeys/completion';
+import { watchJourneyCompletion } from '../../journeys/completion';
 import { getJourney, type Journey } from '../../journeys/journeys';
 import { filledSteps, journeyProgress, type FilledStep } from '../../journeys/progress';
 
@@ -35,13 +35,11 @@ export function useJourneyStatus(readerId: string) {
 }
 
 /**
- * Runs the completion check when a screen opens, so a journey finished
- * elsewhere (another tab, a read recorded before this check existed) still
- * celebrates.
+ * Runs the completion check while a screen is open: when it opens and after
+ * every change to reads (a read synced from another device, a grown-up
+ * confirming one elsewhere), so a journey finished elsewhere still celebrates
+ * and the journey screen never sits at "0 more books to go!".
  */
-export function useCompletionCheckOnOpen(store: DataStore | null, readerId: string): void {
-  useEffect(() => {
-    if (!store) return;
-    checkJourneyCompletion(store, readerId).catch((error: unknown) => console.error('[journey] completion check failed', error));
-  }, [store, readerId]);
+export function useCompletionCheck(store: DataStore | null, readerId: string): void {
+  useEffect(() => (store ? watchJourneyCompletion(store, readerId) : undefined), [store, readerId]);
 }
