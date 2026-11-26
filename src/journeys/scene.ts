@@ -57,17 +57,24 @@ export function layerOffset(shift: number, travel: number): number {
   return -clamp(shift, 0, 1) * Math.max(0, travel);
 }
 
-/** A page needs at least this much of the view's height to scroll (× the view's height) for the scene to follow the scroll. */
-export const MIN_SCROLL_RANGE = 0.5;
+/**
+ * How much the scene follows the scroll, by how far the page can scroll (× the
+ * view's height): not at all up to the first, fully from the second, a smooth
+ * mix in between (so a phone's browser bar sliding away, which changes the view's
+ * height a little, never makes the scene jump).
+ */
+export const SCROLL_BLEND = [0.25, 0.75] as const;
 
 /**
  * The shift from the page's scroll: `scrollTop` over the `range` it can scroll
- * (its height less the view's), clamped; `fallback` (the reader's step's
- * shift) when it can scroll less than MIN_SCROLL_RANGE of a `viewHeight`.
+ * (its height less the view's), clamped, mixed with `fallback` (the reader's
+ * step's shift) on a page that can barely scroll (SCROLL_BLEND).
  */
 export function scrollShift(scrollTop: number, range: number, viewHeight: number, fallback: number): number {
-  if (!(range >= MIN_SCROLL_RANGE * viewHeight) || !(range > 0)) return clamp(fallback, 0, 1);
-  return clamp(scrollTop / range, 0, 1);
+  const still = clamp(fallback, 0, 1);
+  if (!(range > 0) || !(viewHeight > 0)) return still;
+  const follow = clamp((range / viewHeight - SCROLL_BLEND[0]) / (SCROLL_BLEND[1] - SCROLL_BLEND[0]), 0, 1);
+  return follow * clamp(scrollTop / range, 0, 1) + (1 - follow) * still;
 }
 
 /**

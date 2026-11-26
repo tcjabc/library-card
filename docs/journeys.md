@@ -32,8 +32,10 @@ hub tile and the celebration are unchanged.
   extends past the screen's edges so a shift never shows a gap.
 - **The shift** (`--journey-shift`, 0–1): how far down the page the reader has scrolled (`scrollShift`: 0 at the
   top end of the track, 1 at the bottom end). Rising journeys start at the bottom, so as the reader climbs the
-  world moves down; Ocean Deep starts at the top, so as they dive it moves up. A page that can scroll less than half
-  a view (Ocean Deep's five steps on a tall screen) uses the reader's step instead (`stepShift`). One scroll
+  world moves down; Ocean Deep starts at the top, so as they dive it moves up. A page that can barely scroll
+  (Ocean Deep's five steps on a tall screen) uses the reader's step instead (`stepShift`): under a quarter of a
+  view of scroll range it's the step's place, from three quarters it's the scroll, a smooth mix in between
+  (`SCROLL_BLEND`), so a phone's browser bar sliding away never makes the scene jump. One scroll
   listener per screen sets the variable in an animation frame; no other script runs while scrolling.
 - **The settle**: when the reader's step has changed since they last saw the screen, each layer starts where the
   old step put it (`settleOffsets`; the near layer at least `MIN_SETTLE_PX`, 60 px, and at most its travel, far

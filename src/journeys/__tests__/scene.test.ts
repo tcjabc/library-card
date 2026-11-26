@@ -22,7 +22,7 @@ import {
   sceneMotion,
   MIN_SETTLE_PX,
   settleOffsets,
-  MIN_SCROLL_RANGE,
+  SCROLL_BLEND,
   scrollShift,
   stepShift,
 } from '../scene';
@@ -73,10 +73,21 @@ describe('layer offsets from the one shift value', () => {
     expect(scrollShift(-40, 2000, 800, 0.5)).toBe(0);
   });
 
-  it(`a page that can scroll less than ${MIN_SCROLL_RANGE} of a view uses the reader's step instead (a short journey on a tall screen)`, () => {
+  it(`a page that can barely scroll (under ${SCROLL_BLEND[0]} of a view) uses the reader's step; from ${SCROLL_BLEND[1]} of a view it follows the scroll`, () => {
     expect(scrollShift(10, 100, 800, 0.3)).toBe(0.3);
     expect(scrollShift(0, 0, 800, 0.8)).toBe(0.8);
-    expect(scrollShift(200, MIN_SCROLL_RANGE * 800, 800, 0.3)).toBe(0.5);
+    expect(scrollShift(300, SCROLL_BLEND[1] * 800, 800, 0.3)).toBe(0.5);
+    // Halfway between: half the scroll's shift, half the step's.
+    const mid = ((SCROLL_BLEND[0] + SCROLL_BLEND[1]) / 2) * 800;
+    expect(scrollShift(mid, mid, 800, 0)).toBeCloseTo(0.5, 9);
+  });
+
+  it('never jumps when the view’s height changes a little (a browser bar sliding away)', () => {
+    for (let range = 100; range < 700; range += 4) {
+      const a = scrollShift(range * 0.9, range, 704, 0.55);
+      const b = scrollShift(range * 0.9, range - 24, 728, 0.55);
+      expect(Math.abs(a - b)).toBeLessThan(0.12);
+    }
   });
 });
 
