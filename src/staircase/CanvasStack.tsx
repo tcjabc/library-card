@@ -76,7 +76,9 @@ import {
   CLOUD_SHADE_RISE,
   CLOUD_SHAPES,
   CLOUD_WIDTH,
+  cloudLayers,
   placeClouds,
+  type CloudLayer,
   type PlacedCloud,
 } from './clouds';
 import {
@@ -148,12 +150,13 @@ import './canvasStack.css';
  * book (its gap lift included) and scrolling away as the camera climbs. Colours come from the
  * --stack-* tokens, read again when the colour scheme changes while the pile is open.
  *
- * Clouds (`clouds`, `decor`, clouds.ts): backdrop clouds painted after the sky and before the
- * ground (which hides any behind the horizon) and the books, never in front of a book: seeded by
- * the household and altitude cell, so they never move as the pile grows; each moves 0.25–0.35 of
- * the scroll (1:1 with reduced motion), only when a frame is drawn anyway; at most five a frame;
- * faded where they cross the eye-line band. Their sprites are drawn once per resolution, as the
- * labels are. The decor drawn is the least of the device's setting, this visit's cap and (with
+ * Clouds (`clouds`, `foreground`, `decor`, clouds.ts): backdrop clouds painted after the sky and
+ * before the ground (which hides any behind the horizon), moving 0.25–0.35 of the scroll; then,
+ * with Full decor, a few faint wisps after the ground, moving 1.2–1.4× of it; all before the books,
+ * so never in front of one. With reduced motion, a denser layer moving 1:1 instead of both. Seeded
+ * by the household, layer and altitude cell, so they never move as the pile grows; changed only
+ * when a frame is drawn anyway; faded where they cross the eye-line band. Their sprites (one
+ * atlas) are drawn once per resolution, as the labels are. The decor drawn is the least of the device's setting, this visit's cap and (with
  * reduced motion) reduced: slow frames lower the decor first (full → reduced → none), and only
  * then the resolution.
  *
@@ -234,8 +237,9 @@ export interface DrawStats {
   sky: { top: number; bottom: number } | null;
   /** Whether any ground was drawn this frame. */
   ground: boolean;
-  /** Backdrop clouds drawn this frame. */
+  /** Backdrop clouds drawn this frame (the still layer's with reduced motion), and foreground wisps. */
   clouds: number;
+  cloudsFg: number;
   /** The decor: the device's setting, this visit's cap (slow frames), what's drawn, and why. */
   decor: { setting: Decor; cap: Decor; drawn: Decor; why: DecorWhy };
 }
@@ -317,8 +321,10 @@ export interface CanvasStackProps {
   sky?: boolean;
   /** The meadow the pile stands on, its horizon and the base book's shadow (scenery.ts). */
   ground?: boolean;
-  /** Backdrop clouds in the sky (clouds.ts; with the sky only). */
+  /** Clouds in the sky (clouds.ts; with the sky only). */
   clouds?: boolean;
+  /** The foreground wisps (with Full decor; never with reduced motion). */
+  foreground?: boolean;
   /** The decor level (clouds) this device chose; what's drawn may be less (slow frames, reduced motion). */
   decor?: Decor;
   /** Developer tools' "Pretend slow frames": the budget hears every moving frame as slow (drawBudget.budgetFrameMs). */
@@ -359,6 +365,7 @@ const INSET_SPAN = Math.hypot(Math.max(...BOOK_WIDTHS), Math.max(...BOOK_DEPTHS)
 let ops = 0;
 /** A frame without clouds (shared, never changed). */
 const NO_CLOUDS: PlacedCloud[] = [];
+const NO_LAYERS: CloudLayer[] = [];
 
 /** The book tokens from theme.css, read once from the page. */
 interface BookTheme {
@@ -1137,6 +1144,7 @@ function CanvasStack({
   sky = false,
   ground = false,
   clouds = false,
+  foreground = true,
   decor = 'full',
   pretendSlow = false,
   drop = null,
@@ -1265,6 +1273,7 @@ function CanvasStack({
     sky,
     ground,
     clouds,
+    foreground,
     decor,
     pretendSlow,
     seed,
@@ -1292,6 +1301,7 @@ function CanvasStack({
       sky,
       ground,
       clouds,
+      foreground,
       decor,
       pretendSlow,
       seed,
@@ -1380,31 +1390,37 @@ function CanvasStack({
       }
       // The backdrop clouds (clouds.ts), behind the ground so the meadow hides any behind the horizon.
       const decorNow = o ? { decor: o.decor, why: 'fixed' as DecorWhy } : decorInEffect(scene.current.decor, c.decorCap, c.reduced);
-      let clouds: PlacedCloud[] = NO_CLOUDS;
-      if (skyNow && scene.current.clouds && decorNow.decor !== 'none' && sc.cloud && sc.cloudShade) {
-        clouds = placeClouds({
-          seed: scene.current.seed,
-          width,
-          height,
-          horizon,
-          ground: groundNow,
-          decor: decorNow.decor,
-          reduced: c.reduced,
-          eyeReach: eyeLineReach(scene.current.coverShapes ? BIGGEST_SHAPED_BOOK : BIGGEST_BOOK, theme.gutter),
-        });
-        if (clouds.length > 0) {
-          const lit = cssColour(sc.cloud);
-          const shade = cssColour(sc.cloudShade);
-          const atlas = (paint.current.clouds ??= renderCloudAtlas(scale, lit, shade));
-          ctx.setTransform(scale, 0, 0, scale, 0, 0);
-          for (const cloud of clouds) {
-            ctx.globalAlpha = cloud.alpha;
-            ctx.drawImage(atlas.canvas, 0, cloud.shape * atlas.stride, atlas.width, atlas.cell, cloud.x, cloud.y, cloud.width, cloud.height);
-            ops += 1;
-          }
-          ctx.globalAlpha = 1;
+      // Which layers: the backdrop (the still layer with reduced motion) and, with Full decor, the wisps.
+      const layers: CloudLayer[] =
+        skyNow && scene.current.clouds && sc.cloud && sc.cloudShade ? cloudLayers(decorNow.decor, c.reduced, scene.current.foreground) : NO_LAYERS;
+      const cloudsOf = (layer: CloudLayer): PlacedCloud[] => {
+        if (!layers.includes(layer) || !sc.cloud || !sc.cloudShade) return NO_CLOUDS;
+        const list = placeClouds(
+          {
+            seed: scene.current.seed,
+            width,
+            height,
+            horizon,
+            ground: groundNow,
+            decor: decorNow.decor,
+            reduced: c.reduced,
+            eyeReach: eyeLineReach(scene.current.coverShapes ? BIGGEST_SHAPED_BOOK : BIGGEST_BOOK, theme.gutter),
+          },
+          layer,
+        );
+        if (list.length === 0) return NO_CLOUDS;
+        const atlas = (paint.current.clouds ??= renderCloudAtlas(scale, cssColour(sc.cloud), cssColour(sc.cloudShade)));
+        ctx.setTransform(scale, 0, 0, scale, 0, 0);
+        for (const cloud of list) {
+          ctx.globalAlpha = cloud.alpha;
+          ctx.drawImage(atlas.canvas, 0, cloud.shape * atlas.stride, atlas.width, atlas.cell, cloud.x, cloud.y, cloud.width, cloud.height);
+          ops += 1;
         }
-      }
+        ctx.globalAlpha = 1;
+        return list;
+      };
+      // Behind the ground: the meadow hides any cloud behind the horizon.
+      const backdrop = cloudsOf(c.reduced ? 'still' : 'backdrop');
       if (groundNow && paint.current.ground) {
         // From the horizon down: the haze above its line, the meadow (hazier far off), the line.
         if (paint.current.haze && horizon > 0) {
@@ -1424,6 +1440,9 @@ function CanvasStack({
           ops += 1;
         }
       }
+      // The wisps in front of the backdrop and the ground, and still behind every book.
+      const wisps = cloudsOf('foreground');
+      const clouds = wisps.length > 0 ? [...backdrop, ...wisps] : backdrop;
       /** What's behind a month line at `y`: the ground below the horizon, the sky (or the page) above it. */
       const behind = (y: number): Rgba | null => {
         if (groundNow && y >= horizon && sc.ground && sc.groundFar) return mix(sc.groundFar, sc.ground, (y - horizon) / meadow);
@@ -1793,7 +1812,8 @@ function CanvasStack({
         covers: onDraw || c.listener ? art.current?.stats() : undefined,
         sky: skyNow ? { top: skyNow.tTop, bottom: skyNow.tBottom } : null,
         ground: groundNow,
-        clouds: clouds.length,
+        clouds: backdrop.length,
+        cloudsFg: wisps.length,
         decor: { setting: scene.current.decor, cap: c.decorCap, drawn: decorNow.decor, why: decorNow.why },
       };
       c.cameraMs = 0;
@@ -2083,7 +2103,7 @@ function CanvasStack({
   // The sky, the ground, the clouds or the decor level changed: draw again where the camera is.
   useEffect(() => {
     if (!cam.current.raf) draw(true);
-  }, [sky, ground, clouds, decor, draw]);
+  }, [sky, ground, clouds, foreground, decor, draw]);
 
   // The gap switched on or off: K for the new look (where a pile opens next time), and draw again
   // where the camera is (the camera itself stays put).

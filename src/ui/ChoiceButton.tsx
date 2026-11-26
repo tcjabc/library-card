@@ -7,18 +7,21 @@ interface ChoiceButtonProps {
   detail: string;
   /** Outlined in the brand colour: the recommended choice. */
   primary?: boolean;
+  /** One of a set of choices (e.g. a setting's values): whether it's the chosen one (aria-pressed). Leave out for a one-off action. */
+  pressed?: boolean;
   disabled?: boolean;
   onClick: () => void;
 }
 
 /** A big, full-width choice: a title and a line of detail (e.g. "Combine…" / "Use the household's data only"). */
-export function ChoiceButton({ title, detail, primary, disabled, onClick }: ChoiceButtonProps) {
+export function ChoiceButton({ title, detail, primary, pressed, disabled, onClick }: ChoiceButtonProps) {
   const id = useId();
   return (
     <button
       type="button"
       className={primary ? 'choice choice--primary' : 'choice'}
       disabled={disabled}
+      aria-pressed={pressed}
       aria-labelledby={`${id}-title`}
       aria-describedby={`${id}-detail`}
       onClick={onClick}

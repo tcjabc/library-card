@@ -193,6 +193,8 @@ export interface BenchResult {
   ground?: boolean;
   /** "Clouds" and the decor level while it ran (missing in results from before 1.16.0). */
   clouds?: boolean;
+  /** "Foreground clouds" while it ran (missing in results from before 1.17.0). */
+  foreground?: boolean;
   decor?: Decor;
 }
 
@@ -315,6 +317,7 @@ export function formatBenchResult(result: BenchResult): string {
     ...(result.sky === undefined ? [] : [fmt(t.benchSky, { state: result.sky ? t.measureOn : t.measureOff })]),
     ...(result.ground === undefined ? [] : [fmt(t.benchGround, { state: result.ground ? t.measureOn : t.measureOff })]),
     ...(result.clouds === undefined ? [] : [fmt(t.benchClouds, { state: result.clouds ? t.measureOn : t.measureOff })]),
+    ...(result.foreground === undefined ? [] : [fmt(t.benchForeground, { state: result.foreground ? t.measureOn : t.measureOff })]),
     ...(result.decor === undefined ? [] : [fmt(t.benchDecor, { level: t.decorLevel[result.decor] })]),
     ...deviceLines(result.device),
     fmt(t.benchCalibrationStart, { score: scoreText(result.calibration.start) }),

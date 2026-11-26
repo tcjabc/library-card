@@ -10,6 +10,7 @@ import { readStackGap } from '../staircase/gapSetting';
 import { readStackGround } from '../staircase/groundSetting';
 import { readStackSky } from '../staircase/skySetting';
 import { readStackClouds } from '../staircase/cloudsSetting';
+import { readStackForeground } from '../staircase/foregroundSetting';
 import { readStackDecor } from '../staircase/decorSetting';
 import { readStackShapes } from '../staircase/shapeSetting';
 import { addBreakdown, breakdownAverages, emptyBreakdown } from './frameStats';
@@ -289,6 +290,7 @@ export async function runStackBenchmark({ bench, version, onProgress, isCancelle
     sky: readStackSky(),
     ground: readStackGround(),
     clouds: readStackClouds(),
+    foreground: readStackForeground(),
     decor: readStackDecor(),
   };
   const wake = await requestWakeLock();

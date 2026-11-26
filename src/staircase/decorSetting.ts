@@ -11,6 +11,8 @@ import { DECOR_LEVELS, type Decor } from './drawBudget';
 
 export const STACK_DECOR_KEY = 'library-card:stack-decor';
 export const DEFAULT_DECOR: Decor = 'full';
+/** The levels as choices (Settings, the developer tools), most first. */
+export const DECOR_CHOICES = ['full', 'reduced', 'none'] as const satisfies readonly Decor[];
 
 /** A stored value as a decor level (anything else: the default). */
 export function parseDecor(value: string | null): Decor {

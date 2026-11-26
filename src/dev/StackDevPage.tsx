@@ -15,6 +15,7 @@ import { useStackShapes, writeStackShapes } from '../staircase/shapeSetting';
 import { useStackSky, writeStackSky } from '../staircase/skySetting';
 import { useStackGround, writeStackGround } from '../staircase/groundSetting';
 import { useStackClouds, writeStackClouds } from '../staircase/cloudsSetting';
+import { useStackForeground, writeStackForeground } from '../staircase/foregroundSetting';
 import { useStackDecor, writeStackDecor } from '../staircase/decorSetting';
 import { useStackSlow, writeStackSlow } from '../staircase/slowSetting';
 import { DECOR_LEVELS, type Decor } from '../staircase/drawBudget';
@@ -91,6 +92,7 @@ export default function StackDevPage() {
   const sky = useStackSky();
   const ground = useStackGround();
   const clouds = useStackClouds();
+  const foreground = useStackForeground();
   const decor = useStackDecor();
   const slow = useStackSlow();
   const pretendCovers = usePretendCovers(covers);
@@ -134,7 +136,7 @@ export default function StackDevPage() {
   );
 
   // A new pile starts its counts afresh.
-  useEffect(() => reset(), [count, mode, twist, settle, raster, covers, gap, coverShapes, sky, ground, clouds, decor, slow, reset]);
+  useEffect(() => reset(), [count, mode, twist, settle, raster, covers, gap, coverShapes, sky, ground, clouds, foreground, decor, slow, reset]);
   const label = fmt(t.stackLabel, { count: count.toLocaleString() });
 
   return (
@@ -170,6 +172,7 @@ export default function StackDevPage() {
             sky={sky}
             ground={ground}
             clouds={clouds}
+            foreground={foreground}
             decor={decor}
             pretendSlow={slow}
             drop={drop}
@@ -224,6 +227,8 @@ export default function StackDevPage() {
           onGround={writeStackGround}
           clouds={clouds}
           onClouds={writeStackClouds}
+          foreground={foreground}
+          onForeground={writeStackForeground}
           decor={decor}
           onDecor={writeStackDecor}
           slow={slow}
@@ -263,8 +268,9 @@ interface Readout {
   /** The sky's t at the top and bottom of the view at the latest frame (null: no sky drawn), and whether ground was drawn. */
   sky: { top: number; bottom: number } | null;
   ground: boolean;
-  /** Clouds drawn at the latest frame, and the decor then (null before the first frame). */
+  /** Clouds drawn at the latest frame (backdrop or still, and foreground), and the decor then (null before the first frame). */
   clouds: number;
+  cloudsFg: number;
   decor: DrawStats['decor'] | null;
   dropped: number;
   /** null where the browser can't report long tasks. */
@@ -280,7 +286,7 @@ function supportsLongTasks(): boolean {
 }
 
 function emptyReadout(): Readout {
-  return { fps: null, renders: null, draw: null, faces: null, ops: null, canvas: null, raster: null, breakdown: null, rebuilds: 0, coverPictures: null, sky: null, ground: false, clouds: 0, decor: null, dropped: 0, longTasks: supportsLongTasks() ? 0 : null, longTaskMs: 0, nodes: 0, viewport: '', dpr: 1 };
+  return { fps: null, renders: null, draw: null, faces: null, ops: null, canvas: null, raster: null, breakdown: null, rebuilds: 0, coverPictures: null, sky: null, ground: false, clouds: 0, cloudsFg: 0, decor: null, dropped: 0, longTasks: supportsLongTasks() ? 0 : null, longTaskMs: 0, nodes: 0, viewport: '', dpr: 1 };
 }
 
 /** Times every frame while the pile is scrolling, counts late frames and long tasks. */
@@ -297,6 +303,7 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
     sky: null as Readout['sky'],
     ground: false,
     clouds: 0,
+    cloudsFg: 0,
     decor: null as Readout['decor'],
     lastBreakdown: null as Readout['breakdown'],
     last: 0,
@@ -387,6 +394,7 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
         sky: s.sky,
         ground: s.ground,
         clouds: s.clouds,
+        cloudsFg: s.cloudsFg,
         decor: s.decor,
         dropped: s.dropped,
         longTasks: longTasks ? s.longTasks : null,
@@ -424,6 +432,7 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
     s.sky = stats.sky;
     s.ground = stats.ground;
     s.clouds = stats.clouds;
+    s.cloudsFg = stats.cloudsFg;
     s.decor = stats.decor;
     if (stats.raster !== undefined) s.flushes.push({ at: now, ms: stats.raster });
     if (now <= s.scrollingUntil + FRAME_MS) {
@@ -577,6 +586,7 @@ function readoutLines(
   sky: boolean,
   ground: boolean,
   clouds: boolean,
+  foreground: boolean,
   slow: boolean,
 ): [string, string][] {
   const canvas = mode === 'canvas';
@@ -607,6 +617,7 @@ function readoutLines(
     ],
     [t.measureGround, canvas ? (ground ? (readout.ground ? t.measureGroundShown : t.measureGroundAway) : t.measureOff) : t.measureDrawCanvasOnly],
     [t.measureClouds, canvas ? (clouds ? t.measureOn : t.measureOff) : t.measureDrawCanvasOnly],
+    [t.measureForeground, canvas ? (foreground ? t.measureOn : t.measureOff) : t.measureDrawCanvasOnly],
     [
       t.measureDecorDrawn,
       !canvas
@@ -621,6 +632,7 @@ function readoutLines(
             }),
     ],
     [t.measureCloudsDrawn, canvas ? String(readout.clouds) : t.measureDrawCanvasOnly],
+    [t.measureForegroundDrawn, canvas ? String(readout.cloudsFg) : t.measureDrawCanvasOnly],
     [t.measureSlow, canvas ? (slow ? t.measureOn : t.measureOff) : t.measureDrawCanvasOnly],
     [
       t.measureShapeConstants,
@@ -766,6 +778,8 @@ interface MeasurePanelProps {
   /** "Clouds", the decor level and "Pretend slow frames": this device's settings, also used by the Family Staircase. */
   clouds: boolean;
   onClouds: (on: boolean) => void;
+  foreground: boolean;
+  onForeground: (on: boolean) => void;
   decor: Decor;
   onDecor: (decor: Decor) => void;
   slow: boolean;
@@ -803,6 +817,8 @@ function MeasurePanel({
   onGround,
   clouds,
   onClouds,
+  foreground,
+  onForeground,
   decor,
   onDecor,
   slow,
@@ -818,9 +834,10 @@ function MeasurePanel({
   const skyNoteId = useId();
   const groundNoteId = useId();
   const cloudsNoteId = useId();
+  const foregroundNoteId = useId();
   const decorNoteId = useId();
   const slowNoteId = useId();
-  const lines = readoutLines(readout, count, mode, twist, settle, raster, covers, gap, coverShapes, sky, ground, clouds, slow);
+  const lines = readoutLines(readout, count, mode, twist, settle, raster, covers, gap, coverShapes, sky, ground, clouds, foreground, slow);
 
   const copy = async () => {
     const parts = [version, t.stackTitle, ...lines.map(([label, value]) => `${label}: ${value}`)];
@@ -907,6 +924,12 @@ function MeasurePanel({
           </button>
           <p id={cloudsNoteId} className="small muted">
             {t.measureCloudsNote}
+          </p>
+          <button type="button" className="chip" aria-pressed={foreground} aria-describedby={foregroundNoteId} onClick={() => onForeground(!foreground)}>
+            {t.measureForeground}
+          </button>
+          <p id={foregroundNoteId} className="small muted">
+            {t.measureForegroundNote}
           </p>
           <div className="chip-row" role="group" aria-label={t.measureDecor} aria-describedby={decorNoteId}>
             {[...DECOR_LEVELS].reverse().map((level) => (

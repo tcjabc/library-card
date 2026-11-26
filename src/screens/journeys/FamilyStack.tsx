@@ -15,6 +15,7 @@ import { useStackShapes } from '../../staircase/shapeSetting';
 import { useStackSky } from '../../staircase/skySetting';
 import { useStackGround } from '../../staircase/groundSetting';
 import { useStackClouds } from '../../staircase/cloudsSetting';
+import { useStackForeground } from '../../staircase/foregroundSetting';
 import { useStackDecor } from '../../staircase/decorSetting';
 import { useStackSlow } from '../../staircase/slowSetting';
 import { useStackSounds, writeStackSounds } from '../../staircase/soundSetting';
@@ -124,6 +125,7 @@ export default function FamilyStack({ reader }: { reader: Reader }) {
   const sky = useStackSky();
   const ground = useStackGround();
   const clouds = useStackClouds();
+  const foreground = useStackForeground();
   const decor = useStackDecor();
   const pretendSlow = useStackSlow();
   const sounds = useStackSounds();
@@ -340,6 +342,7 @@ export default function FamilyStack({ reader }: { reader: Reader }) {
             sky={sky}
             ground={ground}
             clouds={clouds}
+            foreground={foreground}
             decor={decor}
             pretendSlow={pretendSlow}
             drop={greeted?.drop ?? null}

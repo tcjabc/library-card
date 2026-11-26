@@ -24,6 +24,7 @@ import { formatBytes, formatTimestampDate, isAppStorageKey } from '../helpers';
 import { checkForUpdate, currentBuildInfo, formatVersionLine, type UpdateCheck } from '../version';
 import { endGrownUpSession } from '../session';
 import { HouseholdPinSection } from '../pin/HouseholdPinSection';
+import { SkyDecorSection } from './SkyDecorSection';
 import { usePinGuard } from '../pin/pinGuardContext';
 import type { TabProps } from './types';
 
@@ -304,6 +305,8 @@ export function SettingsTab({ store, household }: TabProps) {
       </section>
 
       <StackSoundsSection />
+
+      <SkyDecorSection />
 
       <section className="stack card">
         <h2>{t.resetHeading}</h2>

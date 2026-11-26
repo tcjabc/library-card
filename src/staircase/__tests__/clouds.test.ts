@@ -20,6 +20,11 @@ import {
   eyeLineFade,
   placeClouds,
   shapeTop,
+  BACKDROP_SHAPES,
+  FOREGROUND_PARALLAX,
+  LAYERS,
+  WISP_SHAPES,
+  cloudLayers,
   type CloudView,
 } from '../clouds';
 import { DECOR_LEVELS, type Decor } from '../drawBudget';
@@ -140,6 +145,7 @@ describe('how they move: parallax', () => {
 
   it('on screen the backdrop moves 0.25–0.35 of the pile; with reduced motion, 1:1', () => {
     const scroll = 12;
+    let pairedStill = 0;
     for (const alt of [30, 60, 120]) {
       const a = placeClouds(viewAt(alt));
       const b = placeClouds({ ...viewAt(alt), horizon: viewAt(alt).horizon + scroll });
@@ -149,10 +155,17 @@ describe('how they move: parallax', () => {
         expect(moved).toBeGreaterThanOrEqual(PARALLAX[0] * scroll - 1e-9);
         expect(moved).toBeLessThanOrEqual(PARALLAX[1] * scroll + 1e-9);
       });
+      // Reduced motion: the same clouds (paired by where they are across the sky), moved 1:1.
       const ra = placeClouds(viewAt(alt, { reduced: true }));
       const rb = placeClouds({ ...viewAt(alt, { reduced: true }), horizon: viewAt(alt).horizon + scroll });
-      ra.forEach((c, k) => expect(rb[k].y - c.y).toBeCloseTo(scroll, 9));
+      for (const c of ra) {
+        const same = rb.find((d) => d.x === c.x && d.shape === c.shape);
+        if (!same) continue;
+        pairedStill += 1;
+        expect(same.y - c.y).toBeCloseTo(scroll, 9);
+      }
     }
+    expect(pairedStill).toBeGreaterThan(0);
   });
 });
 
@@ -238,9 +251,187 @@ describe('the eye line stays calm', () => {
   });
 });
 
+describe('the foreground wisps', () => {
+  const fg = (alt: number, over: Partial<CloudView> = {}) => placeClouds(viewAt(alt, over), 'foreground');
+
+  it(`each wisp's factor is in ${FOREGROUND_PARALLAX[0]}–${FOREGROUND_PARALLAX[1]}: faster than the pile`, () => {
+    for (let cell = 0; cell < 300; cell++) {
+      for (const c of cellClouds(SEED, cell, 'foreground')) {
+        expect(c.factor).toBeGreaterThanOrEqual(FOREGROUND_PARALLAX[0]);
+        expect(c.factor).toBeLessThanOrEqual(FOREGROUND_PARALLAX[1]);
+        expect(c.shape).toBeGreaterThanOrEqual(WISP_SHAPES[0]);
+        expect(c.shape).toBeLessThan(WISP_SHAPES[1]);
+      }
+    }
+  });
+
+  it('on screen they move 1.2–1.4× of every scroll', () => {
+    const scroll = 10;
+    let moved = 0;
+    for (let alt = 10; alt < 250; alt += 5) {
+      const a = fg(alt);
+      const b = placeClouds({ ...viewAt(alt), horizon: viewAt(alt).horizon + scroll }, 'foreground');
+      for (const c of a) {
+        const same = b.find((d) => d.x === c.x && d.shape === c.shape);
+        if (!same) continue;
+        moved += 1;
+        expect(same.y - c.y).toBeGreaterThanOrEqual(FOREGROUND_PARALLAX[0] * scroll - 1e-9);
+        expect(same.y - c.y).toBeLessThanOrEqual(FOREGROUND_PARALLAX[1] * scroll + 1e-9);
+      }
+    }
+    expect(moved).toBeGreaterThan(10);
+  });
+
+  it('are seeded apart from the backdrop, the same for the same household, and never move as the pile grows', () => {
+    for (let cell = 0; cell < 50; cell++) expect(cellClouds(SEED, cell, 'foreground')).toEqual(cellClouds(SEED, cell, 'foreground'));
+    const backdrop = Array.from({ length: 50 }, (_, cell) => cellClouds(SEED, cell).map((c) => c.alt));
+    const wisps = Array.from({ length: 50 }, (_, cell) => cellClouds(SEED, cell, 'foreground').map((c) => c.alt));
+    expect(wisps).not.toEqual(backdrop);
+    const horizonFor = (count: number, s: number) => {
+      const centres = pileCentres(Array.from({ length: count }, () => 28));
+      return horizonY(groundContactY(centres, s, bookLift(0, s, true), PHONE.height / 2));
+    };
+    for (const s of [0, 20, 60, 99]) {
+      expect(placeClouds({ ...viewAt(0), horizon: horizonFor(1000, s) }, 'foreground')).toEqual(placeClouds({ ...viewAt(0), horizon: horizonFor(100, s) }, 'foreground'));
+    }
+  });
+
+  it(`none below ${CLOUD_MIN_ALT} books, thinning above t ${CLOUD_THIN_FROM}, none at t 1`, () => {
+    let low = 0;
+    let lowCells = 0;
+    let high = 0;
+    let highCells = 0;
+    for (let s = 0; s < 40; s++) {
+      for (let cell = 0; cell < 120; cell++) {
+        const clouds = cellClouds(`seed-${s}`, cell, 'foreground');
+        for (const c of clouds) expect(c.alt).toBeGreaterThanOrEqual(CLOUD_MIN_ALT);
+        const alt = (cell + 0.5) * LAYERS.foreground.cell;
+        if (alt > 20 && alt < 200) {
+          low += clouds.length;
+          lowCells += 1;
+        } else if (alt > 500 && alt < 900) {
+          high += clouds.length;
+          highCells += 1;
+        }
+        if (alt > 1000) expect(clouds).toEqual([]);
+      }
+    }
+    expect(high / highCells).toBeLessThan((low / lowCells) * 0.5);
+  });
+
+  it('at most 3 a frame with Full decor; none with Reduced or None; none with reduced motion', () => {
+    let seen = 0;
+    for (const seed of ['a', 'b', 'c', SEED]) {
+      for (const height of [289, 660, 1180]) {
+        for (let alt = 0; alt <= 1100; alt += 2) {
+          const full = fg(alt, { seed, height });
+          expect(full.length).toBeLessThanOrEqual(3);
+          seen = Math.max(seen, full.length);
+          expect(fg(alt, { seed, height, decor: 'reduced' })).toEqual([]);
+          expect(fg(alt, { seed, height, decor: 'none' })).toEqual([]);
+          expect(fg(alt, { seed, height, reduced: true })).toEqual([]);
+        }
+      }
+    }
+    expect(seen).toBe(3);
+  });
+
+  it('a few, faint: usually 1 or 2 in a phone view through the cloudy sky', () => {
+    let total = 0;
+    let frames = 0;
+    for (const seed of ['a', 'b', 'c', 'd', SEED]) {
+      for (let alt = 30; alt <= 250; alt += 2) {
+        const list = fg(alt, { seed });
+        total += list.length;
+        frames += 1;
+        for (const c of list) expect(c.alpha).toBeLessThanOrEqual(LAYERS.foreground.alpha[1] + 1e-9);
+      }
+    }
+    expect(total / frames).toBeGreaterThan(0.6);
+    expect(total / frames).toBeLessThan(2.5);
+  });
+
+  it('fade across the eye-line band like the backdrop', () => {
+    let crossing = 0;
+    const mid = PHONE.height / 2;
+    for (let alt = 10; alt < 300; alt += 1) {
+      for (const c of fg(alt)) {
+        const top = c.y + shapeTop(CLOUD_SHAPES[c.shape]) * c.width;
+        const bottom = c.y + CLOUD_BASE * c.width;
+        if (top < mid + REACH && bottom > mid - REACH) {
+          crossing += 1;
+          expect(c.alpha).toBeLessThanOrEqual(LAYERS.foreground.alpha[1] * EYE_ALPHA + 1e-9);
+        }
+      }
+    }
+    expect(crossing).toBeGreaterThan(0);
+  });
+});
+
+describe('the layers a frame draws', () => {
+  it('Full: backdrop then wisps; Reduced: backdrop only; None: nothing; reduced motion: the still layer only', () => {
+    expect(cloudLayers('full', false, true)).toEqual(['backdrop', 'foreground']);
+    expect(cloudLayers('full', false, false)).toEqual(['backdrop']);
+    expect(cloudLayers('reduced', false, true)).toEqual(['backdrop']);
+    expect(cloudLayers('none', false, true)).toEqual([]);
+    expect(cloudLayers('full', true, true)).toEqual(['still']);
+    expect(cloudLayers('reduced', true, true)).toEqual(['still']);
+    expect(cloudLayers('none', true, true)).toEqual([]);
+  });
+});
+
+describe('reduced motion: a denser 1:1 layer', () => {
+  const sweep = (layer: 'still' | 'backdrop', height = PHONE.height) => {
+    const counts: number[] = [];
+    for (const seed of ['dev-book-stack', 'a', 'b', 'c', 'd']) {
+      for (let alt = 20; alt <= 250; alt += 1) counts.push(placeClouds(viewAt(alt, { seed, height, reduced: true, decor: 'reduced' }), layer).length);
+    }
+    return counts;
+  };
+
+  it('a view usually shows one to three clouds (1.16.0 showed about 0.6, with none in half the views)', () => {
+    const before = sweep('backdrop');
+    const after = sweep('still');
+    const average = (list: number[]) => list.reduce((a, b) => a + b, 0) / list.length;
+    const share = (list: number[], ok: (n: number) => boolean) => list.filter(ok).length / list.length;
+    // 1.16.0's way: the backdrop's cells moved 1:1 and kept to its core half.
+    expect(average(before)).toBeLessThan(1.5);
+    expect(average(after)).toBeGreaterThan(1.5);
+    expect(average(after)).toBeLessThanOrEqual(3);
+    expect(share(after, (n) => n >= 1 && n <= 3)).toBeGreaterThan(0.85);
+  });
+
+  it(`never more than the Reduced cap (${MAX_CLOUDS.reduced}), even on a tall tablet or with Full chosen`, () => {
+    for (const height of [289, 660, 1180]) {
+      for (const seed of ['a', 'b', SEED]) {
+        for (let alt = 0; alt <= 1100; alt += 2) {
+          for (const decor of ['full', 'reduced'] as const) {
+            expect(placeClouds(viewAt(alt, { seed, height, reduced: true, decor })).length).toBeLessThanOrEqual(MAX_CLOUDS.reduced);
+          }
+          expect(placeClouds(viewAt(alt, { seed, height, reduced: true, decor: 'none' }))).toEqual([]);
+        }
+      }
+    }
+    expect(Math.max(...sweep('still', 1180))).toBe(MAX_CLOUDS.reduced);
+  });
+
+  it('is deterministic and moves 1:1, with the eye-line fade a step (no ramp)', () => {
+    for (let cell = 0; cell < 50; cell++) expect(cellClouds(SEED, cell, 'still')).toEqual(cellClouds(SEED, cell, 'still'));
+    for (let cell = 0; cell < 50; cell++) for (const c of cellClouds(SEED, cell, 'still')) expect(c.factor).toBe(1);
+    for (let alt = 10; alt < 200; alt += 1) {
+      // Either faded at the eye line or at full strength: nothing in between.
+      for (const c of placeClouds(viewAt(alt, { reduced: true, decor: 'reduced' }))) {
+        expect(c.alpha <= CLOUD_ALPHA[1] * EYE_ALPHA + 1e-9 || c.alpha >= CLOUD_ALPHA[0] - 1e-9).toBe(true);
+      }
+    }
+  });
+});
+
 describe('the cloud shapes', () => {
   it('fit their sprite and sit on a flat base (the end puffs reach it)', () => {
-    expect(CLOUD_SHAPES).toHaveLength(6);
+    expect(CLOUD_SHAPES).toHaveLength(9);
+    expect(BACKDROP_SHAPES).toEqual([0, 6]);
+    expect(WISP_SHAPES).toEqual([6, 9]);
     for (const shape of CLOUD_SHAPES) {
       for (const p of shape) {
         expect(p.x - p.r).toBeGreaterThan(0);
