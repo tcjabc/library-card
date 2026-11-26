@@ -10,6 +10,9 @@ type SceneArt = ComponentType<{ layer: SceneLayer }>;
 const ART: Partial<Record<JourneyId, LazyExoticComponent<SceneArt>>> = {
   hot_air_balloon: lazy(() => import('./scenes/HotAirBalloonScene')),
   ocean_deep: lazy(() => import('./scenes/OceanDeepScene')),
+  redwood_tree: lazy(() => import('./scenes/RedwoodTreeScene')),
+  ocean_cliff: lazy(() => import('./scenes/OceanCliffScene')),
+  skyscraper: lazy(() => import('./scenes/SkyscraperScene')),
 };
 
 function prefersReducedMotion(): boolean {

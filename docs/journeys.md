@@ -16,14 +16,25 @@ completion sends the reader to the gallery with the celebration. Checks never ov
 
 ## Scenes (since 1.18.0)
 
-Journeys with a scene show flat art behind the track instead of the plain tinted track. In 1.18.0 that's
-Hot-Air Balloon and Ocean Deep; the others keep their emoji and colour until their scenes come. The gallery, the
-hub tile and the celebration are unchanged.
+Journeys with a scene show flat art behind the track instead of the plain tinted track. The others keep their
+emoji and colour until their scenes come (Rapunzel's Tower, Ladder to the Moon and Rocket Through Space: 1.20.0).
+The gallery, the hub tile and the celebration are unchanged.
+
+| Journey | Since | Steps | Travel (px) | Factors far / mid / near | Loops | Far | Mid | Near |
+|---|---|---|---|---|---|---|---|---|
+| Ocean Deep (down) | 1.18.0 | 5 | 200 | 0.2 / 0.5 / 1 | 13 | water bands, wave line, rays, faint fish | bubbles, two fish, a jellyfish | sea floor, seaweed, treasure chest, a big fish passing |
+| Redwood Tree | 1.19.0 | 8 | 300 | 0.2 / 0.6 / 1 | 8 | forest-morning sky, misty hills, tiny birds | the trunk with bark and branches, a bird, falling leaves, the canopy at the top | needle clusters at both edges, ferns, the forest floor |
+| Ocean Cliff | 1.19.0 | 10 | 360 | 0.2 / 0.6 / 1 | 9 | warm sky, faint clouds, the sea and a sailboat | the rock face with ledges and grass, two gulls, the lighthouse at the top (its lamp glimmers) | waves and foam, a rock outcrop, rising spray, a cloud passing |
+| Skyscraper | 1.19.0 | 12 | 420 | 0.2 / 0.6 / 1 | 7 | city dawn, a distant skyline, a plane trail | the glass tower with windows (some lit, three twinkling), the antenna's blinking light at the top, a helicopter | neighbouring buildings, a crane arm, the street and a tiny car, a cloud passing |
+| Hot-Air Balloon | 1.18.0 | 20 | 640 | 0.2 / 0.6 / 1 | 7 | sky bands, faint clouds, a distant balloon | the finish balloon at the top, two clouds | two big clouds, the hills and a tree |
+
+Travel grows with the steps, about 30–40 px a step (a unit test keeps it there, and within `MAX_TRAVEL`), so a
+short journey still shows its finish-end art (the canopy, the lighthouse, the antenna) near the finish.
 
 - **Where**: `src/journeys/scene.ts` (pure, unit-tested: which journeys have a scene, the layers, the shift, the
   settle, the motion rules), `src/journeys/journeySeen.ts` (the seen step), `src/screens/journeys/JourneyScene.tsx`
   (the layers and their motion), `src/screens/journeys/scenes/*.tsx` (each scene's art, one lazy chunk each, about
-  1.1–1.4 KB gzipped), `src/screens/journeys/journeyScene.css`. The journey screen itself is a lazy chunk too.
+  1.1–1.6 KB gzipped; `parts.tsx` holds the shared cloud), `src/screens/journeys/journeyScene.css`. The journey screen itself is a lazy chunk too.
 - **Layers**: far (slowest), mid and near (fastest), each an inline SVG group in a fixed backdrop behind the page
   (`position: fixed`, the large viewport's height, so no gap when a phone's browser bar slides away). The track's
   rows (stage label, numbered dot, cover, the reader's avatar) are real DOM rows over it and never move with it.
@@ -69,7 +80,7 @@ hub tile and the celebration are unchanged.
    returning that layer's SVG, every colour through `paint` / `ink`, positions through `at` (top/bottom % of the
    layer's height; things at the track's top end near the top of their layer, at the bottom end near its bottom).
    Mark looping pieces `scene-loop scene-loop--<kind>` (bob, bob-slow, drift, drift-back, drift-slow, rise,
-   rise-slow, sway, sway-back, glimmer, pass), at most 15.
+   rise-slow, sway, sway-back, glimmer, glimmer-slow, blink, fall, fall-slow, pass), at most 15.
 3. Add its lazy import to `ART` in `JourneyScene.tsx`, and its tokens (light and dark) to `src/theme.css`, plus a
    background colour for `.journey-scene--<id>` in `journeyScene.css` (shown while the art loads).
 4. Add it to `ART` in `src/journeys/__tests__/sceneArt.test.ts` (loops, tokens only, both theme values).

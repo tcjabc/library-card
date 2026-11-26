@@ -26,6 +26,18 @@
   background: var(--journey-scene-ocean-water-mid);
 }
 
+.journey-scene--redwood_tree {
+  background: var(--journey-scene-redwood-sky-mid);
+}
+
+.journey-scene--ocean_cliff {
+  background: var(--journey-scene-cliff-sky-mid);
+}
+
+.journey-scene--skyscraper {
+  background: var(--journey-scene-tower-sky-mid);
+}
+
 .journey-scene__layer {
   position: absolute;
   top: 0;
@@ -141,6 +153,22 @@
   animation: scene-glimmer var(--duration-scene-glimmer) ease-in-out infinite alternate;
 }
 
+.journey-scene--loops .scene-loop--glimmer-slow {
+  animation: scene-glimmer calc(var(--duration-scene-glimmer) * 1.6) ease-in-out infinite alternate;
+}
+
+.journey-scene--loops .scene-loop--blink {
+  animation: scene-blink var(--duration-scene-blink) steps(2, jump-none) infinite alternate;
+}
+
+.journey-scene--loops .scene-loop--fall {
+  animation: scene-fall var(--duration-scene-fall) linear infinite;
+}
+
+.journey-scene--loops .scene-loop--fall-slow {
+  animation: scene-fall calc(var(--duration-scene-fall) * 1.4) linear infinite;
+}
+
 .journey-scene--loops .scene-loop--pass {
   animation: scene-pass var(--duration-scene-pass) linear infinite;
 }
@@ -186,6 +214,29 @@
   }
   to {
     opacity: 1;
+  }
+}
+
+@keyframes scene-blink {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.2;
+  }
+}
+
+@keyframes scene-fall {
+  from {
+    opacity: 0;
+    transform: translate(0, 0) rotate(0deg);
+  }
+  15% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    transform: translate(var(--space-6), calc(var(--space-7) * 3)) rotate(200deg);
   }
 }
 

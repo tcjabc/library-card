@@ -28,10 +28,21 @@ import {
 } from '../scene';
 
 describe('scenes: which journeys have one', () => {
-  it('the two pilots, Hot-Air Balloon and Ocean Deep; every other journey keeps its plain track', () => {
-    expect(Object.keys(SCENES).sort()).toEqual(['hot_air_balloon', 'ocean_deep']);
+  it('five journeys have a scene (1.18.0: Hot-Air Balloon, Ocean Deep; 1.19.0: Redwood Tree, Ocean Cliff, Skyscraper); the others keep their plain track', () => {
+    expect(Object.keys(SCENES).sort()).toEqual(['hot_air_balloon', 'ocean_cliff', 'ocean_deep', 'redwood_tree', 'skyscraper']);
     for (const journey of JOURNEYS) expect(sceneFor(journey.id) !== null).toBe(journey.id in SCENES);
     expect(sceneFor('nope')).toBeNull();
+  });
+
+  it('each scene’s travel grows with its steps (about 30–40 px a step) and stays within MAX_TRAVEL', () => {
+    for (const journey of JOURNEYS) {
+      const config = sceneFor(journey.id);
+      if (!config) continue;
+      expect(config.travel).toBeLessThanOrEqual(MAX_TRAVEL);
+      expect(config.travel / journey.steps).toBeGreaterThanOrEqual(28);
+      expect(config.travel / journey.steps).toBeLessThanOrEqual(40);
+      for (const layer of SCENE_LAYERS) expect(config.factors[layer]).toBeLessThanOrEqual(MAX_FACTOR);
+    }
   });
 
   it('far layers move least and near ones most', () => {

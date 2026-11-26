@@ -3,15 +3,21 @@ import { createElement, type ComponentType } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import HotAirBalloonScene from '../../screens/journeys/scenes/HotAirBalloonScene';
+import OceanCliffScene from '../../screens/journeys/scenes/OceanCliffScene';
 import OceanDeepScene from '../../screens/journeys/scenes/OceanDeepScene';
+import RedwoodTreeScene from '../../screens/journeys/scenes/RedwoodTreeScene';
+import SkyscraperScene from '../../screens/journeys/scenes/SkyscraperScene';
 import { getJourney } from '../journeys';
 import { MAX_LOOPS, SCENES, SCENE_LAYERS, type SceneLayer } from '../scene';
 
-// The two pilot scenes' art (src/screens/journeys/scenes), rendered as markup (tests run in Node).
+// The scenes' art (src/screens/journeys/scenes), rendered as markup (tests run in Node).
 
 const ART: Record<string, ComponentType<{ layer: SceneLayer }>> = {
   hot_air_balloon: HotAirBalloonScene,
   ocean_deep: OceanDeepScene,
+  redwood_tree: RedwoodTreeScene,
+  ocean_cliff: OceanCliffScene,
+  skyscraper: SkyscraperScene,
 };
 
 const markup = (id: string) => SCENE_LAYERS.map((layer) => renderToStaticMarkup(createElement(ART[id], { layer }))).join('');
@@ -24,7 +30,7 @@ function themeTokens(): { light: Map<string, string>; dark: Map<string, string> 
   return { light: read(css.slice(0, darkAt)), dark: read(css.slice(darkAt)) };
 }
 
-describe('the pilot scenes', () => {
+describe('the journey scenes', () => {
   it('every journey with a scene config has its art, and the reverse', () => {
     expect(Object.keys(ART).sort()).toEqual(Object.keys(SCENES).sort());
   });

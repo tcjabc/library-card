@@ -125,6 +125,64 @@
   --journey-scene-ocean-chest: #8b5a2b;
   --journey-scene-ocean-chest-lid: #a9743f;
   --journey-scene-ocean-clasp: #f5c542;
+  /* Redwood Tree: a forest morning, the trunk and canopy, needles, ferns and the forest floor. */
+  --journey-scene-redwood-sky-high: #bfe3f2;
+  --journey-scene-redwood-sky-mid: #d3ecec;
+  --journey-scene-redwood-sky-low: #e2f1e4;
+  --journey-scene-redwood-hill-far: #8fb79a;
+  --journey-scene-redwood-hill-near: #6f9e7e;
+  --journey-scene-redwood-bird: #4a5a5a;
+  --journey-scene-redwood-trunk: #a0522d;
+  --journey-scene-redwood-bark: #c8774a;
+  --journey-scene-redwood-needles: #2f6b3a;
+  --journey-scene-redwood-needles-light: #4f8f4e;
+  --journey-scene-redwood-robin: #8a5a3a;
+  --journey-scene-redwood-beak: #f0a830;
+  --journey-scene-redwood-leaf: #d98a3a;
+  --journey-scene-redwood-canopy: #1f5a30;
+  --journey-scene-redwood-fern: #3f8f4a;
+  --journey-scene-redwood-floor: #6b4f34;
+  --journey-scene-redwood-floor-shade: #8a6a48;
+  /* Ocean Cliff: a warm sky over the sea, the rock face and its lighthouse, gulls, waves and foam. */
+  --journey-scene-cliff-sky-high: #e6f4fb;
+  --journey-scene-cliff-sky-mid: #c4e3f5;
+  --journey-scene-cliff-sky-low: #a6d3ee;
+  --journey-scene-cliff-sea-far: #5aa6d4;
+  --journey-scene-cliff-horizon: #eaf6fd;
+  --journey-scene-cliff-sail: #ffffff;
+  --journey-scene-cliff-boat: #8b5a2b;
+  --journey-scene-cliff-rock: #8c7f72;
+  --journey-scene-cliff-ledge: #a89a8b;
+  --journey-scene-cliff-grass: #6aa84f;
+  --journey-scene-cliff-lighthouse: #f8f9fa;
+  --journey-scene-cliff-lighthouse-band: #e03131;
+  --journey-scene-cliff-lighthouse-room: #495057;
+  --journey-scene-cliff-lamp: #ffd43b;
+  --journey-scene-cliff-gull: #495057;
+  --journey-scene-cliff-rock-near: #6e6358;
+  --journey-scene-cliff-foam: #ffffff;
+  --journey-scene-cliff-sea: #2f86c6;
+  /* Skyscraper: a city dawn, the glass tower and its windows, the antenna, the street below. */
+  --journey-scene-tower-sky-high: #9fd0f2;
+  --journey-scene-tower-sky-mid: #f6c9c9;
+  --journey-scene-tower-sky-low: #ffe0cc;
+  --journey-scene-tower-skyline-far: #9fb3c4;
+  --journey-scene-tower-skyline-near: #7f95a8;
+  --journey-scene-tower-trail: #ffffff;
+  --journey-scene-tower-glass: #5f7f9c;
+  --journey-scene-tower-window: #8fb2cc;
+  --journey-scene-tower-window-lit: #ffd86b;
+  --journey-scene-tower-antenna: #495057;
+  --journey-scene-tower-beacon: #e03131;
+  --journey-scene-tower-heli: #e8590c;
+  --journey-scene-tower-neighbour: #6c7f92;
+  --journey-scene-tower-neighbour-line: #8ea2b5;
+  --journey-scene-tower-crane: #f2b705;
+  --journey-scene-tower-crane-line: #8a6a00;
+  --journey-scene-tower-pavement: #b8b2a8;
+  --journey-scene-tower-street: #495057;
+  --journey-scene-tower-street-line: #f8f9fa;
+  --journey-scene-tower-car: #1c7ed6;
 
   /* Family Staircase: a colour per reader (picked from the reader id). */
   /* Eight clearly different hues, so siblings never look alike. */
@@ -307,6 +365,8 @@
   --duration-scene-sway: 6s;
   --duration-scene-glimmer: 7s;
   --duration-scene-pass: 48s;
+  --duration-scene-blink: 1.2s;
+  --duration-scene-fall: 9s;
 
   /* Layering */
   --z-sheet: 50;
@@ -473,6 +533,68 @@
     --journey-scene-ocean-chest: #6e4a2a;
     --journey-scene-ocean-chest-lid: #85603a;
     --journey-scene-ocean-clasp: #d9ad3a;
+    /* The new scene journeys' own colours on dark pages (still 4.5:1 with white text). */
+    --journey-redwood-tree: #2a7a3a;
+    --journey-ocean-cliff: #127e91;
+    --journey-skyscraper: #56606b;
+    /* Redwood Tree: a forest morning, the trunk and canopy, needles, ferns and the forest floor. */
+    --journey-scene-redwood-sky-high: #2c3a5a;
+    --journey-scene-redwood-sky-mid: #3a4a5e;
+    --journey-scene-redwood-sky-low: #4a5a5a;
+    --journey-scene-redwood-hill-far: #2f4a3e;
+    --journey-scene-redwood-hill-near: #263e33;
+    --journey-scene-redwood-bird: #c8cdd8;
+    --journey-scene-redwood-trunk: #7a4a30;
+    --journey-scene-redwood-bark: #94603e;
+    --journey-scene-redwood-needles: #1f4a2a;
+    --journey-scene-redwood-needles-light: #2f6338;
+    --journey-scene-redwood-robin: #a3735a;
+    --journey-scene-redwood-beak: #c9902c;
+    --journey-scene-redwood-leaf: #a8702e;
+    --journey-scene-redwood-canopy: #163f24;
+    --journey-scene-redwood-fern: #2c6638;
+    --journey-scene-redwood-floor: #3e2e20;
+    --journey-scene-redwood-floor-shade: #4e3a28;
+    /* Ocean Cliff: a warm sky over the sea, the rock face and its lighthouse, gulls, waves and foam. */
+    --journey-scene-cliff-sky-high: #2f3a6a;
+    --journey-scene-cliff-sky-mid: #3c4677;
+    --journey-scene-cliff-sky-low: #55507a;
+    --journey-scene-cliff-sea-far: #22476e;
+    --journey-scene-cliff-horizon: #6b88a8;
+    --journey-scene-cliff-sail: #c9cfe0;
+    --journey-scene-cliff-boat: #6e4a2a;
+    --journey-scene-cliff-rock: #4e4740;
+    --journey-scene-cliff-ledge: #6b625a;
+    --journey-scene-cliff-grass: #3f6e34;
+    --journey-scene-cliff-lighthouse: #d9dde6;
+    --journey-scene-cliff-lighthouse-band: #b8323a;
+    --journey-scene-cliff-lighthouse-room: #343a40;
+    --journey-scene-cliff-lamp: #ffd43b;
+    --journey-scene-cliff-gull: #ced4da;
+    --journey-scene-cliff-rock-near: #3c3631;
+    --journey-scene-cliff-foam: #b7c9dd;
+    --journey-scene-cliff-sea: #173f6b;
+    /* Skyscraper: a city dawn, the glass tower and its windows, the antenna, the street below. */
+    --journey-scene-tower-sky-high: #222a55;
+    --journey-scene-tower-sky-mid: #4a3f6e;
+    --journey-scene-tower-sky-low: #6b4f6e;
+    --journey-scene-tower-skyline-far: #2c3550;
+    --journey-scene-tower-skyline-near: #222a42;
+    --journey-scene-tower-trail: #9aa4c0;
+    --journey-scene-tower-glass: #2b3a52;
+    --journey-scene-tower-window: #b89a4a;
+    --journey-scene-tower-window-lit: #ffd86b;
+    --journey-scene-tower-antenna: #9aa3b5;
+    --journey-scene-tower-beacon: #ff4d4d;
+    --journey-scene-tower-heli: #c4581c;
+    --journey-scene-tower-neighbour: #1f2838;
+    --journey-scene-tower-neighbour-line: #34405a;
+    --journey-scene-tower-crane: #c9980a;
+    --journey-scene-tower-crane-line: #6e5500;
+    --journey-scene-tower-pavement: #4a4844;
+    --journey-scene-tower-street: #262a30;
+    --journey-scene-tower-street-line: #9aa0a8;
+    --journey-scene-tower-car: #2f6fb0;
     /* Clouds at dusk: tinted by the last of the light, shaded towards the evening. */
     --stack-cloud: #8c7c9f;
     --stack-cloud-shade: #5d5578;

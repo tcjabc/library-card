@@ -39,6 +39,9 @@ export const MAX_FACTOR = 1.5;
 export const SCENES: Partial<Record<JourneyId, SceneConfig>> = {
   hot_air_balloon: { travel: 640, factors: { far: 0.2, mid: 0.6, near: 1 } },
   ocean_deep: { travel: 200, factors: { far: 0.2, mid: 0.5, near: 1 } },
+  redwood_tree: { travel: 300, factors: { far: 0.2, mid: 0.6, near: 1 } },
+  ocean_cliff: { travel: 360, factors: { far: 0.2, mid: 0.6, near: 1 } },
+  skyscraper: { travel: 420, factors: { far: 0.2, mid: 0.6, near: 1 } },
 };
 
 export function sceneFor(id: string): SceneConfig | null {
