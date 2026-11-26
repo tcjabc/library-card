@@ -1,6 +1,7 @@
 /**
  * How much the canvas book stack draws each frame (pure, unit-tested): which books, how much
- * detail on their page edges, when the dev overlays redraw, and at what resolution.
+ * detail on their page edges, when the dev overlays redraw, how much decor (clouds), and at what
+ * resolution.
  */
 import type { ProjectedFace } from './stackProjection';
 
@@ -123,6 +124,71 @@ export function nextScale(current: number, averageFrameMs: number, frames: numbe
   return 1;
 }
 
+// ---- Decor, then resolution: the per-visit budget ----
+
+/** How much decor (clouds) the pile shows: all of it, about half, or none (the sky and ground stay). */
+export type Decor = 'none' | 'reduced' | 'full';
+/** Least first. */
+export const DECOR_LEVELS = ['none', 'reduced', 'full'] as const satisfies readonly Decor[];
+
+export function decorRank(decor: Decor): number {
+  return DECOR_LEVELS.indexOf(decor);
+}
+
+/** The lesser of two decor levels. */
+export function minDecor(a: Decor, b: Decor): Decor {
+  return decorRank(a) <= decorRank(b) ? a : b;
+}
+
+/** One level less decor (none stays none). */
+export function lowerDecor(decor: Decor): Decor {
+  return DECOR_LEVELS[Math.max(0, decorRank(decor) - 1)];
+}
+
+/** What the drawing may spend this visit: the decor and the canvas scale (both only ever go down). */
+export interface Budget {
+  decor: Decor;
+  scale: number;
+}
+
+/**
+ * The budget for the rest of the visit after a second of motion: unchanged unless the frames were
+ * slow (as nextScale decides); slow, decor goes down a level first (full → reduced → none), and
+ * only once it's at none does the resolution step down. Never back up. `current.decor` is the
+ * decor in effect (none when there's none to lose: clouds off, or the reader's own choice).
+ */
+export function nextBudget(current: Budget, averageFrameMs: number, frames: number = MIN_FRAMES_TO_DECIDE): Budget {
+  if (frames < MIN_FRAMES_TO_DECIDE || !(averageFrameMs > SLOW_FRAME_MS)) return current;
+  if (current.decor !== 'none') return { decor: lowerDecor(current.decor), scale: current.scale };
+  return { decor: 'none', scale: nextScale(current.scale, averageFrameMs, frames) };
+}
+
+/** Why the decor in effect is what it is: the device's setting, slow frames this visit, reduced motion, or the benchmark. */
+export type DecorWhy = 'setting' | 'slow' | 'motion' | 'fixed';
+
+/** Reduced motion shows at most this much decor. */
+export const REDUCED_MOTION_DECOR: Decor = 'reduced';
+
+/**
+ * The decor drawn: the least of the device's setting, this visit's cap (slow frames) and, with
+ * reduced motion, REDUCED_MOTION_DECOR; and why (the setting first when they tie).
+ */
+export function decorInEffect(setting: Decor, cap: Decor, reducedMotion: boolean): { decor: Decor; why: DecorWhy } {
+  const motion: Decor = reducedMotion ? REDUCED_MOTION_DECOR : 'full';
+  const decor = minDecor(setting, minDecor(cap, motion));
+  if (decor === setting) return { decor, why: 'setting' };
+  if (decor === motion && decorRank(cap) >= decorRank(motion)) return { decor, why: 'motion' };
+  return { decor, why: 'slow' };
+}
+
+/** Developer tools' "Pretend slow frames": each moving frame counts as at least this long (ms) for the budget. */
+export const PRETEND_SLOW_FRAME_MS = 40;
+
+/** The frame time the budget hears: the real one, or with "Pretend slow frames" at least PRETEND_SLOW_FRAME_MS. */
+export function budgetFrameMs(dt: number, pretendSlow: boolean): number {
+  return pretendSlow ? Math.max(dt, PRETEND_SLOW_FRAME_MS) : dt;
+}
+
 // ---- Benchmark overrides (developer tools) ----
 
 /**
@@ -142,4 +208,6 @@ export interface StackOverrides {
   twist: number;
   /** How many spine labels the cache keeps while benchmarking (enough for every book a run shows). */
   labelCache: number;
+  /** The decor drawn (clouds), whatever the setting, reduced motion or slow frames. */
+  decor: Decor;
 }

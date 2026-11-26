@@ -14,6 +14,10 @@ import { useStackGap, writeStackGap } from '../staircase/gapSetting';
 import { useStackShapes, writeStackShapes } from '../staircase/shapeSetting';
 import { useStackSky, writeStackSky } from '../staircase/skySetting';
 import { useStackGround, writeStackGround } from '../staircase/groundSetting';
+import { useStackClouds, writeStackClouds } from '../staircase/cloudsSetting';
+import { useStackDecor, writeStackDecor } from '../staircase/decorSetting';
+import { useStackSlow, writeStackSlow } from '../staircase/slowSetting';
+import { DECOR_LEVELS, type Decor } from '../staircase/drawBudget';
 import { coverReportLines, latestCoverReport, type CoverReport } from '../staircase/coverDiagnostics';
 import { AREA, STANDARD_DEPTH, STANDARD_WIDTH, STRENGTH, VARIETY, WIDTH_RANGE, ASPECT_RANGE } from '../staircase/bookShapes';
 import { GAP_UP_PX, GAP_DOWN_PX } from '../staircase/eyeGap';
@@ -86,6 +90,9 @@ export default function StackDevPage() {
   const coverShapes = useStackShapes();
   const sky = useStackSky();
   const ground = useStackGround();
+  const clouds = useStackClouds();
+  const decor = useStackDecor();
+  const slow = useStackSlow();
   const pretendCovers = usePretendCovers(covers);
   const items = useMemo(() => {
     const plain = fakeStackItems(entries, SEED);
@@ -127,7 +134,7 @@ export default function StackDevPage() {
   );
 
   // A new pile starts its counts afresh.
-  useEffect(() => reset(), [count, mode, twist, settle, raster, covers, gap, coverShapes, sky, ground, reset]);
+  useEffect(() => reset(), [count, mode, twist, settle, raster, covers, gap, coverShapes, sky, ground, clouds, decor, slow, reset]);
   const label = fmt(t.stackLabel, { count: count.toLocaleString() });
 
   return (
@@ -162,6 +169,9 @@ export default function StackDevPage() {
             gap={gap}
             sky={sky}
             ground={ground}
+            clouds={clouds}
+            decor={decor}
+            pretendSlow={slow}
             drop={drop}
             onLanding={landed}
           />
@@ -212,6 +222,12 @@ export default function StackDevPage() {
           onSky={writeStackSky}
           ground={ground}
           onGround={writeStackGround}
+          clouds={clouds}
+          onClouds={writeStackClouds}
+          decor={decor}
+          onDecor={writeStackDecor}
+          slow={slow}
+          onSlow={writeStackSlow}
           onReplay={replay}
           readout={meter.readout}
           onReset={reset}
@@ -247,6 +263,9 @@ interface Readout {
   /** The sky's t at the top and bottom of the view at the latest frame (null: no sky drawn), and whether ground was drawn. */
   sky: { top: number; bottom: number } | null;
   ground: boolean;
+  /** Clouds drawn at the latest frame, and the decor then (null before the first frame). */
+  clouds: number;
+  decor: DrawStats['decor'] | null;
   dropped: number;
   /** null where the browser can't report long tasks. */
   longTasks: number | null;
@@ -261,7 +280,7 @@ function supportsLongTasks(): boolean {
 }
 
 function emptyReadout(): Readout {
-  return { fps: null, renders: null, draw: null, faces: null, ops: null, canvas: null, raster: null, breakdown: null, rebuilds: 0, coverPictures: null, sky: null, ground: false, dropped: 0, longTasks: supportsLongTasks() ? 0 : null, longTaskMs: 0, nodes: 0, viewport: '', dpr: 1 };
+  return { fps: null, renders: null, draw: null, faces: null, ops: null, canvas: null, raster: null, breakdown: null, rebuilds: 0, coverPictures: null, sky: null, ground: false, clouds: 0, decor: null, dropped: 0, longTasks: supportsLongTasks() ? 0 : null, longTaskMs: 0, nodes: 0, viewport: '', dpr: 1 };
 }
 
 /** Times every frame while the pile is scrolling, counts late frames and long tasks. */
@@ -277,6 +296,8 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
     coverPictures: null as Readout['coverPictures'],
     sky: null as Readout['sky'],
     ground: false,
+    clouds: 0,
+    decor: null as Readout['decor'],
     lastBreakdown: null as Readout['breakdown'],
     last: 0,
     /** bookRenders() at the last frame. */
@@ -365,6 +386,8 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
         coverPictures: s.coverPictures,
         sky: s.sky,
         ground: s.ground,
+        clouds: s.clouds,
+        decor: s.decor,
         dropped: s.dropped,
         longTasks: longTasks ? s.longTasks : null,
         longTaskMs: Math.round(s.longTaskMs),
@@ -400,6 +423,8 @@ function useScrollMeter(scroller: RefObject<HTMLDivElement | null>) {
     s.coverPictures = stats.covers ?? null;
     s.sky = stats.sky;
     s.ground = stats.ground;
+    s.clouds = stats.clouds;
+    s.decor = stats.decor;
     if (stats.raster !== undefined) s.flushes.push({ at: now, ms: stats.raster });
     if (now <= s.scrollingUntil + FRAME_MS) {
       s.draws.push({
@@ -551,6 +576,8 @@ function readoutLines(
   coverShapes: boolean,
   sky: boolean,
   ground: boolean,
+  clouds: boolean,
+  slow: boolean,
 ): [string, string][] {
   const canvas = mode === 'canvas';
   const only = t.measureDrawCanvasOnly;
@@ -579,6 +606,22 @@ function readoutLines(
           : fmt(t.measureSkyTValue, { top: readout.sky.top.toFixed(3), bottom: readout.sky.bottom.toFixed(3) }),
     ],
     [t.measureGround, canvas ? (ground ? (readout.ground ? t.measureGroundShown : t.measureGroundAway) : t.measureOff) : t.measureDrawCanvasOnly],
+    [t.measureClouds, canvas ? (clouds ? t.measureOn : t.measureOff) : t.measureDrawCanvasOnly],
+    [
+      t.measureDecorDrawn,
+      !canvas
+        ? t.measureDrawCanvasOnly
+        : readout.decor === null
+          ? t.measureFpsNone
+          : fmt(t.measureDecorDrawnValue, {
+              drawn: t.decorLevel[readout.decor.drawn],
+              why: t.decorWhy[readout.decor.why],
+              setting: t.decorLevel[readout.decor.setting],
+              cap: t.decorLevel[readout.decor.cap],
+            }),
+    ],
+    [t.measureCloudsDrawn, canvas ? String(readout.clouds) : t.measureDrawCanvasOnly],
+    [t.measureSlow, canvas ? (slow ? t.measureOn : t.measureOff) : t.measureDrawCanvasOnly],
     [
       t.measureShapeConstants,
       canvas
@@ -720,6 +763,13 @@ interface MeasurePanelProps {
   onSky: (on: boolean) => void;
   ground: boolean;
   onGround: (on: boolean) => void;
+  /** "Clouds", the decor level and "Pretend slow frames": this device's settings, also used by the Family Staircase. */
+  clouds: boolean;
+  onClouds: (on: boolean) => void;
+  decor: Decor;
+  onDecor: (decor: Decor) => void;
+  slow: boolean;
+  onSlow: (on: boolean) => void;
   /** "Replay new-book drop": the newest books fall onto the pile here again. */
   onReplay: (count: number) => void;
   readout: Readout;
@@ -751,6 +801,12 @@ function MeasurePanel({
   onSky,
   ground,
   onGround,
+  clouds,
+  onClouds,
+  decor,
+  onDecor,
+  slow,
+  onSlow,
   onReplay,
   readout,
   onReset,
@@ -761,7 +817,10 @@ function MeasurePanel({
   const shapesNoteId = useId();
   const skyNoteId = useId();
   const groundNoteId = useId();
-  const lines = readoutLines(readout, count, mode, twist, settle, raster, covers, gap, coverShapes, sky, ground);
+  const cloudsNoteId = useId();
+  const decorNoteId = useId();
+  const slowNoteId = useId();
+  const lines = readoutLines(readout, count, mode, twist, settle, raster, covers, gap, coverShapes, sky, ground, clouds, slow);
 
   const copy = async () => {
     const parts = [version, t.stackTitle, ...lines.map(([label, value]) => `${label}: ${value}`)];
@@ -842,6 +901,28 @@ function MeasurePanel({
           </button>
           <p id={groundNoteId} className="small muted">
             {t.measureGroundNote}
+          </p>
+          <button type="button" className="chip" aria-pressed={clouds} aria-describedby={cloudsNoteId} onClick={() => onClouds(!clouds)}>
+            {t.measureClouds}
+          </button>
+          <p id={cloudsNoteId} className="small muted">
+            {t.measureCloudsNote}
+          </p>
+          <div className="chip-row" role="group" aria-label={t.measureDecor} aria-describedby={decorNoteId}>
+            {[...DECOR_LEVELS].reverse().map((level) => (
+              <button key={level} type="button" className="chip" aria-pressed={decor === level} onClick={() => onDecor(level)}>
+                {t.decorLevel[level]}
+              </button>
+            ))}
+          </div>
+          <p id={decorNoteId} className="small muted">
+            {t.measureDecorNote}
+          </p>
+          <button type="button" className="chip" aria-pressed={slow} aria-describedby={slowNoteId} onClick={() => onSlow(!slow)}>
+            {t.measureSlow}
+          </button>
+          <p id={slowNoteId} className="small muted">
+            {t.measureSlowNote}
           </p>
         </div>
       )}

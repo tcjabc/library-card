@@ -131,6 +131,9 @@
   /* Month lines over the scenery: whichever of the two contrasts more with the sky or ground behind. */
   --stack-line-on-light: #1f2430;
   --stack-line-on-dark: #f8f9fa;
+  /* Backdrop clouds (clouds.ts): soft flat puffs, lit from above with a shaded rim underneath. */
+  --stack-cloud: #ffffff;
+  --stack-cloud-shade: #d3e2ef;
 
   /* Overlays */
   --color-backdrop: rgba(20, 24, 33, 0.55);
@@ -383,6 +386,9 @@
     --stack-ground-shadow: rgba(0, 0, 0, 0.45);
     --stack-line-on-light: #141821;
     --stack-line-on-dark: #eef0f5;
+    /* Clouds at dusk: tinted by the last of the light, shaded towards the evening. */
+    --stack-cloud: #8c7c9f;
+    --stack-cloud-shade: #5d5578;
     --color-toast: #eef0f5;
     --color-on-toast: #141821;
     --color-danger: #ff6b6b;

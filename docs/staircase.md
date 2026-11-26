@@ -98,6 +98,66 @@ Nothing changes in the data or sync.
   sky's t at the top and bottom of the view and whether ground is in view; its pretend piles include 1 and 11
   books; a benchmark result says whether the sky and the ground were on.
 
+## Clouds and decor level
+
+Backdrop clouds behind the pile (`src/staircase/clouds.ts`, pure and unit-tested; drawn by `CanvasStack.tsx`).
+Foreground clouds, a Settings control and the grown-ups' decor setting come in 1.17.0.
+
+- **Where they are drawn**: after the sky and before the ground, the books and everything else, so a book always
+  covers a cloud and the meadow hides any cloud behind the horizon (no clipping needed). Only with the sky on.
+- **Sprites**: six flat-bottomed puff shapes (`CLOUD_SHAPES`), each drawn once to a small offscreen canvas at the
+  current scale in `--stack-cloud`, over a slightly lower copy in `--stack-cloud-shade` (a shaded rim underneath).
+  They're made the first time a cloud is drawn and again after a resolution step or a colour-scheme change, like
+  the labels. Nothing is ever read back (pixelGuard).
+- **Seeding**: the sky is cut into altitude cells of `CLOUD_CELL_BOOKS` (18) books. Each cell has 0–2 clouds
+  (altitude, across, width, shape, parallax factor) from a hash of the household id, the layer (`backdrop`) and the
+  cell, so clouds never move as the pile grows, between visits or between devices. None below `CLOUD_MIN_ALT`
+  (3 books); above sky t `CLOUD_THIN_FROM` (0.8, about 250 books) they thin out, to none at t 1 (1,000 books,
+  space).
+- **Parallax**: each cloud moves its own factor in `PARALLAX` (0.25–0.35) of the pile's scroll, as if far away:
+  on screen it's drawn that fraction of the way from the eye line to where the world puts its altitude
+  (`cloudBaseY`), so it sits at the eye line when the camera's altitude is its own. Nearer clouds (bigger factors)
+  tend to be bigger and a little stronger. Scroll-driven only: clouds change only when the camera or a drop draws
+  a frame (no idle loop, no timers).
+- **How many**: at most `MAX_CLOUDS` a frame (full 5, reduced 3, none 0). When more are in view, those nearest the
+  middle of the view are drawn, so any that wait for room do it at the edges. With decor none, the clouds off, or
+  no cloud cell in view, no cloud work is done in the frame.
+- **The eye line**: a cloud crossing the eye-line band (the eye line ± `eyeLineReach` of the biggest book, as the
+  book sheet's half state uses) fades to `EYE_ALPHA` (0.2), easing back over `EYE_FADE_PX` (32 px) either side, a
+  cheap check per cloud per frame. The spine title, the book sheet's edge and the markers there stay calm.
+- **Dark theme**: dusk-tinted clouds (the tokens' dark values).
+- **Month lines over clouds**: a line crossing a cloud takes the ink whose worst contrast with the sky and the
+  cloud (lit and shade, at the cloud's strength) is better (`lineStyle`). If even that is under 3:1 (in the light
+  theme, a white cloud high up in the deep blue sky, where neither ink suits both), the line gets a casing in the
+  other ink under its dashes. Checked for every sky colour in both themes by a unit test. Flags and month labels
+  keep their own chips, so a cloud never touches their text's contrast.
+
+### Decor level and the drop-out rule
+
+- **The levels** (`Decor` in `drawBudget.ts`): full (up to five backdrop clouds), reduced (about half: the "core"
+  clouds, up to three), none (no clouds; the sky and ground stay). The device's level is localStorage
+  `library-card:stack-decor` (full unless chosen, never synced, not in backups, cleared by "Reset this device").
+  In 1.16.0 it's set only on the developer tools' book stack page.
+- **The drop-out rule** (`nextBudget({ decor, scale }, averageFrameMs, frames)`): after each second of motion,
+  slow frames (over 22 ms on average, at least 30 frames) lower the decor one level first, full → reduced → none,
+  and only once it's at none does the resolution step down as before (2 → 1.5 → 1.25 → 1). Never back up. Like the
+  resolution cap it's per visit, never saved. With the clouds or the sky off there's no decor to lose, so the
+  resolution steps down at once.
+- **Decor in effect**: the least of the setting, this visit's cap and, with reduced motion, reduced
+  (`decorInEffect`, which also says why).
+- **Reduced motion**: clouds move 1:1 with the world (no parallax), decor at most reduced, and the eye-line fade is
+  a step rather than a ramp.
+- **Benchmark**: `StackOverrides.decor` fixes the decor while it runs (the device's level); results say whether the
+  clouds were on and the decor level.
+
+### Developer tools
+
+Developer tools → Book stack: "Clouds" (on unless switched off, `library-card:stack-clouds`), the decor level
+(Full / Reduced / None) and "Pretend slow frames" (off unless switched on, `library-card:stack-slow`: every
+moving frame counts as at least `PRETEND_SLOW_FRAME_MS`, 40 ms, for the budget only, so the drop-out can be seen on
+a fast device). All three apply on the Family Staircase on this device too. The readout shows the decor drawn and
+why (the setting, this visit's cap, reduced motion), and the clouds drawn at the latest frame.
+
 ## Book sizes from the covers
 
 Books differ in page size like real books: tall picture books, square books and wide landscape books. Code:

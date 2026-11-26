@@ -172,6 +172,21 @@ export function lineInk(behind: Rgba, onLight: Rgba, onDark: Rgba): 'light' | 'd
   return contrast(onLight, behind) >= contrast(onDark, behind) ? 'light' : 'dark';
 }
 
+/** A month line needs at least this contrast with everything behind it (non-text, WCAG 1.4.11). */
+export const LINE_CONTRAST = 3;
+
+/**
+ * A month line's ink over several colours at once (the sky and a cloud crossing it): whichever
+ * ink's worst contrast is better, and whether even that falls short of LINE_CONTRAST, so the line
+ * needs a casing in the other ink under its dashes.
+ */
+export function lineStyle(behind: readonly Rgba[], onLight: Rgba, onDark: Rgba): { ink: 'light' | 'dark'; cased: boolean } {
+  const worst = (ink: Rgba) => Math.min(...behind.map((b) => contrast(ink, b)));
+  const light = worst(onLight);
+  const dark = worst(onDark);
+  return light >= dark ? { ink: 'light', cased: light < LINE_CONTRAST } : { ink: 'dark', cased: dark < LINE_CONTRAST };
+}
+
 // ---- The ground ----
 
 /**

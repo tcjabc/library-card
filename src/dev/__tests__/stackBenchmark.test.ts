@@ -71,8 +71,10 @@ describe('benchConfigs', () => {
       settle: false,
       twist: TWIST_DEG,
       labelCache: benchLabelCache(),
+      decor: 'full',
     });
-    expect(configs.map(overridesFor).every((o) => o.adaptive === false)).toBe(true);
+    expect(overridesFor(configs[5], 'reduced').decor).toBe('reduced');
+    expect(configs.map((c) => overridesFor(c)).every((o) => o.adaptive === false)).toBe(true);
     expect(RESTORED).toBeNull();
   });
 

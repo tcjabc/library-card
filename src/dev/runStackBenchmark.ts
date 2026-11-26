@@ -9,6 +9,8 @@ import { readStackCovers } from '../staircase/coverSetting';
 import { readStackGap } from '../staircase/gapSetting';
 import { readStackGround } from '../staircase/groundSetting';
 import { readStackSky } from '../staircase/skySetting';
+import { readStackClouds } from '../staircase/cloudsSetting';
+import { readStackDecor } from '../staircase/decorSetting';
 import { readStackShapes } from '../staircase/shapeSetting';
 import { addBreakdown, breakdownAverages, emptyBreakdown } from './frameStats';
 import {
@@ -185,7 +187,7 @@ async function runConfig(bench: StackBench, config: BenchConfig, isCancelled: ()
   const check = () => {
     if (isCancelled()) throw new Cancelled();
   };
-  bench.setOverrides(overridesFor(config));
+  bench.setOverrides(overridesFor(config, readStackDecor()));
   bench.jumpTo(0);
   bench.clearLabels();
   if (config.labels === 'prewarmed') {
@@ -286,6 +288,8 @@ export async function runStackBenchmark({ bench, version, onProgress, isCancelle
     shapes: readStackShapes(),
     sky: readStackSky(),
     ground: readStackGround(),
+    clouds: readStackClouds(),
+    decor: readStackDecor(),
   };
   const wake = await requestWakeLock();
   try {

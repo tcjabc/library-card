@@ -58,7 +58,7 @@ import {
   groundShadowFootprint,
   groundSize,
   horizonY,
-  lineInk,
+  lineStyle,
   mix,
   parseColour,
   shadowInView,
@@ -70,15 +70,29 @@ import {
 } from './scenery';
 import { flushForTiming, markTainted } from './pixelGuard';
 import {
+  CLOUD_ASPECT,
+  CLOUD_BAR,
+  CLOUD_BASE,
+  CLOUD_SHADE_RISE,
+  CLOUD_SHAPES,
+  CLOUD_WIDTH,
+  placeClouds,
+  type PlacedCloud,
+} from './clouds';
+import {
   DECIDE_AFTER_MS,
   FAN_CAP,
+  budgetFrameMs,
+  decorInEffect,
   faceSpan,
   faceThickness,
   insetDue,
-  nextScale,
+  nextBudget,
   pageDetail,
   tagChanged,
   visibleRange,
+  type Decor,
+  type DecorWhy,
   type InsetState,
   type StackOverrides,
 } from './drawBudget';
@@ -90,6 +104,7 @@ import {
   cameraYaw,
   faceTransform,
   eyeLineBooks,
+  eyeLineReach,
   fannedBook,
   pileCentres,
   projectBook,
@@ -132,6 +147,15 @@ import './canvasStack.css';
  * sky never changes as it grows); the ground is anchored to the world, moving 1:1 with the base
  * book (its gap lift included) and scrolling away as the camera climbs. Colours come from the
  * --stack-* tokens, read again when the colour scheme changes while the pile is open.
+ *
+ * Clouds (`clouds`, `decor`, clouds.ts): backdrop clouds painted after the sky and before the
+ * ground (which hides any behind the horizon) and the books, never in front of a book: seeded by
+ * the household and altitude cell, so they never move as the pile grows; each moves 0.25–0.35 of
+ * the scroll (1:1 with reduced motion), only when a frame is drawn anyway; at most five a frame;
+ * faded where they cross the eye-line band. Their sprites are drawn once per resolution, as the
+ * labels are. The decor drawn is the least of the device's setting, this visit's cap and (with
+ * reduced motion) reduced: slow frames lower the decor first (full → reduced → none), and only
+ * then the resolution.
  *
  * Markers (stackItems.ts): a dashed line under the first book of each month with its label at
  * the right, and flags at the left for book numbers (#1, 10, 50, 100, every 100). Only those by
@@ -210,6 +234,10 @@ export interface DrawStats {
   sky: { top: number; bottom: number } | null;
   /** Whether any ground was drawn this frame. */
   ground: boolean;
+  /** Backdrop clouds drawn this frame. */
+  clouds: number;
+  /** The decor: the device's setting, this visit's cap (slow frames), what's drawn, and why. */
+  decor: { setting: Decor; cap: Decor; drawn: Decor; why: DecorWhy };
 }
 
 /** New books to greet: `count` of the newest fall, or are highlighted. */
@@ -289,6 +317,12 @@ export interface CanvasStackProps {
   sky?: boolean;
   /** The meadow the pile stands on, its horizon and the base book's shadow (scenery.ts). */
   ground?: boolean;
+  /** Backdrop clouds in the sky (clouds.ts; with the sky only). */
+  clouds?: boolean;
+  /** The decor level (clouds) this device chose; what's drawn may be less (slow frames, reduced motion). */
+  decor?: Decor;
+  /** Developer tools' "Pretend slow frames": the budget hears every moving frame as slow (drawBudget.budgetFrameMs). */
+  pretendSlow?: boolean;
   /** New books to greet (dropMotion.ts): the newest `count` fall onto the pile, or show with a brief outline. A new `id` starts one. */
   drop?: StackDrop | null;
   /** Books arriving at the top while the camera follows the newest fall too (highlighted with reduced motion). */
@@ -323,6 +357,8 @@ const INSET_SPAN = Math.hypot(Math.max(...BOOK_WIDTHS), Math.max(...BOOK_DEPTHS)
 
 /** Canvas drawing calls this frame (fills, strokes, clears, drawImage), for the panel. */
 let ops = 0;
+/** A frame without clouds (shared, never changed). */
+const NO_CLOUDS: PlacedCloud[] = [];
 
 /** The book tokens from theme.css, read once from the page. */
 interface BookTheme {
@@ -396,6 +432,9 @@ interface SceneryTheme {
   lineOnLight: Rgba | null;
   lineOnDark: Rgba | null;
   background: Rgba | null;
+  /** The clouds' lit colour and their shade, or null (no clouds). */
+  cloud: Rgba | null;
+  cloudShade: Rgba | null;
 }
 
 function readScenery(v: (name: string) => string): SceneryTheme {
@@ -412,6 +451,8 @@ function readScenery(v: (name: string) => string): SceneryTheme {
     lineOnLight: colour('--stack-line-on-light'),
     lineOnDark: colour('--stack-line-on-dark'),
     background: colour('--color-bg'),
+    cloud: colour('--stack-cloud'),
+    cloudShade: colour('--stack-cloud-shade'),
   };
 }
 
@@ -612,6 +653,56 @@ function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: num
   ctx.closePath();
 }
 
+/** The cloud sprites: one canvas (one texture), a cell per shape, each `cell` backing px tall, `stride` apart. */
+interface CloudAtlas {
+  canvas: HTMLCanvasElement;
+  width: number;
+  cell: number;
+  stride: number;
+}
+
+/**
+ * The cloud shapes as sprites in one atlas, CLOUD_WIDTH[1] wide at `scale`: each shape's puffs
+ * and base bar in the shade, then again a little higher in the lit colour, so a shaded rim shows
+ * underneath, cut flat at the base. Drawn once per resolution and theme; never read back.
+ */
+function renderCloudAtlas(scale: number, lit: string, shade: string): CloudAtlas {
+  const width = CLOUD_WIDTH[1];
+  const canvas = document.createElement('canvas');
+  const cell = backingSize(width * CLOUD_ASPECT, scale);
+  // A clear row between cells, so a scaled draw never picks up its neighbour's edge.
+  const stride = cell + 2;
+  canvas.width = backingSize(width, scale);
+  canvas.height = stride * CLOUD_SHAPES.length;
+  const atlas = { canvas, width: canvas.width, cell, stride };
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return atlas;
+  CLOUD_SHAPES.forEach((shape, k) => {
+    ctx.save();
+    // In sprite widths: the shapes' own units.
+    ctx.setTransform(scale * width, 0, 0, scale * width, 0, k * stride);
+    ctx.beginPath();
+    ctx.rect(0, 0, 1, CLOUD_BASE);
+    ctx.clip();
+    const first = shape[0];
+    const last = shape[shape.length - 1];
+    const fill = (colour: string, rise: number, grow: number) => {
+      ctx.beginPath();
+      ctx.rect(first.x, CLOUD_BASE - CLOUD_BAR - rise, last.x - first.x, CLOUD_BAR);
+      for (const p of shape) {
+        ctx.moveTo(p.x + p.r * grow, p.y - rise);
+        ctx.arc(p.x, p.y - rise, p.r * grow, 0, Math.PI * 2);
+      }
+      ctx.fillStyle = colour;
+      ctx.fill();
+    };
+    fill(shade, 0, 1);
+    fill(lit, CLOUD_SHADE_RISE, 0.97);
+    ctx.restore();
+  });
+  return atlas;
+}
+
 /** A marker's label: the parts side by side on one baseline, on a rounded plate. */
 function renderSprite(parts: readonly SpritePart[], fill: string, ink: string, edge: string | null, theme: BookTheme, scale: number): Sprite {
   const canvas = document.createElement('canvas');
@@ -676,6 +767,8 @@ interface Paint {
   /** The meadow from the horizon (0) to the contact line, and the haze above the horizon (CSS px), or null without ground. */
   ground: CanvasGradient | null;
   haze: CanvasGradient | null;
+  /** The cloud sprites (one atlas) at this scale, made the first time a cloud is drawn. */
+  clouds: CloudAtlas | null;
 }
 
 /** The scenery's gradients for this theme (rebuilt with the paint when the scale or the colours change). */
@@ -1043,6 +1136,9 @@ function CanvasStack({
   gap = false,
   sky = false,
   ground = false,
+  clouds = false,
+  decor = 'full',
+  pretendSlow = false,
   drop = null,
   liveDrops = false,
   onLanding,
@@ -1090,7 +1186,7 @@ function CanvasStack({
   const tagBook = useRef<HTMLSpanElement | null>(null);
   const tagTurned = useRef<HTMLSpanElement | null>(null);
   const size = useRef<Size>({ width: 0, height: 0, scale: 1, inset: 0 });
-  const paint = useRef<Paint>({ pages: new Map(), coverShade: null, scale: 0, sky: null, ground: null, haze: null });
+  const paint = useRef<Paint>({ pages: new Map(), coverShade: null, scale: 0, sky: null, ground: null, haze: null, clouds: null });
   /** This frame's projected books, by offset from the centre book minus FAN_CAP (reused every frame). */
   const scratch = useRef<(ProjectedBook | null)[]>(Array.from({ length: 2 * FAN_CAP + 1 }, () => null));
   /** This frame's book shapes (cover shapes easing in), by the same offset (reused every frame). */
@@ -1117,6 +1213,10 @@ function CanvasStack({
     motionMs: 0,
     /** The resolution never goes back above this once stepped down (this visit). */
     scaleCap: Infinity,
+    /** Nor the decor (clouds) above this: slow frames lower it first (drawBudget.nextBudget). */
+    decorCap: 'full' as Decor,
+    /** The budget's time for the moving frames since the last decision (ms; "Pretend slow frames" makes it more). */
+    motionCost: 0,
     tag: null as { step: number; degrees: number } | null,
     inset: null as InsetState | null,
     /** The book in the middle at the last frame (for onCentre), -1 before the first. */
@@ -1129,7 +1229,7 @@ function CanvasStack({
     rebuilds: 0,
     /** The benchmark's fixed set-up, and what to go back to afterwards. */
     overrides: null as StackOverrides | null,
-    saved: null as { scale: number; scaleCap: number; scrollTop: number } | null,
+    saved: null as { scale: number; scaleCap: number; decorCap: Decor; scrollTop: number } | null,
     listener: null as ((stats: DrawStats) => void) | null,
     /** Drawing is paused (the pile is covered); `missed`: a frame was skipped meanwhile. */
     paused,
@@ -1164,6 +1264,10 @@ function CanvasStack({
     gap,
     sky,
     ground,
+    clouds,
+    decor,
+    pretendSlow,
+    seed,
     settle,
     describeCentre,
     measureRaster,
@@ -1187,6 +1291,10 @@ function CanvasStack({
       gap,
       sky,
       ground,
+      clouds,
+      decor,
+      pretendSlow,
+      seed,
       settle,
       describeCentre,
       measureRaster,
@@ -1243,7 +1351,7 @@ function CanvasStack({
         const coverShade = ctx.createLinearGradient(0, 0, 0, 1);
         coverShade.addColorStop(0.6, 'transparent');
         coverShade.addColorStop(1, theme.shade);
-        paint.current = { pages: new Map(), coverShade, scale, ...sceneryPaint(ctx, theme) };
+        paint.current = { pages: new Map(), coverShade, scale, ...sceneryPaint(ctx, theme), clouds: null };
       }
 
       const s = c.shown;
@@ -1269,6 +1377,33 @@ function CanvasStack({
         ctx.fillStyle = theme.background;
         ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
         ops += 1;
+      }
+      // The backdrop clouds (clouds.ts), behind the ground so the meadow hides any behind the horizon.
+      const decorNow = o ? { decor: o.decor, why: 'fixed' as DecorWhy } : decorInEffect(scene.current.decor, c.decorCap, c.reduced);
+      let clouds: PlacedCloud[] = NO_CLOUDS;
+      if (skyNow && scene.current.clouds && decorNow.decor !== 'none' && sc.cloud && sc.cloudShade) {
+        clouds = placeClouds({
+          seed: scene.current.seed,
+          width,
+          height,
+          horizon,
+          ground: groundNow,
+          decor: decorNow.decor,
+          reduced: c.reduced,
+          eyeReach: eyeLineReach(scene.current.coverShapes ? BIGGEST_SHAPED_BOOK : BIGGEST_BOOK, theme.gutter),
+        });
+        if (clouds.length > 0) {
+          const lit = cssColour(sc.cloud);
+          const shade = cssColour(sc.cloudShade);
+          const atlas = (paint.current.clouds ??= renderCloudAtlas(scale, lit, shade));
+          ctx.setTransform(scale, 0, 0, scale, 0, 0);
+          for (const cloud of clouds) {
+            ctx.globalAlpha = cloud.alpha;
+            ctx.drawImage(atlas.canvas, 0, cloud.shape * atlas.stride, atlas.width, atlas.cell, cloud.x, cloud.y, cloud.width, cloud.height);
+            ops += 1;
+          }
+          ctx.globalAlpha = 1;
+        }
       }
       if (groundNow && paint.current.ground) {
         // From the horizon down: the haze above its line, the meadow (hazier far off), the line.
@@ -1521,13 +1656,39 @@ function CanvasStack({
             ctx.moveTo(theme.gutter, at);
             ctx.lineTo(width - theme.gutter, at);
           };
-          // Over the scenery each line takes whichever ink contrasts more with what's behind it.
-          const inkOf = (y: number): string => {
+          // Over the scenery each line takes whichever ink contrasts more with what's behind it
+          // (the sky or ground, and any cloud it crosses); where neither ink is clear of a cloud,
+          // the line gets a casing in the other ink under its dashes.
+          const casings: string[] = [];
+          const inkOf = (y: number, k: number): string => {
             const back = behind(y);
+            casings[k] = '';
             if (!back || !sc.lineOnLight || !sc.lineOnDark) return theme.insetLine;
-            return cssColour(lineInk(back, sc.lineOnLight, sc.lineOnDark) === 'light' ? sc.lineOnLight : sc.lineOnDark);
+            const under = [back];
+            for (const cloud of clouds) {
+              if (y < cloud.y || y > cloud.y + CLOUD_BASE * cloud.width || !sc.cloud || !sc.cloudShade) continue;
+              under.push(mix(back, sc.cloud, cloud.alpha), mix(back, sc.cloudShade, cloud.alpha));
+            }
+            const style = lineStyle(under, sc.lineOnLight, sc.lineOnDark);
+            const [ink, other] = style.ink === 'light' ? [sc.lineOnLight, sc.lineOnDark] : [sc.lineOnDark, sc.lineOnLight];
+            if (style.cased) casings[k] = cssColour(other);
+            return cssColour(ink);
           };
           const inks = marks.lines.map(inkOf);
+          if (casings.some(Boolean)) {
+            ctx.lineWidth = theme.borderThin + 2 * theme.borderThin;
+            marks.lines.forEach((y, k) => {
+              if (!casings[k]) return;
+              ctx.globalAlpha = marks.lineAlpha[k];
+              ctx.strokeStyle = casings[k];
+              ctx.beginPath();
+              line(y);
+              ctx.stroke();
+              ops += 1;
+            });
+            ctx.globalAlpha = 1;
+            ctx.lineWidth = theme.borderThin;
+          }
           for (const ink of new Set(inks)) {
             ctx.strokeStyle = ink;
             ctx.beginPath();
@@ -1632,6 +1793,8 @@ function CanvasStack({
         covers: onDraw || c.listener ? art.current?.stats() : undefined,
         sky: skyNow ? { top: skyNow.tTop, bottom: skyNow.tBottom } : null,
         ground: groundNow,
+        clouds: clouds.length,
+        decor: { setting: scene.current.decor, cap: c.decorCap, drawn: decorNow.decor, why: decorNow.why },
       };
       c.cameraMs = 0;
       onDraw?.(stats);
@@ -1659,16 +1822,22 @@ function CanvasStack({
       c.shown = next.shown;
       // Slow frames for a second of motion: step the resolution down (never back up). Not while
       // "Measure raster" is on: its read-backs slow the canvas themselves.
+      // Decor (clouds) goes first, then the resolution (drawBudget.nextBudget).
       if (moving && !scene.current.measureRaster && !c.overrides) {
         c.motionFrames += 1;
         c.motionMs += dt;
+        c.motionCost += budgetFrameMs(dt, scene.current.pretendSlow);
         if (c.motionMs >= DECIDE_AFTER_MS) {
-          const scale = nextScale(size.current.scale, c.motionMs / c.motionFrames, c.motionFrames);
+          // Only decor that's drawn can be lost: none with the clouds or the sky off.
+          const shown = scene.current.clouds && scene.current.sky ? decorInEffect(scene.current.decor, c.decorCap, c.reduced).decor : 'none';
+          const next = nextBudget({ decor: shown, scale: size.current.scale }, c.motionCost / c.motionFrames, c.motionFrames);
           c.motionFrames = 0;
           c.motionMs = 0;
-          if (scale < size.current.scale) {
-            c.scaleCap = scale;
-            applyScale(scale);
+          c.motionCost = 0;
+          if (next.decor !== shown) c.decorCap = next.decor;
+          if (next.scale < size.current.scale) {
+            c.scaleCap = next.scale;
+            applyScale(next.scale);
           }
         }
       }
@@ -1911,10 +2080,10 @@ function CanvasStack({
     return () => media.removeEventListener('change', onChange);
   }, [draw, labels, sprites, theme]);
 
-  // The sky or the ground switched on or off: draw again where the camera is.
+  // The sky, the ground, the clouds or the decor level changed: draw again where the camera is.
   useEffect(() => {
     if (!cam.current.raf) draw(true);
-  }, [sky, ground, draw]);
+  }, [sky, ground, clouds, decor, draw]);
 
   // The gap switched on or off: K for the new look (where a pile opens next time), and draw again
   // where the camera is (the camera itself stays put).
@@ -2093,13 +2262,14 @@ function CanvasStack({
     };
     const handle: StackBench = {
       setOverrides(next) {
-        if (next && !c.overrides) c.saved = { scale: size.current.scale, scaleCap: c.scaleCap, scrollTop: c.scrollTop };
+        if (next && !c.overrides) c.saved = { scale: size.current.scale, scaleCap: c.scaleCap, decorCap: c.decorCap, scrollTop: c.scrollTop };
         // A bigger label cache while benchmarking, the normal one afterwards.
         labels.resize(next ? Math.max(LABEL_CACHE_SIZE, next.labelCache) : LABEL_CACHE_SIZE);
         const plainChanged = (c.overrides?.plainAvatars ?? false) !== (next?.plainAvatars ?? false);
         c.overrides = next;
         c.motionFrames = 0;
         c.motionMs = 0;
+        c.motionCost = 0;
         c.tag = null;
         c.inset = null;
         if (plainChanged) clearLabels();
@@ -2111,6 +2281,7 @@ function CanvasStack({
           const saved = c.saved;
           c.saved = null;
           c.scaleCap = saved.scaleCap;
+          c.decorCap = saved.decorCap;
           if (size.current.scale !== saved.scale) applyScale(saved.scale);
           jumpTo(saved.scrollTop);
         }

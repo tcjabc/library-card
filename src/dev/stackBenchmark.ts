@@ -4,7 +4,7 @@
  * canvas stack through these.
  */
 import { PX_PER_BOOK } from '../staircase/camera';
-import { FAN_CAP, type StackOverrides } from '../staircase/drawBudget';
+import { FAN_CAP, type Decor, type StackOverrides } from '../staircase/drawBudget';
 import { TWIST_DEG } from '../staircase/stackProjection';
 import { fmt, strings } from '../strings';
 
@@ -45,8 +45,8 @@ export function benchConfigs(): BenchConfig[] {
   return out;
 }
 
-/** What the stack is told for a set-up: everything fixed, adaptive resolution off. */
-export function overridesFor(config: BenchConfig): StackOverrides {
+/** What the stack is told for a set-up: everything fixed, adaptive resolution off, the decor at `decor` (the device's setting). */
+export function overridesFor(config: BenchConfig, decor: Decor = 'full'): StackOverrides {
   return {
     scale: config.scale,
     adaptive: false,
@@ -55,6 +55,7 @@ export function overridesFor(config: BenchConfig): StackOverrides {
     settle: config.settle,
     twist: config.twist,
     labelCache: benchLabelCache(),
+    decor,
   };
 }
 
@@ -190,6 +191,9 @@ export interface BenchResult {
   /** "Sky" and "Ground & horizon" while it ran (missing in results from before 1.15.0). */
   sky?: boolean;
   ground?: boolean;
+  /** "Clouds" and the decor level while it ran (missing in results from before 1.16.0). */
+  clouds?: boolean;
+  decor?: Decor;
 }
 
 const n1 = (v: number) => v.toFixed(1);
@@ -310,6 +314,8 @@ export function formatBenchResult(result: BenchResult): string {
     ...(result.shapes === undefined ? [] : [fmt(t.benchShapes, { state: result.shapes ? t.measureOn : t.measureOff })]),
     ...(result.sky === undefined ? [] : [fmt(t.benchSky, { state: result.sky ? t.measureOn : t.measureOff })]),
     ...(result.ground === undefined ? [] : [fmt(t.benchGround, { state: result.ground ? t.measureOn : t.measureOff })]),
+    ...(result.clouds === undefined ? [] : [fmt(t.benchClouds, { state: result.clouds ? t.measureOn : t.measureOff })]),
+    ...(result.decor === undefined ? [] : [fmt(t.benchDecor, { level: t.decorLevel[result.decor] })]),
     ...deviceLines(result.device),
     fmt(t.benchCalibrationStart, { score: scoreText(result.calibration.start) }),
     fmt(t.benchCalibrationEnd, { score: scoreText(result.calibration.end) }),
