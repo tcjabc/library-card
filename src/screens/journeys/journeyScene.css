@@ -1,8 +1,10 @@
 /*
  * Journey scenes (JourneyScene.tsx, docs/journeys.md): a fixed backdrop behind
  * the journey page in three layers. Each layer is taller than the view by its
- * travel (--travel) and moves up by --journey-shift × --travel; the settle after
- * a step change is a transform on its inner box. The track's rows stay put.
+ * travel (--travel) and moves up by the shift × its travel: a transform written
+ * on the layer itself (sceneScroll.ts), never a value the art inherits. The
+ * settle after a step change is a transform on its inner box. The track's rows
+ * stay put.
  */
 
 .journey-scene {
@@ -56,7 +58,8 @@
   left: 0;
   right: 0;
   height: calc(100% + var(--travel, 0px));
-  transform: translate3d(0, calc(var(--journey-shift, 0) * var(--travel, 0px) * -1), 0);
+  /* Its own compositor layer in every decor level, so moving it never re-rasters its art. */
+  will-change: transform;
 }
 
 .journey-scene__inner {

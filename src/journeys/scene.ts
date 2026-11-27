@@ -8,7 +8,8 @@ import type { JourneyDirection, JourneyId } from './journeys';
  * JourneyScene.tsx draws them; docs/journeys.md). The step rows stay put: only
  * the picture moves.
  *
- * One value drives every layer: the shift, 0 to 1, how far down the journey
+ * One value drives every layer: the shift, 0 to 1 (applied as each layer's own
+ * transform, layerTransform; src/screens/journeys/sceneScroll.ts), how far down the journey
  * page the reader has scrolled (0: the top end of the track, 1: the bottom end;
  * the track is the page's length). On a page too short to scroll much, it's
  * where the reader's step sits instead (stepShift). Each layer is
@@ -61,6 +62,16 @@ export function layerTravel(config: SceneConfig, layer: SceneLayer): number {
 /** The layer's offset on screen (px, negative = up) at `shift` (0–1, clamped). */
 export function layerOffset(shift: number, travel: number): number {
   return -clamp(shift, 0, 1) * Math.max(0, travel);
+}
+
+/**
+ * The CSS transform that puts a layer at `offset` (px, from layerOffset): a translate3d (its own
+ * GPU layer), rounded to 0.1 px so a scroll of a fraction of a pixel never rewrites it, and never
+ * "-0px".
+ */
+export function layerTransform(offset: number): string {
+  const y = Number.isFinite(offset) ? Math.round(offset * 10) / 10 : 0;
+  return `translate3d(0, ${y === 0 ? 0 : y}px, 0)`;
 }
 
 /**

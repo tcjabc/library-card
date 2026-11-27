@@ -38,22 +38,34 @@ longer than `MAX_TRAVEL` / 28 steps (Ladder to the Moon's 25, Rocket Through Spa
 (about 26 and 21 px a step): the cap wins, and the test expects exactly `MAX_TRAVEL` for them.
 
 - **Where**: `src/journeys/scene.ts` (pure, unit-tested: which journeys have a scene, the layers, the shift, the
-  settle, the motion rules), `src/journeys/journeySeen.ts` (the seen step), `src/screens/journeys/JourneyScene.tsx`
-  (the layers and their motion), `src/screens/journeys/scenes/*.tsx` (each scene's art, one lazy chunk each, about
+  settle, the motion rules, each layer's transform), `src/journeys/journeySeen.ts` (the seen step),
+  `src/screens/journeys/JourneyScene.tsx` (the layers and their motion), `src/screens/journeys/sceneScroll.ts`
+  (moving the layers with the scroll; the browser is passed in, so it's unit-tested), `src/screens/journeys/scenes/*.tsx` (each scene's art, one lazy chunk each, about
   1.1–1.7 KB gzipped; `parts.tsx` holds the shared cloud, which takes a token pair, and the star sparkle), `src/screens/journeys/journeyScene.css`. The journey screen itself is a lazy chunk too.
 - **Layers**: far (slowest), mid and near (fastest), each an inline SVG group in a fixed backdrop behind the page
   (`position: fixed`, the large viewport's height, so no gap when a phone's browser bar slides away). The track's
   rows (stage label, numbered dot, cover, the reader's avatar) are real DOM rows over it and never move with it.
   Each layer is taller than the view by its travel (`layerTravel`: its factor × the scene's travel, both clamped:
-  `MAX_FACTOR` 1.5, `MAX_TRAVEL` 640 px) and sits `--journey-shift` × its travel up. Near art (hills, sea floor)
-  extends past the screen's edges so a shift never shows a gap.
-- **The shift** (`--journey-shift`, 0–1): how far down the page the reader has scrolled (`scrollShift`: 0 at the
+  `MAX_FACTOR` 1.5, `MAX_TRAVEL` 640 px) and sits the shift × its travel up. Near art (hills, sea floor)
+  extends past the screen's edges so a shift never shows a gap. Each layer has `will-change: transform` in every
+  decor level: its own compositor layer, so moving it never re-rasters its art (without it, Reduced and None
+  re-rastered about 2,500 tiles per scroll of the 30-step Rocket, since with no loops nothing else promoted the
+  layers).
+- **The shift** (0–1): how far down the page the reader has scrolled (`scrollShift`: 0 at the
   top end of the track, 1 at the bottom end). Rising journeys start at the bottom, so as the reader climbs the
   world moves down; Ocean Deep starts at the top, so as they dive it moves up. A page that can barely scroll
   (Ocean Deep's five steps on a tall screen) uses the reader's step instead (`stepShift`): under a quarter of a
   view of scroll range it's the step's place, from three quarters it's the scroll, a smooth mix in between
-  (`SCROLL_BLEND`), so a phone's browser bar sliding away never makes the scene jump. One scroll
-  listener per screen sets the variable in an animation frame; no other script runs while scrolling.
+  (`SCROLL_BLEND`), so a phone's browser bar sliding away never makes the scene jump.
+- **Applying the shift** (since 1.20.1, `sceneScroll.ts`): each layer's own inline transform
+  (`layerTransform`: a translate3d, rounded to 0.1 px, written only when it changes). Nothing is set on the
+  scene's root: before 1.20.1 the shift was a custom property (`--journey-shift`) on the root, which every element
+  of the scene inherits, so each scroll frame restyled the whole scene (87 of the Rocket's 91 elements, 125 of the
+  Ladder's 135) instead of the three layers. One passive scroll listener reads `scrollTop` in the scroll event;
+  the page's scroll range and the view's height are kept from the last resize (the window's `resize`, and a
+  ResizeObserver on the track for content changes), so the animation-frame callback only writes. Reading the
+  scroll inside that callback forced a style recalculation every frame (the ambient loops had just changed
+  style). At most one frame per change; no other script runs while scrolling.
 - **The settle**: when the reader's step has changed since they last saw the screen, each layer starts where the
   old step put it (`settleOffsets`; the near layer at least `MIN_SETTLE_PX`, 60 px, and at most its travel, far
   and mid scaled by their factors, so even one step of a long journey shows) and glides to where the new one does

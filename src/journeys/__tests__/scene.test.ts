@@ -17,6 +17,7 @@ import {
   SCENES,
   SCENE_LAYERS,
   layerOffset,
+  layerTransform,
   layerTravel,
   sceneFor,
   sceneMotion,
@@ -113,6 +114,24 @@ describe('layer offsets from the one shift value', () => {
       const b = scrollShift(range * 0.9, range - 24, 728, 0.55);
       expect(Math.abs(a - b)).toBeLessThan(0.12);
     }
+  });
+});
+
+describe('layerTransform: the offset as each layer’s own transform (1.20.1)', () => {
+  it('is a translate3d of the offset, rounded to 0.1 px', () => {
+    expect(layerTransform(-128)).toBe('translate3d(0, -128px, 0)');
+    expect(layerTransform(-12.3456)).toBe('translate3d(0, -12.3px, 0)');
+    expect(layerTransform(-12.36)).toBe('translate3d(0, -12.4px, 0)');
+  });
+
+  it('a fraction of a pixel of scroll gives the same transform (no rewrite, no jitter)', () => {
+    expect(layerTransform(layerOffset(0.5, 640))).toBe(layerTransform(layerOffset(0.50004, 640)));
+  });
+
+  it('never writes "-0px" and turns a bad offset into 0', () => {
+    expect(layerTransform(-0)).toBe('translate3d(0, 0px, 0)');
+    expect(layerTransform(-0.04)).toBe('translate3d(0, 0px, 0)');
+    expect(layerTransform(Number.NaN)).toBe('translate3d(0, 0px, 0)');
   });
 });
 
