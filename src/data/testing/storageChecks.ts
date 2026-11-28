@@ -4,6 +4,8 @@ import {
   DEFAULT_LOAN_DAYS,
   HOUSEHOLD_ID,
   MAX_COVER_BYTES,
+  customJourneyIdOf,
+  customJourneyRef,
   noteViewId,
   READ_TAP_GUARD_MS,
   type DataChange,
@@ -665,6 +667,62 @@ export const storageChecks: StorageCheck[] = [
     equal((await store.listNotesForReader(a.id)).map((x) => [x.note.text, x.note.sticker, x.seen_at]), [['Proud of you', '🐼', '2026-04-01T08:00:00.000Z']], 'restored');
   }),
 
+  // Custom journeys (1.25.0) ------------------------------------------------------
+  check('custom journeys', 'create, read and list: a built-in theme, 3–30 books, a trimmed name or the default; oldest first', async (ctx) => {
+    const { store } = await ctx.open({ now: (() => { let t = Date.parse('2026-02-01T00:00:00Z'); return () => (t += 1000); })() });
+    const h = await store.getCurrentHousehold();
+    const space = await store.createCustomJourney({ household_id: h.id, theme: 'rocket_through_space', steps: 12, name: '  Space trip  ' });
+    const sea = await store.createCustomJourney({ household_id: h.id, theme: 'ocean_deep', steps: 3, name: '   ' });
+    equal([space.theme, space.steps, space.name, space.archived_at], ['rocket_through_space', 12, 'Space trip', null], 'trimmed name, not archived');
+    equal([sea.name, sea.steps], [null, 3], 'a blank name is the default');
+    ok(space.id.length <= 40 && `custom_journeys:${space.id}`.length <= 64, 'an id that fits sync', space.id);
+    ok(customJourneyRef(space.id).length <= 64, 'a reader journey_id that fits sync', customJourneyRef(space.id));
+    equal(customJourneyIdOf(customJourneyRef(space.id)), space.id, 'the ref round-trips');
+    equal([customJourneyIdOf('rocket_through_space'), customJourneyIdOf('custom:')], [null, null], 'a built-in id is no custom ref');
+    equal((await store.getCustomJourney(space.id))?.name, 'Space trip', 'read back');
+    equal(await store.getCustomJourney('nope'), null, 'unknown');
+    equal((await store.listCustomJourneys(h.id)).map((j) => j.id), [space.id, sea.id], 'oldest first');
+    await rejectsWithCode(store.createCustomJourney({ household_id: h.id, theme: 'space_station' as 'ocean_deep', steps: 10 }), 'invalid', 'unknown theme');
+    await rejectsWithCode(store.createCustomJourney({ household_id: h.id, theme: 'ocean_deep', steps: 2 }), 'invalid', 'too short');
+    await rejectsWithCode(store.createCustomJourney({ household_id: h.id, theme: 'ocean_deep', steps: 31 }), 'invalid', 'too long');
+    await rejectsWithCode(store.createCustomJourney({ household_id: h.id, theme: 'ocean_deep', steps: 7.5 }), 'invalid', 'not whole');
+    await rejectsWithCode(store.createCustomJourney({ household_id: h.id, theme: 'ocean_deep', steps: 5, name: 'x'.repeat(101) }), 'invalid', 'name too long');
+  }),
+  check('custom journeys', 'update: rename, raise the length only, never the theme; archive keeps its first time and is never a delete', async (ctx) => {
+    const { store } = await ctx.open();
+    const h = await store.getCurrentHousehold();
+    const j = await store.createCustomJourney({ household_id: h.id, theme: 'skyscraper', steps: 10 });
+    equal((await store.updateCustomJourney(j.id, { name: 'Tall one', steps: 15 })).steps, 15, 'raised');
+    equal((await store.updateCustomJourney(j.id, { steps: 15 })).steps, 15, 'the same length is fine');
+    await rejectsWithCode(store.updateCustomJourney(j.id, { steps: 14 }), 'invalid', 'lower');
+    await rejectsWithCode(store.updateCustomJourney(j.id, { steps: 31 }), 'invalid', 'over 30');
+    await rejectsWithCode(store.updateCustomJourney(j.id, { theme: 'ocean_deep' } as never), 'invalid', 'theme change');
+    equal((await store.updateCustomJourney(j.id, { theme: 'skyscraper' } as never)).theme, 'skyscraper', 'the same theme is no change');
+    equal((await store.updateCustomJourney(j.id, { name: null })).name, null, 'back to the default name');
+    await rejectsWithCode(store.updateCustomJourney('nope', { name: 'x' }), 'not_found', 'unknown');
+    const archived = await store.archiveCustomJourney(j.id, '2026-05-01T10:00:00Z');
+    equal(archived.archived_at, '2026-05-01T10:00:00.000Z', 'archived');
+    equal((await store.archiveCustomJourney(j.id, '2026-06-01T10:00:00Z')).archived_at, '2026-05-01T10:00:00.000Z', 'archived again: the first time stays');
+    equal(await store.listCustomJourneys(h.id), [], 'hidden from the list');
+    equal((await store.listCustomJourneys(h.id, { includeArchived: true })).map((x) => [x.id, x.archived_at !== null]), [[j.id, true]], 'listed with the flag');
+    equal((await store.getCustomJourney(j.id))?.steps, 15, 'still readable');
+    await rejectsWithCode(store.archiveCustomJourney('nope'), 'not_found', 'unknown');
+  }),
+  check('custom journeys', 'a reader can start one by its ref; a backup keeps them, archived ones too', async (ctx) => {
+    const { store, h, a } = await withReaders(ctx, { now: (() => { let t = Date.parse('2026-03-01T00:00:00Z'); return () => (t += 1000); })() });
+    const j = await store.createCustomJourney({ household_id: h.id, theme: 'hot_air_balloon', steps: 4, name: 'Up and away' });
+    const old = await store.createCustomJourney({ household_id: h.id, theme: 'redwood_tree', steps: 9 });
+    await store.archiveCustomJourney(old.id);
+    const started = await store.startJourney(a.id, customJourneyRef(j.id));
+    equal((await store.getActiveJourney(a.id))?.journey_id, customJourneyRef(j.id), 'the reader is on it');
+    const backup = await store.exportBackup();
+    equal(backup.tables.custom_journeys.length, 2, 'exported');
+    await store.resetDevice();
+    await store.importBackup(JSON.parse(JSON.stringify(backup)));
+    equal((await store.listCustomJourneys(h.id, { includeArchived: true })).map((x) => [x.name, x.steps, x.archived_at !== null]), [['Up and away', 4, false], [null, 9, true]], 'restored');
+    equal((await store.getActiveJourney(a.id))?.id, started.id, 'and the reader is still on it');
+  }),
+
   // Home items --------------------------------------------------------------------
   check('home', 'home items: id is the book key, one per household + book, newest first, removable', async (ctx) => {
     const { store } = await ctx.open({ now: (() => { let t = Date.parse('2026-01-01T00:00:00Z'); return () => (t += 1000); })() });
@@ -1227,11 +1285,12 @@ export const storageChecks: StorageCheck[] = [
   }),
 
   // Migrations ------------------------------------------------------------------------
-  check('migration', 'a fresh database is created at v9 with no legacy reads store', async (ctx) => {
+  check('migration', 'a fresh database is created at v10 with no legacy reads store', async (ctx) => {
     const { store, dbName } = await ctx.open();
     await store.coverStep;
     const { version, stores } = await rawStoreNames(dbName);
-    equal(version, 9, 'version');
+    equal(version, 10, 'version');
+    equal(await rawIndexNames(dbName, 'custom_journeys'), ['by_household'], 'custom journey index');
     equal((await rawIndexNames(dbName, 'collections')).sort(), ['by_cover', 'by_household'], 'collection indexes');
     equal((await rawIndexNames(dbName, 'parent_notes')).sort(), ['by_household', 'by_target'], 'note indexes');
     equal((await rawIndexNames(dbName, 'note_views')).sort(), ['by_household', 'by_note', 'by_reader'], 'note view indexes');
@@ -1319,12 +1378,14 @@ export const storageChecks: StorageCheck[] = [
     const third = await ctx.attach(name);
     equal((await third.coverStep).moved, 0, 'a finished step is a no-op');
   }),
-  check('migration', 'v4 -> v9: records, outbox, library_cards, collections and note stores and the read status index added, every row kept, nothing recorded', async (ctx) => {
+  check('migration', 'v4 -> v10: records, outbox, library_cards, collections, note and custom journey stores and the read status index added, every row kept, nothing recorded', async (ctx) => {
     const name = ctx.name();
-    const fixture = await createV3Database(name); // upgrades through v4 … v8 to v9
+    const fixture = await createV3Database(name); // upgrades through v4 … v9 to v10
     const store = await ctx.attach(name);
     const { version, stores } = await rawStoreNames(name);
-    equal(version, 9, 'version');
+    equal(version, 10, 'version');
+    ok(stores.includes('custom_journeys'), 'custom journey store', stores);
+    equal(await store.listCustomJourneys(HOUSEHOLD_ID, { includeArchived: true }), [], 'no custom journeys yet');
     ok(stores.includes('parent_notes') && stores.includes('note_views'), 'note stores', stores);
     equal(await store.listNotes(HOUSEHOLD_ID), [], 'no notes yet');
     ok(stores.includes('records') && stores.includes('outbox') && stores.includes('library_cards') && stores.includes('collections'), 'new stores', stores);
@@ -1344,7 +1405,7 @@ export const storageChecks: StorageCheck[] = [
     const name = ctx.name();
     const fixture = await createV3Database(name);
     const store = await ctx.attach(name);
-    equal((await rawStoreNames(name)).version, 9, 'version');
+    equal((await rawStoreNames(name)).version, 10, 'version');
     const indexes = await rawIndexNames(name, 'loans');
     ok(!indexes.includes('by_household_sticker') && indexes.includes('by_library_sticker') && indexes.includes('by_sticker'), 'indexes', indexes);
     const loans = await rawAll<Record<string, unknown>>(name, 'loans');
@@ -1407,7 +1468,7 @@ export const storageChecks: StorageCheck[] = [
     const journey = await store.startJourney(a.id, 'ocean_deep', '2026-01-01T00:00:00Z');
 
     const backup = await store.exportBackup();
-    equal([backup.format, backup.version, backup.schema], [BACKUP_FORMAT, 1, 9], 'format, version, schema');
+    equal([backup.format, backup.version, backup.schema], [BACKUP_FORMAT, 1, 10], 'format, version, schema');
     ok(!('records' in backup.tables) && !('outbox' in backup.tables), 'sync bookkeeping is never exported');
     ok(!('read_summaries' in backup.tables), 'summaries are not exported');
     equal(Object.keys(backup.covers), [photoRef], 'the one photo, under its cover: key');

@@ -59,6 +59,8 @@ describe('coverage', () => {
       'previewDeleteReader',
       // books and covers
       'getBook', 'getBooks', 'putBook', 'saveCoverImage', 'isCoverPhotoMissing',
+      // custom journeys
+      'createCustomJourney', 'getCustomJourney', 'listCustomJourneys', 'updateCustomJourney', 'archiveCustomJourney',
       // collections
       'createCollection', 'getCollection', 'listCollections', 'updateCollection', 'deleteCollection', 'setBookCollection', 'setBooksCollection',
       'clearBookCollection', 'listCollectionBooks',

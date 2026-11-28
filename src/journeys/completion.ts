@@ -1,5 +1,5 @@
 import type { DataStore, Id, ReaderJourney } from '../data';
-import { getJourney } from './journeys';
+import { loadJourney } from './resolve';
 import { isComplete, journeyProgress } from './progress';
 
 /**
@@ -20,7 +20,7 @@ export async function checkJourneyCompletion(
 ): Promise<ReaderJourney | null> {
   const active = await store.getActiveJourney(readerId);
   if (!active) return null;
-  const journey = getJourney(active.journey_id);
+  const journey = await loadJourney(store, active.journey_id);
   if (!journey) return null; // a journey removed from the config: leave it alone
   const summaries = await store.listReadSummaries(readerId);
   if (!isComplete(journeyProgress(summaries, active.started_at, journey.steps), journey.steps)) return null;

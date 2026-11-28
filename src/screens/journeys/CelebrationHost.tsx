@@ -5,7 +5,8 @@ import { dueNote, firstReadMoments, journeyMoments } from '../../notes/due';
 import { isGuarded, markShown, pruneGuard } from '../../notes/guard';
 import { isGrownUpPath } from '../../grownups/session';
 import { ensureCelebrationList, markCelebrated, nextCelebration, useCelebrationList } from '../../journeys/celebration';
-import { getJourney } from '../../journeys/journeys';
+import { resolveJourney } from '../../journeys/resolve';
+import { useCustomJourneys } from '../../journeys/useCustomJourneys';
 import { navigate, useHashPath } from '../../router';
 import { useActiveReaderId } from '../../session/activeReader';
 import { fmt, strings } from '../../strings';
@@ -198,7 +199,7 @@ function TrophyCelebration({ trophyKey, title }: { trophyKey: string; title: str
 
 function Celebration({ readerJourneyId, journeyId }: { readerJourneyId: string; journeyId: string }) {
   const t = strings.journey;
-  const journey = getJourney(journeyId);
+  const journey = resolveJourney(journeyId, useCustomJourneys());
   const titleId = useId();
   const button = useRef<HTMLButtonElement>(null);
 

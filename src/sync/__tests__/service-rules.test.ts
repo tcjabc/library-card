@@ -172,7 +172,7 @@ describe('local counts', () => {
   it('counts readers, home books, libraries, loans and reads', async () => {
     const store = await newStore();
     const sync = await service(store);
-    expect(await sync.localCounts()).toEqual({ readers: 0, homeBooks: 0, libraries: 0, collections: 0, notes: 0, loans: 0, libraryCards: 0, reads: 0 });
+    expect(await sync.localCounts()).toEqual({ readers: 0, homeBooks: 0, libraries: 0, collections: 0, notes: 0, customJourneys: 0, loans: 0, libraryCards: 0, reads: 0 });
     expect(await sync.localItemCount()).toBe(0);
 
     await store.getCurrentHousehold();
@@ -187,8 +187,10 @@ describe('local counts', () => {
     await store.markRead(reader.id, isbn, new Date(Date.now() + 60_000).toISOString());
     await store.createCollection({ household_id: HOUSEHOLD_ID, title: 'A box' });
     await store.createNote({ household_id: HOUSEHOLD_ID, target: 'everyone', trigger: 'after_book', text: 'Well done' });
-    expect(await sync.localCounts()).toEqual({ readers: 1, homeBooks: 1, libraries: 1, collections: 1, notes: 1, loans: 1, libraryCards: 1, reads: 2 });
-    expect(await sync.localItemCount()).toBe(9);
+    const journey = await store.createCustomJourney({ household_id: HOUSEHOLD_ID, theme: 'redwood_tree', steps: 6 });
+    await store.archiveCustomJourney(journey.id); // archived ones count too: a replace would drop them
+    expect(await sync.localCounts()).toEqual({ readers: 1, homeBooks: 1, libraries: 1, collections: 1, notes: 1, customJourneys: 1, loans: 1, libraryCards: 1, reads: 2 });
+    expect(await sync.localItemCount()).toBe(10);
     void generateKey;
   });
 });

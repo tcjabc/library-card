@@ -16,6 +16,7 @@ import {
   type SyncRecord,
 } from '../../sync/vendor/sync-core.js';
 import {
+  LARGEST_FIELDS,
   MONOTONIC_FIELDS,
   SYNCED_TABLES,
   isSyncedTable,
@@ -129,8 +130,20 @@ const toOutbox = (op: Op): OutboxEntry => ({ rec: op.rec, f: op.f, v: op.v, t: o
  */
 const mergeRank = (v: unknown) => (v === null || v === undefined ? 0 : 1);
 
-/** sync-core's last-writer-wins, except for monotonic fields (see mergeRank). */
+/** sync-core's last-writer-wins, except for monotonic fields (see mergeRank) and largest-wins fields. */
 export function mergeOp(record: SyncRecord | undefined, op: Op, table: SyncedTable): { record: SyncRecord; changed: boolean } {
+  // Largest wins (a custom journey's length): a max over (value, then stamp), so every device ends
+  // with the same, longest value whatever order the ops arrive in. Equal values fall through.
+  if (record && LARGEST_FIELDS[table]?.includes(op.f) && record.ts[op.f] !== undefined) {
+    const have = record.fields[op.f];
+    if (typeof have === 'number' && typeof op.v === 'number' && have !== op.v) {
+      if (op.v < have) return { record, changed: false };
+      return {
+        record: { id: record.id, fields: { ...record.fields, [op.f]: structuredClone(op.v) }, ts: { ...record.ts, [op.f]: op.t } },
+        changed: true,
+      };
+    }
+  }
   if (record && MONOTONIC_FIELDS[table]?.includes(op.f) && record.ts[op.f] !== undefined) {
     const have = mergeRank(record.fields[op.f]);
     const incoming = mergeRank(op.v);

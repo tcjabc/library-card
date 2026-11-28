@@ -1,4 +1,4 @@
-import type { Journey } from '../../journeys/journeys';
+import type { ResolvedJourney } from '../../journeys/resolve';
 import { POSTER_ART } from '../../posters/art';
 import { layoutSlots, POSTER_FRAME, POSTER_STROKES, POSTER_TYPE } from '../../posters/posterLayout';
 import { fmt, strings } from '../../strings';
@@ -12,8 +12,8 @@ const T = POSTER_TYPE;
  * numbered circle and a writing line per book either side of the journey's drawing. The name line
  * stays blank: the child writes it. Layout: src/posters/posterLayout.ts; art: src/posters/art.
  */
-export function JourneyPoster({ journey }: { journey: Journey }) {
-  const art = POSTER_ART[journey.id];
+export function JourneyPoster({ journey }: { journey: ResolvedJourney }) {
+  const art = POSTER_ART[journey.theme];
   const slots = layoutSlots(journey.steps, journey.direction, F);
   const left = F.margin + F.lineInset;
   const right = F.width - left;
@@ -76,7 +76,7 @@ export function JourneyPoster({ journey }: { journey: Journey }) {
 }
 
 /** One poster as an A4 sheet (the print copy and the preview). */
-export function PosterSheet({ journey }: { journey: Journey }) {
+export function PosterSheet({ journey }: { journey: ResolvedJourney }) {
   return (
     <div className="poster-sheet">
       <JourneyPoster journey={journey} />

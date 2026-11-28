@@ -245,7 +245,10 @@ export interface ReadSummary {
 export interface ReaderJourney {
   id: Id;
   reader_id: Id;
-  /** Id of a Journey definition from src/journeys/journeys.ts. */
+  /**
+   * Which journey: a built-in id from src/journeys/journeys.ts, or customJourneyRef(id) for a
+   * household's custom journey ("custom:<id>"). src/journeys/resolve.ts turns either into a definition.
+   */
   journey_id: string;
   started_at: Timestamp;
   /** Set once the journey is finished. Permanent: undoing reads never clears it. */
@@ -253,6 +256,54 @@ export interface ReaderJourney {
   /** Set when the reader switched to another journey before finishing this one. */
   abandoned_at: Timestamp | null;
 }
+
+/**
+ * The eight built-in journeys, as themes a custom journey can use (its scene, poster art, colours
+ * and direction). The same ids as src/journeys/journeys.ts (a test keeps them in step); here so the
+ * data layer can check them without the journey definitions.
+ */
+export const JOURNEY_THEMES = [
+  'ocean_deep',
+  'redwood_tree',
+  'ocean_cliff',
+  'skyscraper',
+  'rapunzel_tower',
+  'hot_air_balloon',
+  'ladder_to_the_moon',
+  'rocket_through_space',
+] as const;
+export type JourneyTheme = (typeof JOURNEY_THEMES)[number];
+export const isJourneyTheme = (value: unknown): value is JourneyTheme => (JOURNEY_THEMES as readonly unknown[]).includes(value);
+
+/**
+ * A household's own journey (1.25.0): one of the built-in themes at a length of its own. Shared by
+ * the household and synced. Never deleted: archiving hides it from new starts, while readers already
+ * on it keep going and their history keeps its name and theme.
+ */
+export interface CustomJourney {
+  id: Id;
+  household_id: Id;
+  /** The built-in journey it looks like. Fixed when it's made. */
+  theme: JourneyTheme;
+  /** Books to finish, 3–30. Can only be raised (a merge keeps the larger). */
+  steps: number;
+  /** 1–100 characters, or null for the default name ("<Theme> · N books"). */
+  name: string | null;
+  created_at: Timestamp;
+  /** When it was archived, or null. Permanent. */
+  archived_at: Timestamp | null;
+}
+
+export const MIN_CUSTOM_JOURNEY_STEPS = 3;
+export const MAX_CUSTOM_JOURNEY_STEPS = 30;
+export const MAX_CUSTOM_JOURNEY_NAME = 100;
+
+/** What a reader's journey_id holds for a custom journey: "custom:<id>" (within its 64 characters). */
+export const CUSTOM_JOURNEY_PREFIX = 'custom:';
+export const customJourneyRef = (id: Id): string => `${CUSTOM_JOURNEY_PREFIX}${id}`;
+/** The custom journey's id in a journey_id, or null if it isn't one. */
+export const customJourneyIdOf = (journeyId: string): Id | null =>
+  journeyId.startsWith(CUSTOM_JOURNEY_PREFIX) && journeyId.length > CUSTOM_JOURNEY_PREFIX.length ? journeyId.slice(CUSTOM_JOURNEY_PREFIX.length) : null;
 
 // ---------------------------------------------------------------------------
 // Inputs
@@ -345,6 +396,11 @@ export type NewParentNote = Pick<ParentNote, 'household_id' | 'target' | 'trigge
   Partial<Pick<ParentNote, 'author_id' | 'sticker' | 'position'>>;
 export type ParentNotePatch = Partial<Pick<ParentNote, 'target' | 'trigger' | 'text' | 'sticker' | 'author_id'>>;
 
+/** name missing, null or blank: the default name. */
+export type NewCustomJourney = Pick<CustomJourney, 'household_id' | 'theme' | 'steps'> & Partial<Pick<CustomJourney, 'name'>>;
+/** The theme can't change; steps can only go up. */
+export type CustomJourneyPatch = Partial<Pick<CustomJourney, 'name' | 'steps'>>;
+
 export type NewCollection = Pick<Collection, 'household_id' | 'title'> & Partial<Pick<Collection, 'cover_url' | 'isbn' | 'expected_count'>>;
 export type CollectionPatch = Partial<Pick<Collection, 'title' | 'cover_url' | 'isbn' | 'expected_count'>>;
 /** One book for setBooksCollection: its key and its number in the collection (missing or null: none). */
@@ -410,6 +466,7 @@ export type DataTable =
   | 'collections'
   | 'parent_notes'
   | 'note_views'
+  | 'custom_journeys'
   /** Read events; read summaries change with them. */
   | 'read_events'
   | 'reader_journeys';
@@ -697,6 +754,23 @@ export interface DataStore {
   countHouseholdReads(householdId: Id): Promise<number>;
   /** Every reader's summaries in the household (the Family Staircase), in no particular order. */
   listHouseholdReadSummaries(householdId: Id): Promise<ReadSummary[]>;
+
+  // Custom journeys (1.25.0) -----------------------------------------------
+  /**
+   * theme one of JOURNEY_THEMES, steps a whole number 3–30, name trimmed 1–100 or none ("invalid"
+   * otherwise). A new random id.
+   */
+  createCustomJourney(input: NewCustomJourney): Promise<CustomJourney>;
+  getCustomJourney(id: Id): Promise<CustomJourney | null>;
+  /** Oldest first. Archived ones only with includeArchived. */
+  listCustomJourneys(householdId: Id, options?: { includeArchived?: boolean }): Promise<CustomJourney[]>;
+  /**
+   * Renames (null or blank: the default name) and/or raises the length. "invalid" for a lower or
+   * out-of-range length, a bad name, or any attempt to change the theme; "not_found" for an unknown id.
+   */
+  updateCustomJourney(id: Id, patch: CustomJourneyPatch): Promise<CustomJourney>;
+  /** Sets archived_at (an archived one keeps its first time). Never deletes. */
+  archiveCustomJourney(id: Id, archivedAt?: Timestamp): Promise<CustomJourney>;
 
   // Reading journeys --------------------------------------------------------
   /**

@@ -178,7 +178,7 @@ length of 3 to 30 books and an optional name.
 ## Releases
 
 1. **1.24.1:** the sync re-read fix (a new synced table means one re-read on every device).
-2. **1.25.0: the data layer only.** Nothing user-visible creates a custom journey yet.
+2. **1.25.0: the data layer only** (built): Nothing user-visible creates a custom journey yet.
    - The `custom_journeys` table and the v10 upgrade, with the archive field.
    - The `resolveJourney` refactor, with identical behaviour for built-ins.
    - Larger-wins for `steps`.

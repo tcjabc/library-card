@@ -1,4 +1,4 @@
-import { HOUSEHOLD_ID, LIBRARY_CARD_FORMATS, noteViewId } from '../DataStore';
+import { HOUSEHOLD_ID, JOURNEY_THEMES, LIBRARY_CARD_FORMATS, MAX_CUSTOM_JOURNEY_NAME, MAX_CUSTOM_JOURNEY_STEPS, MIN_CUSTOM_JOURNEY_STEPS, noteViewId } from '../DataStore';
 import { DELETED, isFieldName, isOp, type JsonValue, type Op } from '../../sync/vendor/sync-core.js';
 
 /**
@@ -23,6 +23,7 @@ export const SYNCED_TABLES = [
   'collections',
   'parent_notes',
   'note_views',
+  'custom_journeys',
   'loans',
   'read_events',
   'reader_journeys',
@@ -145,6 +146,21 @@ export const SCHEMA: Record<SyncedTable, TableSpec> = {
       expected_count: { kind: { type: 'int', min: 1, max: 500 }, nullable: true },
     },
   },
+  // A household's own journeys (1.25.0). The theme is one of the built-in journey ids, so an
+  // older device refuses a theme it can't draw and a newer one never gets an id this version can't
+  // resolve; steps only grow (LARGEST_FIELDS); archived_at is permanent (MONOTONIC_FIELDS).
+  custom_journeys: {
+    key: 'id',
+    household: true,
+    localId: 'id',
+    fields: {
+      theme: text(32, REQUIRED, new RegExp(`^(?:${JOURNEY_THEMES.join('|')})$`)),
+      steps: { kind: { type: 'int', min: MIN_CUSTOM_JOURNEY_STEPS, max: MAX_CUSTOM_JOURNEY_STEPS }, required: true },
+      name: nullableText(MAX_CUSTOM_JOURNEY_NAME),
+      created_at: timestamp(REQUIRED),
+      archived_at: timestamp(NULLABLE),
+    },
+  },
   home_items: {
     key: 'id',
     household: true,
@@ -257,6 +273,16 @@ export const SCHEMA: Record<SyncedTable, TableSpec> = {
  */
 export const MONOTONIC_FIELDS: Partial<Record<SyncedTable, readonly string[]>> = {
   reader_journeys: ['completed_at', 'abandoned_at'],
+  custom_journeys: ['archived_at'],
+};
+
+/**
+ * Whole-number fields where the larger value wins, whatever order ops arrive in (then the later
+ * stamp): a custom journey's length can only be raised, so two raises made at once on two devices
+ * keep the longer one. See mergeOp() in records.ts.
+ */
+export const LARGEST_FIELDS: Partial<Record<SyncedTable, readonly string[]>> = {
+  custom_journeys: ['steps'],
 };
 
 /** Field names that are never sent: the local key and the implied household (and each table's own key, e.g. books' isbn). */

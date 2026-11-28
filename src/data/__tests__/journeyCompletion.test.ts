@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createLocalStore, type LocalDataStore } from '../adapters/local';
 import { nextCelebration, resetCelebrationsForTests } from '../../journeys/celebration';
 import { checkJourneyCompletion, watchJourneyCompletion } from '../../journeys/completion';
+import { loadJourneyStatus } from '../../screens/journeys/useJourneyStatus';
+import { customJourneyRef } from '../DataStore';
 
 // Journey completion (src/journeys/completion.ts) against a real local store.
 // It lives here because only src/data may open the adapter directly.
@@ -116,5 +118,46 @@ describe('watchJourneyCompletion: the check also runs on live updates', () => {
     await addBooks(5, '2026-03-05T00:00:00.000Z');
     await settle();
     expect(completed).toEqual(['ocean_deep']);
+  });
+});
+
+describe('custom journeys complete at their own length (1.25.0)', () => {
+  const custom = async (steps: number) =>
+    store.createCustomJourney({ household_id: (await store.getCurrentHousehold()).id, theme: 'rocket_through_space', steps });
+
+  for (const steps of [3, 30]) {
+    it(`${steps} books: nothing until the ${steps}th, then complete`, async () => {
+      const j = await custom(steps);
+      await store.startJourney(readerId, customJourneyRef(j.id), '2026-03-01T00:00:00.000Z');
+      await addBooks(steps - 1, '2026-03-02T00:00:00.000Z');
+      expect(await checkJourneyCompletion(store, readerId)).toBeNull();
+      expect((await loadJourneyStatus(store, readerId))?.progress).toBe(steps - 1);
+      await store.markRead(readerId, '9780000000999', '2026-03-03T00:00:00.000Z');
+      const done = await checkJourneyCompletion(store, readerId);
+      expect(done?.journey_id).toBe(customJourneyRef(j.id));
+      expect(done?.completed_at).not.toBeNull();
+      expect(await store.getActiveJourney(readerId)).toBeNull();
+    });
+  }
+
+  it('a raised length applies to a reader on it; an archived one still completes', async () => {
+    const j = await custom(3);
+    await store.startJourney(readerId, customJourneyRef(j.id), '2026-03-01T00:00:00.000Z');
+    await addBooks(3, '2026-03-02T00:00:00.000Z');
+    await store.updateCustomJourney(j.id, { steps: 5 }); // raised before the check ran
+    await store.archiveCustomJourney(j.id);
+    expect(await checkJourneyCompletion(store, readerId)).toBeNull();
+    const status = await loadJourneyStatus(store, readerId);
+    expect([status?.progress, status?.journey.steps, status?.journey.archived]).toEqual([3, 5, true]);
+    await addBooks(5, '2026-03-04T00:00:00.000Z'); // the first 3 again are re-reads; 2 new books fill the 5
+    expect((await checkJourneyCompletion(store, readerId))?.completed_at).not.toBeNull();
+  });
+
+  it('a custom ref whose journey this device doesn’t have is left alone, as an unknown id always was', async () => {
+    await store.startJourney(readerId, 'custom:not-here', '2026-03-01T00:00:00.000Z');
+    await addBooks(30, '2026-03-02T00:00:00.000Z');
+    expect(await checkJourneyCompletion(store, readerId)).toBeNull();
+    expect(await loadJourneyStatus(store, readerId)).toBeNull();
+    expect((await store.getActiveJourney(readerId))?.journey_id).toBe('custom:not-here');
   });
 });

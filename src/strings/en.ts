@@ -140,6 +140,8 @@ export const en = {
     stepFilled: 'Step {step}: {title}',
     finishUp: 'The top',
     finishDown: 'The sea floor',
+    /** A custom journey with no name of its own (1.25.0): its theme and length. */
+    customDefaultName: '{theme} · {count} books',
     start: 'Start',
     youAreHere: 'You are here',
     celebrateUp: 'You reached the top!',

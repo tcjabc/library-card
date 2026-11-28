@@ -38,6 +38,10 @@ function sample(): Backup {
         { id: 'n2', household_id: 'main', author_id: null, target: 'r2', trigger: 'journey_done', text: 'You did it', sticker: null, position: 2, created_at: '2026-01-02T00:00:00.000Z' },
       ],
       note_views: [{ id: 'n1:r2', household_id: 'main', note_id: 'n1', reader_id: 'r2', seen_at: '2026-01-05T00:00:00.000Z' }],
+      custom_journeys: [
+        { id: 'c1', household_id: 'main', theme: 'rocket_through_space', steps: 12, name: 'Space trip', created_at: '2026-01-03T00:00:00.000Z', archived_at: null },
+        { id: 'c2', household_id: 'main', theme: 'ocean_deep', steps: 3, name: null, created_at: '2026-01-04T00:00:00.000Z', archived_at: '2026-01-06T00:00:00.000Z' },
+      ],
       home_items: [{ id: '9780000000002', household_id: 'main', isbn: '9780000000002', added_at: '2026-01-01T00:00:00.000Z' }],
       libraries: [
         {
@@ -236,6 +240,38 @@ describe('parent notes in backups', () => {
     expect(problem((d) => (d.tables.note_views[0].id = 'n1:r1'))).toBe('bad_row note_views[0].id');
     // A note's grown-up may be gone: it reads "From your grown-ups".
     expect(problem((d) => (d.tables.parent_notes[0].author_id = 'gone'))).toBe('ok');
+  });
+});
+
+describe('custom journeys in backups (1.25.0)', () => {
+  it('an older backup (no custom_journeys table) restores with none; a missing name or archive time reads as none', () => {
+    const old = validateBackup(broken((d) => delete d.tables.custom_journeys));
+    expect(old.ok).toBe(true);
+    if (old.ok) expect(old.backup.tables.custom_journeys).toEqual([]);
+    const sparse = validateBackup(
+      broken((d) => {
+        delete d.tables.custom_journeys[0].name;
+        delete d.tables.custom_journeys[0].archived_at;
+      }),
+    );
+    expect(sparse.ok).toBe(true);
+    if (sparse.ok) expect(sparse.backup.tables.custom_journeys[0]).toMatchObject({ name: null, archived_at: null });
+  });
+
+  it('refuses a theme that isn’t a built-in journey, a length outside 3–30 and a bad name', () => {
+    const problem = (edit: Parameters<typeof broken>[0]) => {
+      const r = validateBackup(broken(edit));
+      return r.ok ? 'ok' : `${r.problem} ${r.detail ?? ''}`.trim();
+    };
+    expect(problem((d) => (d.tables.custom_journeys[0].theme = 'space_station'))).toBe('bad_row custom_journeys[0].theme');
+    expect(problem((d) => (d.tables.custom_journeys[0].steps = 2))).toBe('bad_row custom_journeys[0].steps');
+    expect(problem((d) => (d.tables.custom_journeys[0].steps = 31))).toBe('bad_row custom_journeys[0].steps');
+    expect(problem((d) => (d.tables.custom_journeys[0].steps = 7.5))).toBe('bad_row custom_journeys[0].steps');
+    expect(problem((d) => (d.tables.custom_journeys[0].name = '   '))).toBe('bad_row custom_journeys[0].name');
+    expect(problem((d) => (d.tables.custom_journeys[0].name = 'x'.repeat(101)))).toBe('bad_row custom_journeys[0].name');
+    expect(problem((d) => (d.tables.custom_journeys[0].steps = '12'))).toBe('bad_row custom_journeys[0].steps');
+    // A reader's journey naming a custom journey that isn't in the file is allowed.
+    expect(problem((d) => (d.tables.reader_journeys[0].journey_id = 'custom:gone'))).toBe('ok');
   });
 });
 

@@ -20,6 +20,10 @@ export interface JourneyStage {
 
 export interface Journey {
   id: JourneyId;
+  /** Whose scene, poster art, colours and direction it uses: for a built-in, its own id. */
+  theme: JourneyId;
+  /** Built-ins are never custom (src/journeys/resolve.ts makes the custom ones). */
+  isCustom: false;
   title: string;
   emoji: string;
   /** Books to finish. */
@@ -50,6 +54,8 @@ export const JOURNEYS: readonly Journey[] = (Object.keys(CONFIG) as JourneyId[])
   const text = strings.journeys[id];
   return {
     id,
+    theme: id,
+    isCustom: false as const,
     title: text.title,
     emoji: config.emoji,
     steps: config.steps,
@@ -64,6 +70,6 @@ export function getJourney(id: string): Journey | undefined {
 }
 
 /** The stage label shown at a step, if any. */
-export function stageAt(journey: Journey, step: number): string | null {
+export function stageAt(journey: Pick<Journey, 'stages'>, step: number): string | null {
   return journey.stages.find((stage) => stage.step === step)?.label ?? null;
 }

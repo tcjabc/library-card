@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useDataQuery, type Book, type DataStore, type Reader } from '../../data';
 import { stageAt } from '../../journeys/journeys';
-import { sceneFor } from '../../journeys/scene';
+import { sceneForJourney } from '../../journeys/scene';
 import { booksToGo } from '../../journeys/progress';
 import { href, navigate } from '../../router';
 import { fmt, strings } from '../../strings';
@@ -56,7 +56,7 @@ export function JourneyScreen({ reader }: { reader: Reader }) {
   const fillByStep = new Map(status.filled.map((f) => [f.step, f]));
   const steps = Array.from({ length: journey.steps }, (_, i) => i + 1);
   const ordered = down ? steps : [...steps].reverse();
-  const scene = sceneFor(journey.id) !== null;
+  const scene = sceneForJourney(journey) !== null;
 
   const finish = (
     <li className="journey-track__end journey-track__end--finish">

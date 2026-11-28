@@ -6,7 +6,7 @@ import { layoutSlots, MM_PER_UNIT, POSTER_FRAME, POSTER_STROKES, POSTER_TYPE, ty
 
 const F = POSTER_FRAME;
 const mm = (units: number) => units * MM_PER_UNIT;
-const COUNTS = Array.from({ length: 26 }, (_, i) => i + 5); // 5..30
+const COUNTS = Array.from({ length: 28 }, (_, i) => i + 3); // 3..30 (custom journeys since 1.25.0)
 const DIRECTIONS = ['up', 'down'] as const;
 /** Half a circle's outline: what a circle's stroke adds to its edge. */
 const circleHalf = POSTER_STROKES.circle / 2;

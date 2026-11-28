@@ -108,3 +108,26 @@ describe('the journey poster', () => {
     expect(fmt(t.caption, { count: 30 })).toBe('My reading journey: 30 books');
   });
 });
+
+describe('a custom journey’s poster (1.25.0: the art by theme; the posters UI comes in 1.26.0)', () => {
+  it('uses its theme’s art, its own length (3 books here), title and caption', async () => {
+    const { customJourneyDefinition } = await import('../../journeys/resolve');
+    const journey = customJourneyDefinition({
+      id: 'c3',
+      household_id: 'main',
+      theme: 'rocket_through_space',
+      steps: 3,
+      name: 'Mini rocket',
+      created_at: '2026-01-01T00:00:00.000Z',
+      archived_at: null,
+    })!;
+    const svg = renderToStaticMarkup(createElement(JourneyPoster, { journey }));
+    const rocket = render('rocket_through_space');
+    // The same drawing as the Rocket's poster.
+    const art = (markup: string) => markup.match(/<g fill="none" stroke="currentColor" stroke-width="2.5"[\s\S]*?<\/g>/)?.[0];
+    expect(art(svg)).toBe(art(rocket));
+    expect(svg.match(/<circle /g)).toHaveLength(3);
+    expect(svg).toContain('>Mini rocket</text>');
+    expect(svg).toContain(`>${fmt(t.caption, { count: 3 })}</text>`);
+  });
+});

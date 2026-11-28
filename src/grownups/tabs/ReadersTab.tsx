@@ -11,7 +11,7 @@ import {
   type Reader,
   type ReaderKind,
 } from '../../data';
-import { getJourney } from '../../journeys/journeys';
+import { loadJourney } from '../../journeys/resolve';
 import { journeyProgress } from '../../journeys/progress';
 import { NotesSection } from '../../notes/NotesSection';
 import { ToCheckList } from '../../reads/ToCheckList';
@@ -49,7 +49,7 @@ async function loadReaders(store: DataStore, householdId: string): Promise<Reade
         store.getActiveJourney(reader.id),
         store.countCompletedJourneys(reader.id),
       ]);
-      const def = active ? getJourney(active.journey_id) : undefined;
+      const def = active ? await loadJourney(store, active.journey_id) : undefined;
       return {
         reader,
         ...readStats(summaries),

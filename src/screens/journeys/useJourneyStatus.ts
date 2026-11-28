@@ -1,23 +1,23 @@
 import { useCallback, useEffect } from 'react';
 import { useDataQuery, type DataStore, type ReaderJourney } from '../../data';
 import { watchJourneyCompletion } from '../../journeys/completion';
-import { getJourney, type Journey } from '../../journeys/journeys';
+import { loadJourney, type ResolvedJourney } from '../../journeys/resolve';
 import { filledSteps, journeyProgress, type FilledStep } from '../../journeys/progress';
 
 export interface JourneyStatus {
   record: ReaderJourney;
-  journey: Journey;
+  journey: ResolvedJourney;
   /** Steps climbed, 0..journey.steps. */
   progress: number;
   filled: FilledStep[];
 }
 
-export const JOURNEY_TABLES = ['readers', 'reader_journeys', 'read_events'] as const;
+export const JOURNEY_TABLES = ['readers', 'reader_journeys', 'read_events', 'custom_journeys'] as const;
 
 /** The reader's active journey and progress, or null when there is none. */
 export async function loadJourneyStatus(store: DataStore, readerId: string): Promise<JourneyStatus | null> {
   const record = await store.getActiveJourney(readerId);
-  const journey = record ? getJourney(record.journey_id) : undefined;
+  const journey = record ? await loadJourney(store, record.journey_id) : undefined;
   if (!record || !journey) return null;
   const summaries = await store.listReadSummaries(readerId);
   return {

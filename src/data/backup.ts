@@ -1,16 +1,21 @@
 import {
   HOUSEHOLD_ID,
   MAX_COLLECTION_TITLE,
+  MAX_CUSTOM_JOURNEY_NAME,
+  MAX_CUSTOM_JOURNEY_STEPS,
   MAX_EXPECTED_COUNT,
+  MIN_CUSTOM_JOURNEY_STEPS,
   MAX_NOTE_STICKER,
   MAX_NOTE_TEXT,
   MAX_VOLUME,
   NOTE_EVERYONE,
   NOTE_TRIGGERS,
+  isJourneyTheme,
   noteViewId,
   type Book,
   type CalendarDate,
   type Collection,
+  type CustomJourney,
   type HomeItem,
   type Household,
   type Library,
@@ -34,13 +39,13 @@ import { checkLibraryCardBarcode } from './libraryCardRules';
  *     format: "library-card-backup", version: 1,
  *     schema: <the IndexedDB version that wrote it>, exported_at,
  *     tables: { households, readers, books, home_items, libraries, library_cards, collections,
- *               parent_notes, note_views, loans, read_events, reader_journeys },
+ *               parent_notes, note_views, custom_journeys, loans, read_events, reader_journeys },
  *     covers: { "cover:<sha256>": "<base64>" }
  *   }
  *
  * read_summaries are derived from read_events, so they are rebuilt on import
- * rather than exported. library_cards came later (schema 6), collections (schema 8) and parent notes
- * with their views (schema 9) later still: a backup without one restores with none (and books
+ * rather than exported. library_cards came later (schema 6), collections (schema 8), parent notes
+ * with their views (schema 9) and custom journeys (schema 10) later still: a backup without one restores with none (and books
  * without collection_id / volume are in none).
  */
 
@@ -57,13 +62,14 @@ export const BACKUP_TABLES = [
   'collections',
   'parent_notes',
   'note_views',
+  'custom_journeys',
   'loans',
   'read_events',
   'reader_journeys',
 ] as const;
 
 /** Tables added after the first backups: a file without one restores it empty. */
-const OPTIONAL_TABLES: readonly BackupTable[] = ['library_cards', 'collections', 'parent_notes', 'note_views'];
+const OPTIONAL_TABLES: readonly BackupTable[] = ['library_cards', 'collections', 'parent_notes', 'note_views', 'custom_journeys'];
 export type BackupTable = (typeof BACKUP_TABLES)[number];
 
 /** A reader as stored: files from before reader kinds and checks have neither (a child who needs the check). */
@@ -82,6 +88,7 @@ export interface BackupTables {
   collections: Collection[];
   parent_notes: ParentNote[];
   note_views: NoteView[];
+  custom_journeys: CustomJourney[];
   loans: Loan[];
   read_events: BackupReadEvent[];
   reader_journeys: ReaderJourney[];
@@ -169,6 +176,15 @@ const FIELDS: Record<BackupTable, Record<string, FieldKind>> = {
     created_at: 'string',
   },
   note_views: { id: 'string', household_id: 'string', note_id: 'string', reader_id: 'string', seen_at: 'string' },
+  custom_journeys: {
+    id: 'string',
+    household_id: 'string',
+    theme: 'string',
+    steps: 'number',
+    name: 'string?',
+    created_at: 'string',
+    archived_at: 'string?',
+  },
   home_items: { id: 'string', household_id: 'string', isbn: 'string', added_at: 'string' },
   libraries: {
     id: 'string',
@@ -235,6 +251,7 @@ const KEY_FIELD: Record<BackupTable, string> = {
   collections: 'id',
   parent_notes: 'id',
   note_views: 'id',
+  custom_journeys: 'id',
   loans: 'id',
   read_events: 'id',
   reader_journeys: 'id',
@@ -378,6 +395,18 @@ function validate(data: unknown, maxSchema: number): Backup {
     if (!readerIds.has(row.reader_id)) throw new Problem('bad_reference', `note_views[${i}].reader_id`);
     if (!noteIds.has(row.note_id)) throw new Problem('bad_reference', `note_views[${i}].note_id`);
     if (row.id !== noteViewId(row.note_id as string, row.reader_id as string)) throw new Problem('bad_row', `note_views[${i}].id`);
+  });
+
+  // Custom journeys: a built-in theme, 3–30 books, a name of 1–100 characters or none. A reader's
+  // journey naming one that isn't in the file is allowed (it shows as an unknown journey, as an
+  // older device would).
+  tables.custom_journeys.forEach((row, i) => {
+    if (!isJourneyTheme(row.theme)) throw new Problem('bad_row', `custom_journeys[${i}].theme`);
+    const steps = row.steps as number;
+    if (!Number.isInteger(steps) || steps < MIN_CUSTOM_JOURNEY_STEPS || steps > MAX_CUSTOM_JOURNEY_STEPS) throw new Problem('bad_row', `custom_journeys[${i}].steps`);
+    if (row.name !== null && (!(row.name as string).trim() || (row.name as string).trim().length > MAX_CUSTOM_JOURNEY_NAME)) {
+      throw new Problem('bad_row', `custom_journeys[${i}].name`);
+    }
   });
 
   const covers: Record<string, string> = {};

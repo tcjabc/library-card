@@ -52,6 +52,20 @@ export function sceneFor(id: string): SceneConfig | null {
   return (SCENES as Record<string, SceneConfig | undefined>)[id] ?? null;
 }
 
+/** A custom journey's travel (px): about 34 a book, at least 100, at most MAX_TRAVEL (1.25.0). */
+export const customTravel = (steps: number): number => clampTravel(Math.round(steps * 34));
+const clampTravel = (px: number) => Math.min(MAX_TRAVEL, Math.max(100, px));
+
+/**
+ * The scene for a journey definition: its theme's scene; a custom journey (another length) gets
+ * customTravel and the theme's layer factors. A built-in gets its own config object, unchanged.
+ */
+export function sceneForJourney(journey: { theme: string; steps: number; isCustom: boolean }): SceneConfig | null {
+  const base = sceneFor(journey.theme);
+  if (!base || !journey.isCustom) return base;
+  return { ...base, travel: customTravel(journey.steps) };
+}
+
 const clamp = (value: number, lo: number, hi: number) => (Number.isFinite(value) ? Math.min(hi, Math.max(lo, value)) : lo);
 
 /** How far (px) a layer moves over the whole track: its factor (clamped) × the scene's travel (clamped). */

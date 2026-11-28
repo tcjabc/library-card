@@ -11,22 +11,7 @@ import {
   writeSeenStep,
   type JourneySeenStorage,
 } from '../journeySeen';
-import {
-  MAX_FACTOR,
-  MAX_TRAVEL,
-  SCENES,
-  SCENE_LAYERS,
-  layerOffset,
-  layerTransform,
-  layerTravel,
-  sceneFor,
-  sceneMotion,
-  MIN_SETTLE_PX,
-  settleOffsets,
-  SCROLL_BLEND,
-  scrollShift,
-  stepShift,
-} from '../scene';
+import { MAX_FACTOR, MAX_TRAVEL, SCENES, SCENE_LAYERS, layerOffset, layerTransform, layerTravel, sceneFor, sceneMotion, MIN_SETTLE_PX, settleOffsets, SCROLL_BLEND, scrollShift, stepShift, customTravel, sceneForJourney } from '../scene';
 
 describe('scenes: which journeys have one', () => {
   it('all eight journeys have a scene (1.18.0: Hot-Air Balloon, Ocean Deep; 1.19.0: Redwood Tree, Ocean Cliff, Skyscraper; 1.20.0: Rapunzel’s Tower, Ladder to the Moon, Rocket Through Space)', () => {
@@ -275,5 +260,27 @@ describe('the seen step (device-local, per reader and journey)', () => {
       },
     };
     expect(openJourney(broken, 'r', 'j', 3, true)).toBeNull();
+  });
+});
+
+describe('custom journeys’ scenes (1.25.0)', () => {
+  it('travel is about 34 px a book, at least 100, at most MAX_TRAVEL', () => {
+    expect(customTravel(3)).toBe(102);
+    expect(customTravel(10)).toBe(340);
+    expect(customTravel(30)).toBe(MAX_TRAVEL);
+    expect(customTravel(2)).toBe(100);
+    for (let n = 3; n <= 30; n++) expect(customTravel(n)).toBeLessThanOrEqual(MAX_TRAVEL);
+  });
+
+  it('every built-in keeps its own config object (travel and factors unchanged)', () => {
+    for (const journey of JOURNEYS) expect(sceneForJourney(journey)).toBe(sceneFor(journey.id));
+    expect(SCENES.ocean_deep).toEqual({ travel: 200, factors: { far: 0.2, mid: 0.5, near: 1 } });
+    expect(SCENES.rocket_through_space?.travel).toBe(640);
+  });
+
+  it('a custom journey uses its theme’s layer factors with the custom travel', () => {
+    expect(sceneForJourney({ theme: 'ocean_deep', steps: 30, isCustom: true })).toEqual({ travel: 640, factors: { far: 0.2, mid: 0.5, near: 1 } });
+    expect(sceneForJourney({ theme: 'rocket_through_space', steps: 3, isCustom: true })).toEqual({ travel: 102, factors: { far: 0.2, mid: 0.6, near: 1 } });
+    expect(sceneForJourney({ theme: 'space_station', steps: 10, isCustom: true })).toBeNull();
   });
 });

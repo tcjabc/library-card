@@ -1,7 +1,8 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type ComponentType, type CSSProperties, type LazyExoticComponent, type RefObject } from 'react';
-import type { Journey, JourneyId } from '../../journeys/journeys';
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties, type LazyExoticComponent, type RefObject } from 'react';
+import type { JourneyId } from '../../journeys/journeys';
+import type { ResolvedJourney } from '../../journeys/resolve';
 import { readSeenStep, settleFrom, writeSeenStep } from '../../journeys/journeySeen';
-import { SCENE_LAYERS, SETTLE_MS, layerTravel, sceneFor, sceneMotion, settleOffsets, stepShift, type SceneLayer } from '../../journeys/scene';
+import { SCENE_LAYERS, SETTLE_MS, layerTravel, sceneForJourney, sceneMotion, settleOffsets, stepShift, type SceneLayer } from '../../journeys/scene';
 import { FRESH_SCENE_BUDGET, OPEN_SAMPLE_MS, SCROLL_SAMPLE_MS, SETTLE_SAMPLE_EXTRA_MS, sceneFrame, sceneLevel, type SceneBudget } from '../../journeys/sceneBudget';
 import { useStackDecor } from '../../staircase/decorSetting';
 import { decorRank, minDecor, type Decor } from '../../staircase/drawBudget';
@@ -49,7 +50,7 @@ function storage(): Storage | null {
 }
 
 interface JourneySceneProps {
-  journey: Journey;
+  journey: ResolvedJourney;
   progress: number;
   readerId: string;
   /** The reader's journey record (its seen step is kept per record). */
@@ -71,8 +72,11 @@ interface JourneySceneProps {
  * without a scene.
  */
 export function JourneyScene({ journey, progress, readerId, recordId, trackRef }: JourneySceneProps) {
-  const config = sceneFor(journey.id);
-  const Art = ART[journey.id];
+  // The theme's scene (a custom journey: the theme's at its own length). One object per theme and
+  // length, so the effects below don't restart on every render.
+  const { theme, steps: journeySteps, isCustom } = journey;
+  const config = useMemo(() => sceneForJourney({ theme, steps: journeySteps, isCustom }), [theme, journeySteps, isCustom]);
+  const Art = ART[theme];
   const decor = useStackDecor();
   const reduced = useReducedMotion();
   const pretendSlow = useJourneySlow();
@@ -113,8 +117,8 @@ export function JourneyScene({ journey, progress, readerId, recordId, trackRef }
 
   // What Developer tools shows for the last journey screen (sceneMotionDev.ts); never per frame.
   useEffect(() => {
-    if (config) publishSceneMotion({ journeyId: journey.id, level, why, setting: decor, cap: visit.cap, steps: visit.steps });
-  }, [config, journey.id, level, why, decor, visit]);
+    if (config) publishSceneMotion({ journeyId: theme, level, why, setting: decor, cap: visit.cap, steps: visit.steps });
+  }, [config, theme, level, why, decor, visit]);
 
   // The shift, written as each layer's own transform (sceneScroll.ts): following the scroll
   // (parallax); still, the current step's place if the scene opened still, or frozen where the
@@ -184,7 +188,7 @@ export function JourneyScene({ journey, progress, readerId, recordId, trackRef }
 
   if (!config || !Art) return null;
   return (
-    <div className={`journey-scene journey-scene--${journey.id}${motion.loops ? ' journey-scene--loops' : ''}`} data-motion={level} aria-hidden="true">
+    <div className={`journey-scene journey-scene--${theme}${motion.loops ? ' journey-scene--loops' : ''}`} data-motion={level} aria-hidden="true">
       {SCENE_LAYERS.map((layer, i) => (
         <div
           key={layer}

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { HOUSEHOLD_ID, noteViewId } from '../../DataStore';
+import { HOUSEHOLD_ID, customJourneyRef, noteViewId } from '../../DataStore';
 import { rawAll, rawPut } from '../../testing/fixtures';
 import { SYNCED_TABLES } from '../schema';
 import { createSyncStore } from '../adapter';
@@ -16,7 +16,7 @@ import { formatStamp, type Op } from '../../../sync/vendor/sync-core.js';
 const ISBN_A = '9780000000002';
 const ISBN_B = '9780000000019';
 const T0 = Date.parse('2026-06-01T00:00:00.000Z');
-const VIEWS = ['households', 'readers', 'books', 'home_items', 'libraries', 'library_cards', 'collections', 'parent_notes', 'note_views', 'loans', 'read_events', 'reader_journeys', 'read_summaries'];
+const VIEWS = ['households', 'readers', 'books', 'home_items', 'libraries', 'library_cards', 'collections', 'parent_notes', 'note_views', 'custom_journeys', 'loans', 'read_events', 'reader_journeys', 'read_summaries'];
 
 interface Device {
   store: SyncDataStore;
@@ -605,6 +605,86 @@ describe('sync adapter: two devices converge', () => {
     off();
     expect(heard).toEqual([]);
     expect(await views(b)).toBe(before);
+  });
+
+  describe('custom journeys (1.25.0)', () => {
+    it('made on two devices at once: both journeys show on both', async () => {
+      const { a, b } = await household();
+      const fromA = await a.store.createCustomJourney({ household_id: HOUSEHOLD_ID, theme: 'rocket_through_space', steps: 12, name: 'Space' });
+      const fromB = await b.store.createCustomJourney({ household_id: HOUSEHOLD_ID, theme: 'ocean_deep', steps: 4 });
+      const opsA = await ops(a);
+      const opsB = await ops(b);
+      await send(a, b, opsA);
+      await send(b, a, opsB);
+      expect(await views(a)).toBe(await views(b));
+      expect((await b.store.listCustomJourneys(HOUSEHOLD_ID)).map((j) => j.id).sort()).toEqual([fromA.id, fromB.id].sort());
+      expect(await b.store.getCustomJourney(fromA.id)).toMatchObject({ theme: 'rocket_through_space', steps: 12, name: 'Space', archived_at: null });
+    });
+
+    it('two raises at once (10→20 on A, 10→15 later on B) keep the longer, 20, in any order', async () => {
+      const { a, b } = await household();
+      const j = await a.store.createCustomJourney({ household_id: HOUSEHOLD_ID, theme: 'skyscraper', steps: 10 });
+      const created = await ops(a);
+      await send(a, b, created);
+      await a.store.removeSentOps(created);
+      a.at = T0 + 10_000;
+      await a.store.updateCustomJourney(j.id, { steps: 20 });
+      b.at = T0 + 20_000; // B's raise is the later write, and the smaller one
+      await b.store.updateCustomJourney(j.id, { steps: 15 });
+      const fromA = await ops(a);
+      const fromB = await ops(b);
+      for (const list of orders([...fromA, ...fromB])) {
+        const c = await device(T0 + 30_000);
+        await c.store.enableSync(generateKey());
+        await c.store.applyRemote([...created, ...list], 1);
+        expect((await c.store.getCustomJourney(j.id))?.steps).toBe(20);
+      }
+      await send(a, b, fromA);
+      await send(b, a, fromB);
+      expect((await a.store.getCustomJourney(j.id))?.steps).toBe(20);
+      expect((await b.store.getCustomJourney(j.id))?.steps).toBe(20);
+      expect(await views(a)).toBe(await views(b));
+    });
+
+    it('the name is last writer wins; archiving reaches every device, which still lists it with the flag', async () => {
+      const { a, b } = await household();
+      const j = await a.store.createCustomJourney({ household_id: HOUSEHOLD_ID, theme: 'redwood_tree', steps: 8, name: 'Tree' });
+      await send(a, b);
+      await a.store.removeSentOps(await ops(a));
+      a.at = T0 + 10_000;
+      await a.store.updateCustomJourney(j.id, { name: 'Old name' });
+      b.at = T0 + 20_000;
+      await b.store.updateCustomJourney(j.id, { name: 'Newest name' });
+      await b.store.archiveCustomJourney(j.id);
+      const fromA = await ops(a);
+      const fromB = await ops(b);
+      await send(b, a, fromB);
+      await send(a, b, fromA); // A's older rename arrives late at B: B's newer one stays
+      for (const d of [a, b]) {
+        expect((await d.store.getCustomJourney(j.id))?.name).toBe('Newest name');
+        expect(await d.store.listCustomJourneys(HOUSEHOLD_ID)).toEqual([]);
+        expect((await d.store.listCustomJourneys(HOUSEHOLD_ID, { includeArchived: true })).map((x) => [x.id, x.archived_at !== null])).toEqual([[j.id, true]]);
+      }
+      expect(await views(a)).toBe(await views(b));
+    });
+
+    it('a device on the previous table list skips them, then reads the log again once after updating, and ends identical', async () => {
+      const { a, b, reader } = await household();
+      const j = await a.store.createCustomJourney({ household_id: HOUSEHOLD_ID, theme: 'hot_air_balloon', steps: 6, name: 'Up' });
+      await a.store.startJourney(reader.id, customJourneyRef(j.id));
+      const log = await ops(a);
+      // An older version skips the unknown table (its cursor moves on); its table list lacks it.
+      await b.store.applyRemote(log.filter((op) => !op.rec.startsWith('custom_journeys:')), 50);
+      await rawPut(b.dbName, 'meta', { key: 'sync_tables', value: SYNCED_TABLES.filter((t) => t !== 'custom_journeys').sort().join(',') });
+      expect(await b.store.getCustomJourney(j.id)).toBeNull();
+      expect((await b.store.getActiveJourney(reader.id))?.journey_id).toBe(customJourneyRef(j.id)); // the reader's journey arrived; its definition didn't
+      // Updated: the next pull starts from 0, once.
+      expect(await b.store.getCursor()).toBe(0);
+      await b.store.applyRemote(log, 50);
+      expect(await b.store.getCursor()).toBe(50);
+      expect(await b.store.getCustomJourney(j.id)).toMatchObject({ theme: 'hot_air_balloon', steps: 6, name: 'Up' });
+      expect(await views(b)).toBe(await views(a));
+    });
   });
 
   it('re-applying the same ops changes nothing and announces nothing', async () => {

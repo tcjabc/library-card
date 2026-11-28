@@ -86,6 +86,8 @@ export interface LocalCounts {
   libraries: number;
   collections: number;
   notes: number;
+  /** A household's own journeys, archived ones too (1.25.0; not shown in the join text yet). */
+  customJourneys: number;
   loans: number;
   libraryCards: number;
   reads: number;
@@ -632,12 +634,13 @@ export async function createSyncService(options: SyncServiceOptions): Promise<Sy
   }
 
   async function localCounts(): Promise<LocalCounts> {
-    const [readers, home, libraries, collections, notes, loans, libraryCards, summaries] = await Promise.all([
+    const [readers, home, libraries, collections, notes, customJourneys, loans, libraryCards, summaries] = await Promise.all([
       store.listReaders(HOUSEHOLD_ID),
       store.listHomeItems(HOUSEHOLD_ID),
       store.listLibraries(HOUSEHOLD_ID),
       store.listCollections(HOUSEHOLD_ID),
       store.listNotes(HOUSEHOLD_ID),
+      store.listCustomJourneys(HOUSEHOLD_ID, { includeArchived: true }),
       store.listLoans(HOUSEHOLD_ID),
       store.listHouseholdLibraryCards(HOUSEHOLD_ID),
       store.listHouseholdReadSummaries(HOUSEHOLD_ID),
@@ -650,6 +653,7 @@ export async function createSyncService(options: SyncServiceOptions): Promise<Sy
       libraries: libraries.length,
       collections: collections.length,
       notes: notes.length,
+      customJourneys: customJourneys.length,
       loans: loans.length,
       libraryCards: libraryCards.length,
       reads,

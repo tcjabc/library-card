@@ -98,9 +98,10 @@ a newer one sends. Known fields must have the right type and size or the op is s
 | `collections` | `box-<ISBN-13>` or id | **title** (≤ 200), cover_url (≤ 4096 or null), isbn (13 digits or null), expected_count (1–500 or null) |
 | `parent_notes` | id | author_id (a grown-up reader's id or null), **target** (`everyone` or a reader id), **trigger** (`after_book` or `journey_done`), **text** (≤ 500), sticker (≤ 32 or null), **position** (whole number), **created_at** |
 | `note_views` | `<note>:<reader>` | **note_id**, **reader_id**, **seen_at** |
+| `custom_journeys` | id (a UUID) | **theme** (one of the 8 built-in journey ids), **steps** (3–30), name (≤ 100 or null; missing or null = "<Theme> · N books"), **created_at**, archived_at (or null) |
 | `loans` | id | **reader_id**, **isbn**, library_id, library_name (≤ 300), sticker_barcode (≤ 200), **borrowed_at**, due_date (YYYY-MM-DD or null), returned_at, **renew_count** (0–100,000) |
 | `read_events` | id | **reader_id**, **isbn**, **read_at**, how (`self` or `help`), status (`pending` or `confirmed`; missing = confirmed), confirmed_at, confirmed_by (a grown-up reader's id or `pin`) |
-| `reader_journeys` | id | **reader_id**, **journey_id** (≤ 64), **started_at**, completed_at, abandoned_at |
+| `reader_journeys` | id | **reader_id**, **journey_id** (≤ 64: a built-in id or `custom:<id>`), **started_at**, completed_at, abandoned_at |
 
 Ids are 1–40 characters of letters, digits, `-` and `_`. `read_summaries` are derived from
 `read_events` on each device and never sent; they count confirmed reads only (a pending read waits
@@ -162,6 +163,16 @@ written only for them and every view of those. Which note is due is worked out o
 read events, journeys and the views (src/notes/due.ts); a per-device guard only covers the moment
 between "Thank you!" and the view being written.
 
+**Custom journeys** (1.25.0) are a household's own journeys: one of the eight built-in themes at a
+length of its own. A reader on one has `journey_id` `custom:<id>` (43 characters with a UUID), and
+src/journeys/resolve.ts turns it into a definition (the theme's scene, art and colours, its own
+length and name, the theme's stages scaled). They are never deleted, only archived (see Conflict
+rules): a tombstone would hide the definition from readers already on it. Versions before 1.25.0
+skip `custom_journeys` ops as an unknown table. Their readers' `reader_journeys` rows still
+arrive, and show as no journey until the definition does. Adding the table grows `SYNCED_TABLES`,
+so each device that updates to 1.25.0 re-reads the household's log once (above) and catches up
+on journeys made before it updated.
+
 ## Visibility
 
 The typed tables ("views") are rebuilt from records. A row is shown only if:
@@ -183,6 +194,14 @@ Last writer wins per field: the later stamp wins, the same on every device. On t
 - **Completion is permanent.** `completed_at` and `abandoned_at` never go back to null: set beats
   unset whatever the stamps, and within "set" the later stamp wins. A late or stale op can't undo
   a completed journey.
+- **A custom journey's length only grows.** For `steps` the larger value wins, whatever the
+  stamps; with equal values the later stamp does. Two raises made at once (10 → 20 on one device,
+  10 → 15 later on another) end at 20 everywhere. The device writing a change refuses a lower
+  length; the merge makes that hold across devices too.
+- **Archiving is permanent.** A custom journey's `archived_at` follows the completion rule: set
+  beats unset. An archived journey is hidden from new starts, while readers already on it keep
+  going and their history keeps its name and theme. Its name is last writer wins, like any field,
+  and its theme never changes after it's made.
 - **Duplicate stickers.** Two active loans with the same library and sticker (scanned twice, or
   on two devices before they synced) are both kept. The earliest `borrowed_at` (then the smaller
   id) wins; the others are flagged for a grown-up to tidy up. Nothing is deleted automatically.

@@ -6,6 +6,21 @@ finish at the top for rising journeys, at the bottom for Ocean Deep (it goes dow
 (steps, direction, stage labels in `src/strings/en.ts`, a theme colour `--journey-*` each). Progress:
 `src/journeys/progress.ts`. Completion: `src/journeys/completion.ts`.
 
+**Resolving a journey (since 1.25.0).** A reader's `journey_id` is a built-in id or a household's
+custom journey (`custom:<id>`, the `custom_journeys` table: a theme, a length of 3–30 and an
+optional name). Everything that shows or checks a reader's journey resolves it through
+`src/journeys/resolve.ts` (`resolveJourney(id, customs)`, `loadJourney(store, id)`):
+- status, completion, the celebration, Grown-ups → Readers, the journey screen and its scene, and
+  the poster;
+- a built-in resolves to its own definition, unchanged, without reading storage;
+- a custom one takes its theme's scene, art, colours and direction, its own length and name
+  (default "<Theme> · N books"), and the theme's stages scaled to its length.
+
+The scene, scene art, backdrop colour and poster art are looked up by `theme`, never `id`. A custom
+journey's scene travel is `customTravel(N)` (about 34 px a book, 100–640 px) with the theme's
+layer factors; built-ins keep their own. Nothing creates a custom journey yet: the screens come in
+1.26.0 (docs/custom-journeys-plan.md).
+
 ## Completion
 
 `checkJourneyCompletion` finishes the active journey once every step is filled. It runs after every read, and while

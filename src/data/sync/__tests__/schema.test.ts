@@ -22,8 +22,11 @@ const problem = (o: unknown) => {
 };
 
 describe('wire ids', () => {
-  it('are "<table>:<local id>" for the twelve synced tables', () => {
-    expect(SYNCED_TABLES).toEqual(['households', 'readers', 'books', 'home_items', 'libraries', 'library_cards', 'collections', 'parent_notes', 'note_views', 'loans', 'read_events', 'reader_journeys']);
+  it('are "<table>:<local id>" for the thirteen synced tables', () => {
+    expect(SYNCED_TABLES).toEqual(['households', 'readers', 'books', 'home_items', 'libraries', 'library_cards', 'collections', 'parent_notes', 'note_views', 'custom_journeys', 'loans', 'read_events', 'reader_journeys']);
+    // A custom journey's id is a UUID: its wire id stays within sync's 64 characters.
+    expect(parseWireId(`custom_journeys:${UUID}`)).toEqual({ table: 'custom_journeys', localId: UUID });
+    expect(`custom_journeys:${UUID}`.length).toBeLessThanOrEqual(64);
     // A note view's local id is "<note id>:<reader id>": the wire id splits at the first colon.
     expect(parseWireId(`note_views:n1:${UUID}`)).toEqual({ table: 'note_views', localId: `n1:${UUID}` });
     expect(parseWireId('note_views:n1')).toBeNull();
@@ -59,6 +62,12 @@ describe('validate(op)', () => {
       op(`loans:${UUID}`, 'renew_count', 0),
       op(`read_events:${UUID}`, 'read_at', '2026-01-01T00:00:00.000Z'),
       op(`reader_journeys:${UUID}`, 'completed_at', null),
+      op(`reader_journeys:${UUID}`, 'journey_id', `custom:${UUID}`),
+      op(`custom_journeys:${UUID}`, 'theme', 'rocket_through_space'),
+      op(`custom_journeys:${UUID}`, 'steps', 3),
+      op(`custom_journeys:${UUID}`, 'steps', 30),
+      op(`custom_journeys:${UUID}`, 'name', null),
+      op(`custom_journeys:${UUID}`, 'archived_at', '2026-01-01T00:00:00.000Z'),
       op(`readers:${UUID}`, 'del', true),
     ];
     for (const o of ok) expect(problem(o), `${o.rec} ${o.f}`).toBe('ok');
@@ -166,6 +175,7 @@ describe('rows and records', () => {
       collections: ['title'],
       parent_notes: ['target', 'trigger', 'text', 'position', 'created_at'],
       note_views: ['note_id', 'reader_id', 'seen_at'],
+      custom_journeys: ['theme', 'steps', 'created_at'],
       loans: ['reader_id', 'isbn', 'borrowed_at', 'renew_count'],
       read_events: ['reader_id', 'isbn', 'read_at'],
       reader_journeys: ['reader_id', 'journey_id', 'started_at'],
@@ -199,5 +209,30 @@ describe('the known-tables marker (1.24.1)', () => {
     expect(syncedTablesGrew(`${SYNCED_TABLES_MARKER},custom_journeys`)).toBe(false);
     expect(syncedTablesGrew('a,b', ['a', 'b', 'c'])).toBe(true);
     expect(syncedTablesGrew('a,b,c', ['b', 'a'])).toBe(false);
+  });
+});
+
+describe('custom journeys (1.25.0)', () => {
+  it('a theme is one of the eight built-in journeys; a length is a whole number 3–30; a name is at most 100 characters', () => {
+    for (const [f, v] of [
+      ['theme', 'space_station'],
+      ['theme', 'ROCKET_THROUGH_SPACE'],
+      ['theme', null],
+      ['steps', 2],
+      ['steps', 31],
+      ['steps', 10.5],
+      ['steps', '10'],
+      ['name', 'x'.repeat(101)],
+      ['created_at', 'yesterday'],
+    ] as const) {
+      expect(problem(op(`custom_journeys:${UUID}`, f, v)), `${f} ${String(v)}`).toBe('bad_value');
+    }
+  });
+
+  it('a row needs its theme, length and creation time; the name and archive time may be missing', () => {
+    const fields = { theme: 'ocean_deep', steps: 7, created_at: '2026-01-01T00:00:00.000Z', del: false };
+    expect(recordToRow('custom_journeys', UUID, fields)).toEqual({ id: UUID, household_id: 'main', ...fields, del: undefined, name: null, archived_at: null });
+    expect(recordToRow('custom_journeys', UUID, { ...fields, steps: undefined })).toBeNull();
+    expect(recordToRow('custom_journeys', UUID, { ...fields, theme: 'unknown_theme' })).toBeNull();
   });
 });

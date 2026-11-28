@@ -15,6 +15,9 @@ import {
   HOUSEHOLD_ID,
   MAX_COLLECTION_TITLE,
   MAX_COVER_BYTES,
+  MAX_CUSTOM_JOURNEY_NAME,
+  MAX_CUSTOM_JOURNEY_STEPS,
+  MIN_CUSTOM_JOURNEY_STEPS,
   MAX_EXPECTED_COUNT,
   MAX_NOTE_STICKER,
   MAX_NOTE_TEXT,
@@ -22,7 +25,10 @@ import {
   NOTE_EVERYONE,
   NOTE_TRIGGERS,
   collectionIdForIsbn,
+  isJourneyTheme,
   noteViewId,
+  type CustomJourney,
+  type CustomJourneyPatch,
   type NoteView,
   type ParentNote,
   type ParentNotePatch,
@@ -97,10 +103,12 @@ import { setDatabaseUpgradeBlocked } from '../upgradeStatus';
  *       and books.volume (missing on older rows: none), with a books index by collection.
  *   v9  `parent_notes` (indexed by household and target) and `note_views` (keyed
  *       "<note id>:<reader id>", indexed by note, reader and household). New stores only.
+ *   v10 `custom_journeys` (a household's own journeys: a theme at a length of its own), indexed by
+ *       household. New store only.
  */
 
 const DB_NAME = 'library-card';
-export const DB_VERSION = 9;
+export const DB_VERSION = 10;
 
 // Highest possible string suffix for compound-key range upper bounds.
 const MAX_STRING = '￿';
@@ -176,6 +184,7 @@ interface LibraryCardDB extends DBSchema {
   collections: { key: Id; value: Collection; indexes: { by_household: Id; by_cover: string } };
   parent_notes: { key: Id; value: ParentNote; indexes: { by_household: Id; by_target: Id } };
   note_views: { key: string; value: NoteView; indexes: { by_note: Id; by_reader: Id; by_household: Id } };
+  custom_journeys: { key: Id; value: CustomJourney; indexes: { by_household: Id } };
   cover_images: { key: string; value: CoverImageRecord };
   /** Legacy, emptied by the cover re-key step. Deleted at the next schema version. */
   covers: { key: BookKey; value: LegacyCoverRecord };
@@ -362,6 +371,11 @@ async function openLibraryDb(name: string): Promise<DB> {
           views.createIndex('by_note', 'note_id');
           views.createIndex('by_reader', 'reader_id');
           views.createIndex('by_household', 'household_id');
+        }
+
+        if (oldVersion < 10) {
+          const journeys = db.createObjectStore('custom_journeys', { keyPath: 'id' });
+          journeys.createIndex('by_household', 'household_id');
         }
       },
       blocking(_currentVersion, blockedVersion, event) {
@@ -624,6 +638,29 @@ function checkedCollectionTitle(value: unknown): string {
     throw new DataStoreError('invalid', `A collection's title is 1–${MAX_COLLECTION_TITLE} characters.`);
   }
   return title;
+}
+
+/** A custom journey's theme: one of the built-in journey ids. */
+function checkedTheme(value: unknown): CustomJourney['theme'] {
+  if (!isJourneyTheme(value)) throw new DataStoreError('invalid', `A custom journey's theme is a built-in journey id, got "${String(value)}".`);
+  return value;
+}
+
+/** A custom journey's length: a whole number of books, 3–30. */
+function checkedCustomSteps(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < MIN_CUSTOM_JOURNEY_STEPS || value > MAX_CUSTOM_JOURNEY_STEPS) {
+    throw new DataStoreError('invalid', `A custom journey is ${MIN_CUSTOM_JOURNEY_STEPS}–${MAX_CUSTOM_JOURNEY_STEPS} books.`);
+  }
+  return value;
+}
+
+/** A custom journey's name: trimmed, 1–100 characters; missing, null or blank is the default name. */
+function checkedCustomName(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') throw new DataStoreError('invalid', "A custom journey's name is text or null.");
+  const name = value.trim();
+  if (name.length > MAX_CUSTOM_JOURNEY_NAME) throw new DataStoreError('invalid', `A custom journey's name is at most ${MAX_CUSTOM_JOURNEY_NAME} characters.`);
+  return name || null;
 }
 
 /** A box ISBN: 13 digits, or null. */
@@ -1284,6 +1321,62 @@ export async function createStoreWith<Extra extends object>(
       await tx.done;
       changed('collections');
       return resolved;
+    },
+
+    async createCustomJourney(input) {
+      const journey: CustomJourney = {
+        id: newId(),
+        household_id: input.household_id,
+        theme: checkedTheme(input.theme),
+        steps: checkedCustomSteps(input.steps),
+        name: checkedCustomName(input.name),
+        created_at: nowIso(),
+        archived_at: null,
+      };
+      await (await getDb()).add('custom_journeys', journey);
+      changed('custom_journeys');
+      return journey;
+    },
+
+    async getCustomJourney(id) {
+      return (await (await getDb()).get('custom_journeys', id)) ?? null;
+    },
+
+    async listCustomJourneys(householdId, options = {}) {
+      const rows = await (await getDb()).getAllFromIndex('custom_journeys', 'by_household', householdId);
+      return rows
+        .filter((j) => options.includeArchived || j.archived_at === null)
+        .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+    },
+
+    async updateCustomJourney(id, patch: CustomJourneyPatch) {
+      const tx = (await getDb()).transaction('custom_journeys', 'readwrite');
+      const existing = await tx.store.get(id);
+      if (!existing) throw notFound('Custom journey', id);
+      const theme = (patch as { theme?: unknown }).theme;
+      if (theme !== undefined && theme !== existing.theme) throw new DataStoreError('invalid', 'A custom journey keeps the theme it was made with.');
+      const steps = patch.steps === undefined ? existing.steps : checkedCustomSteps(patch.steps);
+      if (steps < existing.steps) throw new DataStoreError('invalid', `A custom journey can be made longer, not shorter (it is ${existing.steps} books).`);
+      const next: CustomJourney = { ...existing, steps, name: patch.name === undefined ? existing.name : checkedCustomName(patch.name) };
+      await tx.store.put(next);
+      await tx.done;
+      changed('custom_journeys');
+      return next;
+    },
+
+    async archiveCustomJourney(id, archivedAt) {
+      const tx = (await getDb()).transaction('custom_journeys', 'readwrite');
+      const existing = await tx.store.get(id);
+      if (!existing) throw notFound('Custom journey', id);
+      if (existing.archived_at !== null) {
+        await tx.done;
+        return existing;
+      }
+      const next: CustomJourney = { ...existing, archived_at: archivedAt === undefined ? nowIso() : checkedTimestamp(archivedAt, 'archived_at') };
+      await tx.store.put(next);
+      await tx.done;
+      changed('custom_journeys');
+      return next;
     },
 
     async getCollection(id) {
@@ -2213,6 +2306,7 @@ export const ALL_TABLES: DataTable[] = [
   'collections',
   'parent_notes',
   'note_views',
+  'custom_journeys',
   'read_events',
   'reader_journeys',
 ];
