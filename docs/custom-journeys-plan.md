@@ -185,7 +185,7 @@ length of 3 to 30 books and an optional name.
    - Backup and storage checks.
    - Convergence, schema and backup tests.
    - `docs/sync.md`.
-3. **1.26.0: what children and grown-ups see.**
+3. **1.26.0: what children and grown-ups see** (built):
    - The create UI in Grown-ups → Readers (and the poster shortcut).
    - My Journeys: the gallery group, hub, journey screen, scene travel from N, scaled stages.
    - Completion and celebration through the resolver.
@@ -193,3 +193,9 @@ length of 3 to 30 books and an optional name.
 
 **Bundle estimate:** about +1–2 KB gzipped at startup (adapter, schema, resolver), +2–4 KB in the
 Grown-ups chunk (the form), about +0.3 KB in the posters chunk.
+
+Found while building 1.26.0: confetti in an open dialog used the `:modal` selector, which Chrome
+only reads from 105 (Safari from 15.4). On Chrome 103 every celebration threw and the app went
+blank, built-in journeys too, since collections in 1.6.0. The fix (`isModal` in
+src/ui/confetti.ts) treats an open dialog as modal where `:modal` is unknown.
+

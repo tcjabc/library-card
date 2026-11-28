@@ -59,7 +59,7 @@ export function CardsTab(props: TabProps) {
     <PrintRoot fallback={cardsReady ? CARDS_JOB : undefined}>
       <CardsSections {...props} onReadyChange={setCardsReady} />
       <Suspense fallback={null}>
-        <PostersSection />
+        <PostersSection store={props.store} householdId={props.household.id} />
       </Suspense>
     </PrintRoot>
   );

@@ -67,6 +67,15 @@
   font-size: var(--text-md);
 }
 
+/* A household's own journey (1.26.0): a name of up to 100 characters stays within three lines. */
+.journey-card--custom .journey-card__title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
 .journey-card--active .journey-card__detail {
   padding: var(--space-1) var(--space-3);
   border-radius: var(--radius-full);

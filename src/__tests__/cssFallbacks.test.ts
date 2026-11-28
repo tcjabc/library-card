@@ -142,8 +142,10 @@ describe('the production CSS keeps the print rules, scoped to a print job', () =
   it('a poster is one A4 sheet with both page-break properties, for old browsers too', () => {
     const sheet = all().filter((d) => d.where === '.poster-sheet').map((d) => `${d.property}:${d.value}`);
     expect(sheet).toEqual(expect.arrayContaining(['width:var(--print-page-width)', 'height:var(--print-page-height)', 'break-after:page', 'page-break-after:always']));
-    // The posters' CSS is in their own chunk (PostersSection), not the main bundle.
+    // The posters' CSS is in a lazy chunk (shared by the posters section and, since 1.26.0, the
+    // custom journey form), never in the main bundle.
     const posterFiles = files.filter(({ css }) => css.includes('.poster-sheet')).map(({ name }) => name);
-    expect(posterFiles).toEqual([expect.stringMatching(/^PostersSection-/)]);
+    expect(posterFiles).toHaveLength(1);
+    expect(posterFiles[0]).toMatch(/^(?:PostersSection|posters-print)-/);
   });
 });

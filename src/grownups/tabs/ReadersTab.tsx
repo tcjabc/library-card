@@ -1,4 +1,4 @@
-import { useCallback, useId, useState, type FormEvent } from 'react';
+import { lazy, Suspense, useCallback, useId, useState, type FormEvent } from 'react';
 import { useCardQr } from '../../cards/useCardQr';
 import {
   CONFIRMED_BY_PIN,
@@ -14,6 +14,9 @@ import {
 import { loadJourney } from '../../journeys/resolve';
 import { journeyProgress } from '../../journeys/progress';
 import { NotesSection } from '../../notes/NotesSection';
+
+/** Custom journeys (1.26.0): their own chunk. */
+const JourneysSection = lazy(() => import('../journeys/JourneysSection'));
 import { ToCheckList } from '../../reads/ToCheckList';
 import { AvatarPicker } from '../../readers/AvatarPicker';
 import { DEFAULT_AVATAR } from '../../readers/avatars';
@@ -214,6 +217,9 @@ export function ReadersTab({ store, household }: TabProps) {
       </section>
 
       <NotesSection store={store} household={household} />
+      <Suspense fallback={null}>
+        <JourneysSection store={store} household={household} />
+      </Suspense>
 
       {dialog?.kind === 'edit' && (
         <ReaderForm key={dialog.reader?.id ?? 'new'} store={store} household={household} reader={dialog.reader} onClose={() => setDialog(null)} />

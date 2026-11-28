@@ -102,6 +102,25 @@ and arcs rather than using their control points.
   makes a crescent.
 - Rapunzel's last brick course stops at the tower's foot instead of running 10 units below it.
 
+## Custom journeys' posters (since 1.26.0)
+
+A household's custom journey prints like a built-in: its theme's art with `layoutSlots(N)` for its
+own length, and its name as the title (or "<Theme> · N books"), under the same caption, "My
+reading journey: N books".
+- **Chips:** they come after the eight built-ins, and "All" prints both, one A4 page each, built-ins
+  first. Archived journeys aren't listed.
+- **"Create custom journey"** in the section opens the same form as Grown-ups → Readers → Journeys,
+  and picks the new poster once it's saved.
+- **Titles** fit the label band whatever their length (`fitPosterTitle`):
+  - as before when they fit (every built-in title);
+  - else smaller on one line;
+  - else on two lines, broken at the space nearest the middle;
+  - a line still too wide is squeezed to the safe width (SVG `textLength`).
+
+  A 100-character name stays inside the 9 mm margin.
+- **Checked:** 3- and 30-book posters print with every line at 65.3 mm and nothing in the margin.
+  The eight built-ins' PDFs are unchanged.
+
 ## Adding or redrawing a poster
 
 1. **Draw it** in `src/posters/art/<journeyName>.ts`, exporting a `PosterArt`

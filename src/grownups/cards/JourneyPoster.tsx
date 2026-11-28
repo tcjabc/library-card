@@ -1,6 +1,6 @@
 import type { ResolvedJourney } from '../../journeys/resolve';
-import { POSTER_ART } from '../../posters/art';
-import { layoutSlots, POSTER_FRAME, POSTER_STROKES, POSTER_TYPE } from '../../posters/posterLayout';
+import { POSTER_ART, type PosterArt } from '../../posters/art';
+import { fitPosterTitle, layoutSlots, POSTER_FRAME, POSTER_STROKES, POSTER_TYPE, TITLE_WIDTH } from '../../posters/posterLayout';
 import { fmt, strings } from '../../strings';
 
 const t = strings.grownups.posters;
@@ -18,6 +18,7 @@ export function JourneyPoster({ journey }: { journey: ResolvedJourney }) {
   const left = F.margin + F.lineInset;
   const right = F.width - left;
   const down = journey.direction === 'down';
+  const title = fitPosterTitle(journey.title);
   return (
     <svg
       className="poster"
@@ -27,9 +28,20 @@ export function JourneyPoster({ journey }: { journey: ResolvedJourney }) {
       role="img"
       aria-label={fmt(t.posterAlt, { journey: journey.title, count: journey.steps })}
     >
-      <text className="poster__title" x={F.centre} y={T.titleY} textAnchor="middle" fontSize={T.titleSize}>
-        {journey.title}
-      </text>
+      {title.lines.map((line) => (
+        <text
+          key={line.y}
+          className="poster__title"
+          x={F.centre}
+          y={line.y}
+          textAnchor="middle"
+          fontSize={title.size}
+          textLength={line.squeeze ? TITLE_WIDTH : undefined}
+          lengthAdjust={line.squeeze ? 'spacingAndGlyphs' : undefined}
+        >
+          {line.text}
+        </text>
+      ))}
       <text x={F.centre} y={T.captionY} textAnchor="middle" fontSize={T.captionSize}>
         {fmt(t.caption, { count: journey.steps })}
       </text>
@@ -38,19 +50,7 @@ export function JourneyPoster({ journey }: { journey: ResolvedJourney }) {
       </text>
       <line x1={T.nameLineX} y1={T.nameY} x2={right} y2={T.nameY} stroke="currentColor" strokeWidth={POSTER_STROKES.line} strokeLinecap="round" />
 
-      {art && (
-        <g fill="none" stroke="currentColor" strokeWidth={POSTER_STROKES.art} strokeLinecap="round" strokeLinejoin="round">
-          {art.shapes.map((shape, i) => (
-            <path
-              key={i}
-              d={shape.d}
-              className={shape.fill === 'paper' ? 'poster__paper' : undefined}
-              strokeDasharray={shape.dots ? POSTER_STROKES.dots : undefined}
-              strokeWidth={shape.thin ? POSTER_STROKES.artThin : undefined}
-            />
-          ))}
-        </g>
-      )}
+      {art && <PosterArtShapes art={art} />}
 
       {slots.map((slot) => (
         <g key={slot.book}>
@@ -72,6 +72,23 @@ export function JourneyPoster({ journey }: { journey: ResolvedJourney }) {
         {t.footer}
       </text>
     </svg>
+  );
+}
+
+/** A poster's line drawing (also the theme pictures in the custom journey form). */
+export function PosterArtShapes({ art }: { art: PosterArt }) {
+  return (
+    <g fill="none" stroke="currentColor" strokeWidth={POSTER_STROKES.art} strokeLinecap="round" strokeLinejoin="round">
+      {art.shapes.map((shape, i) => (
+        <path
+          key={i}
+          d={shape.d}
+          className={shape.fill === 'paper' ? 'poster__paper' : undefined}
+          strokeDasharray={shape.dots ? POSTER_STROKES.dots : undefined}
+          strokeWidth={shape.thin ? POSTER_STROKES.artThin : undefined}
+        />
+      ))}
+    </g>
   );
 }
 

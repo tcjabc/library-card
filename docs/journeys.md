@@ -18,8 +18,23 @@ optional name). Everything that shows or checks a reader's journey resolves it t
 
 The scene, scene art, backdrop colour and poster art are looked up by `theme`, never `id`. A custom
 journey's scene travel is `customTravel(N)` (about 34 px a book, 100–640 px) with the theme's
-layer factors; built-ins keep their own. Nothing creates a custom journey yet: the screens come in
-1.26.0 (docs/custom-journeys-plan.md).
+layer factors; built-ins keep their own.
+
+**Custom journeys on screen (since 1.26.0).**
+- **Making them:** grown-ups make them in Grown-ups → Readers → Journeys (or "Create custom journey"
+  under Cards → Journey posters):
+  - a picture (one of the eight themes, fixed once made);
+  - a length of 3–30 books, only ever made longer;
+  - an optional name.
+  Archiving hides one; nothing is deleted.
+- **The gallery:** an "Our journeys" group above the built-ins shows the ones that aren't archived.
+  The journey a reader is on stays in their gallery even once it's archived.
+  - A custom card shows its name (or its theme's) above "N books", and long names stop at three
+    lines.
+  - "Active" and the completed counts match the reader's `journey_id`, as for built-ins.
+- **Everything else** works as for a built-in: starting and switching, the hub tile, the journey
+  screen and scene, completion at its own length, the celebration ("You finished <name>! N new
+  books!"), and the seen settle, which is kept per journey record.
 
 ## Completion
 

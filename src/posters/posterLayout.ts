@@ -122,3 +122,56 @@ export function layoutSlots(steps: number, direction: JourneyDirection, frame: P
     };
   });
 }
+
+/** The widest a title line may be: the page less the safe margin and the line inset either side. */
+export const TITLE_WIDTH = POSTER_FRAME.width - 2 * (POSTER_FRAME.margin + POSTER_FRAME.lineInset);
+/** A generous average width of the bold title's characters (em), for fitting it. */
+const TITLE_EM = 0.6;
+/** A shrunk title's smallest size on one line, and two lines' sizes and first baseline (1.26.0). */
+const TITLE_ONE_LINE_MIN = 30;
+const TITLE_TWO_LINE_MAX = 30;
+const TITLE_TWO_LINE_MIN = 20;
+const TITLE_TWO_LINE_Y = 58;
+const TITLE_LINE_GAP = 1.15;
+
+export interface PosterTitleLine {
+  text: string;
+  y: number;
+  /** Squeezed to TITLE_WIDTH (SVG textLength) when even the smallest size would be too wide. */
+  squeeze: boolean;
+}
+
+export interface PosterTitle {
+  size: number;
+  lines: PosterTitleLine[];
+}
+
+/**
+ * A poster's title in the label band (1.26.0, for custom journeys' names of up to 100 characters):
+ * as it is when it fits (every built-in title), else smaller on one line, else on two lines broken
+ * at the space nearest the middle. A line still too wide is squeezed to fit, so a title never runs
+ * into the safe margin.
+ */
+export function fitPosterTitle(title: string): PosterTitle {
+  const width = (text: string, size: number) => text.length * TITLE_EM * size;
+  const big = POSTER_TYPE.titleSize;
+  if (width(title, big) <= TITLE_WIDTH) return { size: big, lines: [{ text: title, y: POSTER_TYPE.titleY, squeeze: false }] };
+  const one = Math.floor(TITLE_WIDTH / (title.length * TITLE_EM));
+  if (one >= TITLE_ONE_LINE_MIN) return { size: one, lines: [{ text: title, y: POSTER_TYPE.titleY, squeeze: false }] };
+  const [first, second] = splitTitle(title);
+  const longest = Math.max(first.length, second.length);
+  const size = Math.max(TITLE_TWO_LINE_MIN, Math.min(TITLE_TWO_LINE_MAX, Math.floor(TITLE_WIDTH / (longest * TITLE_EM))));
+  return {
+    size,
+    lines: [first, second].map((text, i) => ({ text, y: TITLE_TWO_LINE_Y + i * size * TITLE_LINE_GAP, squeeze: width(text, size) > TITLE_WIDTH })),
+  };
+}
+
+/** Two lines at the space nearest the middle (or the middle itself, for one long word). */
+function splitTitle(title: string): [string, string] {
+  const middle = title.length / 2;
+  let best = -1;
+  for (let i = 0; i < title.length; i++) if (title[i] === ' ' && (best < 0 || Math.abs(i - middle) < Math.abs(best - middle))) best = i;
+  const at = best > 0 ? best : Math.round(middle);
+  return [title.slice(0, at).trim(), title.slice(at).trim()];
+}

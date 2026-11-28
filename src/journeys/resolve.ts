@@ -15,6 +15,8 @@ export interface ResolvedJourney extends Omit<Journey, 'id' | 'isCustom'> {
   isCustom: boolean;
   /** An archived custom journey still resolves: readers on it keep going, history keeps its name. */
   archived?: boolean;
+  /** A custom journey's name, or its theme's when it has none: for a card that shows "N books" too. */
+  shortTitle?: string;
 }
 
 /** "<Theme> · N books", for a custom journey with no name of its own. */
@@ -51,6 +53,7 @@ export function customJourneyDefinition(custom: CustomJourney): ResolvedJourney 
     id: `custom:${custom.id}`,
     isCustom: true,
     title: custom.name ?? customJourneyDefaultName(theme.title, custom.steps),
+    shortTitle: custom.name ?? theme.title,
     steps: custom.steps,
     stages: scaleStages(theme, custom.steps),
     archived: custom.archived_at !== null,
@@ -78,4 +81,15 @@ export async function loadJourney(store: Pick<DataStore, 'getCustomJourney'>, id
   if (!customId) return undefined;
   const custom = await store.getCustomJourney(customId);
   return custom ? customJourneyDefinition(custom) : undefined;
+}
+
+/**
+ * The custom journeys a list shows (the gallery, the posters), as definitions, oldest first:
+ * archived ones are left out, except `keep` (the journey a reader is on, which stays in their view).
+ */
+export function listedCustomJourneys(customs: readonly CustomJourney[], keep?: string): ResolvedJourney[] {
+  return customs
+    .filter((c) => c.archived_at === null || `custom:${c.id}` === keep)
+    .map(customJourneyDefinition)
+    .filter((j): j is ResolvedJourney => j !== undefined);
 }

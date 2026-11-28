@@ -384,6 +384,11 @@
   --grownups-card-min: 15rem;
   --grownups-row-min: 4rem;
   --grownups-row-cover: 3rem;
+  /* Custom journeys (1.26.0): a theme's line art on its chip, and the small poster preview. */
+  --custom-journey-art: 6.5rem;
+  /* The theme pictures' lines, whatever their size (non-scaling strokes). */
+  --custom-journey-art-stroke: 1.25px;
+  --custom-journey-preview: 11rem;
   /* A ⋯ menu's width. */
   --menu-min: 11rem;
   --tap-target-lg: 4.5rem;

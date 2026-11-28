@@ -1,0 +1,66 @@
+/*
+ * Custom journeys in Grown-ups (1.26.0): the form's theme pictures and its poster preview. Sizes
+ * are tokens (--custom-journey-*, theme.css); the line art takes the chip's text colour, and its
+ * paper-filled shapes take the chip's own background, so it reads in light and dark.
+ */
+
+.custom-journey-themes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--reader-tile-min), 1fr));
+  gap: var(--space-2);
+}
+
+.custom-journey-theme {
+  --poster-paper: var(--color-chip);
+  appearance: none;
+  min-height: var(--tap-target-grownup);
+  padding: var(--space-2);
+  border: var(--border-thick) solid var(--color-chip-active);
+  border-radius: var(--radius-md);
+  background: var(--color-chip);
+  color: var(--color-text);
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  cursor: pointer;
+}
+
+.custom-journey-theme[aria-pressed="true"] {
+  --poster-paper: var(--color-chip-active);
+  background: var(--color-chip-active);
+  color: var(--color-on-chip-active);
+}
+
+.custom-journey-theme:disabled {
+  cursor: default;
+}
+
+.custom-journey-theme__art {
+  display: block;
+  height: var(--custom-journey-art);
+  width: auto;
+  max-width: 100%;
+}
+
+/* At this size the poster's own line weight would be a hairline: draw it in screen pixels. */
+.custom-journey-theme__art path {
+  stroke-width: var(--custom-journey-art-stroke);
+  vector-effect: non-scaling-stroke;
+}
+
+.custom-journey-theme__title {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  text-align: center;
+}
+
+.custom-journey-preview {
+  margin: 0;
+  width: var(--custom-journey-preview);
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
