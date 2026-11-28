@@ -115,3 +115,35 @@ describe('the production CSS keeps its viewport-unit fallbacks (Chrome 103, Safa
     expect(files.some(({ css }) => css.includes('@media (min-width:48rem)'))).toBe(true);
   });
 });
+
+// 1.23.0: the shared print rules (src/ui/print/print.css) and the poster sheet come through the
+// production build intact, scoped to a print job, with no global page rule (printJob.ts adds the A4
+// page rule only while a job prints).
+describe('the production CSS keeps the print rules, scoped to a print job', () => {
+  const all = () => files.flatMap(({ name, css }) => declarations(css).map((d) => ({ ...d, name })));
+
+  it('only the print root prints, and only while a job is on', () => {
+    const print = all().filter((d) => d.where.startsWith('@media print > '));
+    const rule = (selector: string) => print.filter((d) => d.where === `@media print > ${selector}`).map((d) => `${d.property}:${d.value}`);
+    expect(rule('html[data-print-job] #root')).toEqual(['display:none']);
+    expect(rule('html[data-print-job] .print-root')).toEqual(expect.arrayContaining(['-webkit-print-color-adjust:exact', 'print-color-adjust:exact', 'display:block']));
+    expect(rule('html[data-print-job],html[data-print-job] body')).toEqual(expect.arrayContaining(['margin:0', 'background:var(--print-paper)']));
+    // Nothing else in a print block hides the app or shows the root.
+    for (const d of print) {
+      if (/#root|print-root|html|body/.test(d.where)) expect(d.where, `${d.name}: ${d.where}`).toMatch(/^@media print > html\[data-print-job\]/);
+    }
+    expect(all().filter((d) => d.where === '.print-root').map((d) => `${d.property}:${d.value}`)).toEqual(['display:none']);
+  });
+
+  it('no global page rule in any built stylesheet', () => {
+    for (const { name, css } of files) expect(css, name).not.toContain('@page');
+  });
+
+  it('a poster is one A4 sheet with both page-break properties, for old browsers too', () => {
+    const sheet = all().filter((d) => d.where === '.poster-sheet').map((d) => `${d.property}:${d.value}`);
+    expect(sheet).toEqual(expect.arrayContaining(['width:var(--print-page-width)', 'height:var(--print-page-height)', 'break-after:page', 'page-break-after:always']));
+    // The posters' CSS is in their own chunk (PostersSection), not the main bundle.
+    const posterFiles = files.filter(({ css }) => css.includes('.poster-sheet')).map(({ name }) => name);
+    expect(posterFiles).toEqual([expect.stringMatching(/^PostersSection-/)]);
+  });
+});

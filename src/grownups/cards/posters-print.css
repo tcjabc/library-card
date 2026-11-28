@@ -1,0 +1,38 @@
+/*
+ * Printable journey posters (Grown-ups > Cards > Journey posters): one A4 sheet per poster, line
+ * art in the poster ink on paper white in every theme (--poster-* in theme.css). The drawing is
+ * JourneyPoster.tsx; the print rules are the shared ones (src/ui/print/print.css).
+ */
+
+.poster-sheet {
+  box-sizing: border-box;
+  width: var(--print-page-width);
+  height: var(--print-page-height);
+  overflow: hidden;
+  background: var(--poster-paper);
+  color: var(--poster-ink);
+  break-after: page;
+  page-break-after: always;
+}
+
+.poster-sheet:last-child {
+  break-after: auto;
+  page-break-after: auto;
+}
+
+.poster {
+  display: block;
+  width: 100%;
+  height: 100%;
+  font-family: var(--font-body);
+}
+
+.poster__title,
+.poster__end {
+  font-weight: var(--weight-bold);
+}
+
+/* A shape filled with paper white, hiding the lines behind it. */
+.poster__paper {
+  fill: var(--poster-paper);
+}

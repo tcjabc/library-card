@@ -3,6 +3,7 @@
  * 171.2 x 54 mm), five strips in one column on A4, butted together. Sizes and
  * colours come from the --print-* tokens in theme.css (paper colours never
  * follow dark mode); the drawing inside each strip is src/cards/stripSvg.ts.
+ * They print through the shared print root (src/ui/print: print.css holds the print rules).
  */
 
 .strip-sheet {
@@ -54,23 +55,12 @@
   transform: translate(-50%, 50%);
 }
 
-/* Screen preview: the real-size page, scaled to fit. */
+/* Screen preview: the real-size page, scaled to fit (src/ui/print/ScaledPage.tsx). */
 .card-preview {
   margin: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-}
-
-.card-preview__frame {
-  overflow: hidden;
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-card);
-}
-
-.card-preview__page {
-  width: max-content;
-  transform-origin: top left;
 }
 
 /* Library card barcodes (Grown-ups > Cards). */
@@ -110,32 +100,4 @@
 .library-card-preview__fail {
   color: var(--color-danger);
   font-weight: var(--weight-bold);
-}
-
-/* Only the print portal prints; it never shows on screen. */
-.print-root {
-  display: none;
-}
-
-@media print {
-  @page {
-    size: A4;
-    margin: 0;
-  }
-
-  html,
-  body {
-    margin: 0;
-    background: var(--print-paper);
-  }
-
-  #root {
-    display: none;
-  }
-
-  .print-root {
-    display: block;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
 }

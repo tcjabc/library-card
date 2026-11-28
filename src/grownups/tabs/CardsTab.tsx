@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { libraryCardTitle, makeStripSvg } from '../../cards/makeStrip';
 import { STRIPS_PER_PAGE } from '../../cards/stripLayout';
 import { CARD_TEMPLATES, DEFAULT_TEMPLATE, isCardTemplate, type CardTemplate } from '../../cards/templates';
@@ -7,6 +6,8 @@ import { useDataQuery, type DataStore, type Library, type LibraryCard, type Read
 import { fileNamePart, saveBlob } from '../../lib/download';
 import { useHashQuery } from '../../router';
 import { fmt, strings } from '../../strings';
+import { PrintPages, PrintRoot, usePrint } from '../../ui/print/PrintRoot';
+import { ScaledPage } from '../../ui/print/ScaledPage';
 import { useToast } from '../../ui/Toast';
 import { LibraryCardsSection } from '../cards/LibraryCardsSection';
 import { paginate } from '../helpers';
@@ -14,6 +15,9 @@ import type { TabProps } from './types';
 import './cards-print.css';
 
 const t = strings.grownups.cards;
+
+/** Journey posters (1.23.0): their own chunk, below the card sections. */
+const PostersSection = lazy(() => import('../cards/PostersSection'));
 
 /** Remembered on this device only: the last design picked. */
 const TEMPLATE_KEY = 'library-card:card-template';
@@ -44,12 +48,28 @@ interface Entry {
 }
 
 /**
- * Grown-ups > Cards: each reader's library card barcodes, then the fold-over cards to print (or
- * download). The printable pages are rendered into document.body (outside the app), and the
- * print stylesheet hides everything else.
+ * Grown-ups > Cards: each reader's library card barcodes, the fold-over cards to print (or
+ * download), then the journey posters. Both print through one shared print root (src/ui/print):
+ * a print button puts only its own pages in the root, outside the app, and the print rules hide
+ * everything else only while that job prints. The browser's own Print here prints the cards.
  */
-export function CardsTab({ store, household }: TabProps) {
+export function CardsTab(props: TabProps) {
+  const [cardsReady, setCardsReady] = useState(false);
+  return (
+    <PrintRoot fallback={cardsReady ? CARDS_JOB : undefined}>
+      <CardsSections {...props} onReadyChange={setCardsReady} />
+      <Suspense fallback={null}>
+        <PostersSection />
+      </Suspense>
+    </PrintRoot>
+  );
+}
+
+const CARDS_JOB = 'cards';
+
+function CardsSections({ store, household, onReadyChange }: TabProps & { onReadyChange: (ready: boolean) => void }) {
   const toast = useToast();
+  const print = usePrint();
   const only = useHashQuery().get('reader');
   const query = useCallback(
     async (s: DataStore) => {
@@ -82,6 +102,8 @@ export function CardsTab({ store, household }: TabProps) {
   });
   const pages = paginate(entries, STRIPS_PER_PAGE);
   const strips = useStrips(entries, libraries, template);
+  const printable = strips.status === 'ready' && pages.length > 0;
+  useEffect(() => onReadyChange(printable), [onReadyChange, printable]);
 
   const toggle = (id: string) =>
     setPicked((current) => {
@@ -167,7 +189,7 @@ export function CardsTab({ store, household }: TabProps) {
               ))}
 
             <div className="row">
-              <button type="button" className="btn btn--primary" disabled={entries.length === 0} onClick={() => window.print()}>
+              <button type="button" className="btn btn--primary" disabled={entries.length === 0} onClick={() => print(CARDS_JOB)}>
                 🖨️ {entries.length === 1 ? t.printOne : fmt(t.print, { count: entries.length })}
               </button>
               {entries.length === 0 && <span className="small muted">{t.nothingPicked}</span>}
@@ -227,12 +249,9 @@ export function CardsTab({ store, household }: TabProps) {
         </section>
       )}
 
-      {createPortal(
-        <div className="print-root">
-          {strips.status === 'ready' && pages.map((page, i) => <StripPage key={i} entries={page} strips={strips.svgs} prefix={`x${i}`} />)}
-        </div>,
-        document.body,
-      )}
+      <PrintPages job={CARDS_JOB}>
+        {strips.status === 'ready' && pages.map((page, i) => <StripPage key={i} entries={page} strips={strips.svgs} prefix={`x${i}`} />)}
+      </PrintPages>
     </>
   );
 }
@@ -327,37 +346,6 @@ function StripPage({ entries, strips, prefix }: { entries: readonly Entry[]; str
       <span className="strip-sheet__fold-label strip-sheet__fold-label--bottom" aria-hidden="true">
         {t.fold}
       </span>
-    </div>
-  );
-}
-
-/** Shows a real-size A4 page shrunk to the width available (screen preview only). */
-function ScaledPage({ children }: { children: ReactNode }) {
-  const outer = useRef<HTMLDivElement>(null);
-  const inner = useRef<HTMLDivElement>(null);
-  const [scale, setScale] = useState(1);
-  const [height, setHeight] = useState<number | undefined>(undefined);
-
-  useLayoutEffect(() => {
-    const box = outer.current;
-    const page = inner.current;
-    if (!box || !page) return;
-    const measure = () => {
-      const s = Math.min(1, box.clientWidth / page.offsetWidth);
-      setScale(s);
-      setHeight(page.offsetHeight * s);
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(box);
-    return () => observer.disconnect();
-  }, []);
-
-  return (
-    <div ref={outer} className="card-preview__frame" style={{ height }}>
-      <div ref={inner} className="card-preview__page" style={{ transform: `scale(${scale})` }}>
-        {children}
-      </div>
     </div>
   );
 }

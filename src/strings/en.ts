@@ -1164,6 +1164,26 @@ export const en = {
       downloadFailed: 'Couldn’t make that file. Please try again.',
     },
 
+    posters: {
+      heading: 'Journey posters',
+      intro: 'A poster for a reading journey, to print and colour in. Your child writes each book they finish on its numbered line.',
+      pick: 'Posters to print',
+      all: 'All',
+      nothingPicked: 'Pick at least one poster.',
+      print: 'Print {count} posters',
+      printOne: 'Print poster',
+      printTip: 'In the print dialog, choose A4 and 100% scale (not “fit to page”). Each poster prints on its own page; background graphics can stay off.',
+      preview: 'Poster preview',
+      previewFirst: '{journey} (the first of {count})',
+      posterAlt: '{journey} poster with {count} numbered lines for books',
+      // On the poster itself.
+      caption: 'My reading journey: {count} books',
+      name: 'My name',
+      start: 'START',
+      finish: 'FINISH',
+      footer: 'Write each book on its line when you finish it. Colour me in and decorate!',
+    },
+
     libraryCards: {
       heading: 'Library card barcodes',
       intro: 'Add the barcode from each child’s library card to print it on the back of their card. Only the number is saved, never a photo.',

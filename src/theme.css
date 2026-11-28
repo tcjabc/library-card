@@ -547,6 +547,9 @@
   --print-fold: #6b7385;
   /* Outline art: light enough to colour over, dark enough to see. */
   --print-art: #a3abba;
+  /* Journey posters (1.23.0): black line art on white paper, in every theme. */
+  --poster-ink: #000000;
+  --poster-paper: #ffffff;
 }
 
 @media (prefers-color-scheme: dark) {

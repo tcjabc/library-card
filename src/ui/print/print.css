@@ -1,0 +1,40 @@
+/*
+ * Printing (PrintRoot.tsx, printJob.ts). The print root holds one job's real-size pages while that
+ * job prints; it never shows on screen. Every print rule is scoped to html[data-print-job], which
+ * is set only while a job prints, so printing any other screen prints that screen. The A4 page
+ * rule is added with the attribute and removed with it (printJob.ts PAGE_RULE).
+ */
+
+.print-root {
+  display: none;
+}
+
+/* Screen preview of a real-size page, scaled to fit (ScaledPage.tsx). */
+.scaled-page {
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-card);
+}
+
+.scaled-page__page {
+  width: max-content;
+  transform-origin: top left;
+}
+
+@media print {
+  html[data-print-job],
+  html[data-print-job] body {
+    margin: 0;
+    background: var(--print-paper);
+  }
+
+  html[data-print-job] #root {
+    display: none;
+  }
+
+  html[data-print-job] .print-root {
+    display: block;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
