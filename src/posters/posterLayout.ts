@@ -52,9 +52,11 @@ export const POSTER_FRAME: PosterFrame = {
   lineDrop: 0.55,
 };
 
-/** Line weights, in poster units (2.5 = 0.66 mm, 2 = 0.53 mm, 1.2 = 0.32 mm). */
+/** Line weights, in poster units (2.5 = 0.66 mm, 2 = 0.53 mm, 1.5 = 0.4 mm, 1.2 = 0.32 mm). */
 export const POSTER_STROKES = {
   art: 2.5,
+  /** Fine detail in the art (brick courses). */
+  artThin: 1.5,
   circle: 2,
   line: 1.2,
   /** The art's dotted trails: dot length and gap. */

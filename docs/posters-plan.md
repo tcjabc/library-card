@@ -229,3 +229,22 @@ Found while building (1.23.0): Android Chrome 103 fires `afterprint` about 0.2 s
 and then lays the page out again for its preview. Clearing the job on `afterprint` made Android
 preview the cards instead of the poster, so a button's job now stays requested until the next tap
 or key press. How it works: [posters.md](posters.md).
+
+## 1.24.0: the other seven posters
+
+The Rocket printed well, so it stays exactly as in 1.23.0 (a test pins its markup). 1.24.0 adds
+the other seven journeys' drawings, from the design canvas, wired the same way: one art module and
+one registry line each. "All" now prints all eight, one A4 page each.
+
+- **Fitting:** the canvas drawings overflowed the art band and had text baked in. The text is gone,
+  and `fitPosterArt` scales each drawing uniformly into the column with the strokes unchanged.
+- **Thin line:** a second art line weight, 1.5 units, for Rapunzel's brick courses.
+- **Canvas fixes:** the moon is now a crescent (its inner arc was too small for its chord), and
+  Rapunzel's last brick joints stop at the tower's foot.
+- **Checked:**
+  - Every poster printed to PDF at 100% (A4, all lines 65.3 mm, nothing in the margin), and "All"
+    as eight pages.
+  - Android Chrome 103's print preview on A4 (Save as PDF) shows the poster asked for.
+
+How the drawings and the fit work: [posters.md](posters.md).
+

@@ -41,7 +41,13 @@ export function JourneyPoster({ journey }: { journey: Journey }) {
       {art && (
         <g fill="none" stroke="currentColor" strokeWidth={POSTER_STROKES.art} strokeLinecap="round" strokeLinejoin="round">
           {art.shapes.map((shape, i) => (
-            <path key={i} d={shape.d} className={shape.fill === 'paper' ? 'poster__paper' : undefined} strokeDasharray={shape.dots ? POSTER_STROKES.dots : undefined} />
+            <path
+              key={i}
+              d={shape.d}
+              className={shape.fill === 'paper' ? 'poster__paper' : undefined}
+              strokeDasharray={shape.dots ? POSTER_STROKES.dots : undefined}
+              strokeWidth={shape.thin ? POSTER_STROKES.artThin : undefined}
+            />
           ))}
         </g>
       )}

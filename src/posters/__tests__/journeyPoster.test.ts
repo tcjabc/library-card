@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { JourneyPoster } from '../../grownups/cards/JourneyPoster';
 import { getJourney, type Journey } from '../../journeys/journeys';
 import { fmt, strings } from '../../strings';
+import { POSTER_JOURNEYS } from '../art';
 import { POSTER_TYPE } from '../posterLayout';
 
 // 1.23.0: a journey poster's markup (Node, no DOM).
@@ -69,6 +70,34 @@ describe('the journey poster', () => {
 
   it('one A4 page per poster when printing, with the old page-break fallback', () => {
     expect(css).toMatch(/\.poster-sheet \{[^}]*width: var\(--print-page-width\);[^}]*height: var\(--print-page-height\);[^}]*break-after: page;[^}]*page-break-after: always;/);
+  });
+
+  describe('every poster (1.24.0: all eight)', () => {
+    for (const j of POSTER_JOURNEYS) {
+      it(`${j.id}: one slot per book, the start at the ${j.direction === 'down' ? 'top' : 'bottom'}, line art only, no stage labels`, () => {
+        const svg = render(j.id);
+        expect(svg.match(/<circle /g)).toHaveLength(j.steps);
+        expect(svg.match(/<line /g)).toHaveLength(j.steps + 1);
+        expect(svg).toContain(`>${j.title.replaceAll('&', '&amp;')}</text>`);
+        expect(svg).toContain(`>${fmt(t.caption, { count: j.steps })}</text>`);
+        const down = j.direction === 'down';
+        expect(textY(svg, t.start)).toBe(down ? POSTER_TYPE.endTopY : POSTER_TYPE.endBottomY);
+        expect(textY(svg, t.finish)).toBe(down ? POSTER_TYPE.endBottomY : POSTER_TYPE.endTopY);
+        const y = (book: number) => Number(svg.match(new RegExp(`<text[^>]* y="([\\d.]+)"[^>]*>${book}</text>`))?.[1]);
+        if (down) expect(y(1)).toBeLessThan(y(j.steps));
+        else expect(y(1)).toBeGreaterThan(y(j.steps));
+        for (const stage of j.stages) expect(svg).not.toContain(`>${stage.label}<`);
+        expect([...new Set(svg.match(/ fill="[^"]*"/g))].sort()).toEqual([' fill="currentColor"', ' fill="none"']);
+        expect([...new Set(svg.match(/ stroke="[^"]*"/g))]).toEqual([' stroke="currentColor"']);
+        expect(svg).not.toMatch(/#[0-9a-f]{3,8}\b|rgb|hsl|<image|<linearGradient|<radialGradient|<filter|<pattern| style=|opacity/i);
+        // The art's own text: none (only the poster's labels, title, caption, name, numbers, footer).
+        expect(svg.match(/<text/g)).toHaveLength(j.steps + 6);
+        // Stroke weights: the poster's own, and the thin art line only where a drawing asks for it.
+        const widths = new Set(svg.match(/ stroke-width="[^"]*"/g));
+        expect([...widths].every((w) => [' stroke-width="2.5"', ' stroke-width="2"', ' stroke-width="1.2"', ' stroke-width="1.5"'].includes(w)), [...widths].join()).toBe(true);
+        expect(widths.has(' stroke-width="1.5"')).toBe(j.id === 'rapunzel_tower');
+      });
+    }
   });
 
   it('its strings are all in en.ts', () => {

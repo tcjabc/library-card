@@ -98,6 +98,27 @@ describe('layoutSlots', () => {
     expect(halfWidth).toBeLessThan(F.circleOffset - F.circleRadius - circleHalf);
   });
 
+  for (const journey of JOURNEYS) {
+    it(`${journey.id} (${journey.steps} books, ${journey.direction}): one slot per book, alternating, same-side lines ≥ 12 mm apart, lines ≥ 60 mm`, () => {
+      const slots = layoutSlots(journey.steps, journey.direction);
+      expect(slots).toHaveLength(journey.steps);
+      slots.forEach((s, i) => expect(s.side).toBe(i % 2 === 0 ? 'left' : 'right'));
+      for (let i = 2; i < slots.length; i++) expect(mm(Math.abs(slots[i].cy - slots[i - 2].cy))).toBeGreaterThanOrEqual(12);
+      for (const s of slots) expect(mm(s.line.x2 - s.line.x1)).toBeGreaterThanOrEqual(60);
+      // Only Ocean Deep starts at the top.
+      expect(slots.length < 2 || (slots[0].cy < slots[1].cy) === (journey.id === 'ocean_deep')).toBe(true);
+    });
+  }
+
+  it('the Rocket’s 30 slots are exactly as printed in 1.23.0', () => {
+    const slots = layoutSlots(30, 'up');
+    const round = (v: number) => Math.round(v * 1000) / 1000;
+    expect([slots[0], slots[29]].map((s) => [s.book, s.side, s.cx, round(s.cy), s.r, round(s.line.x1), round(s.line.x2), round(s.line.y)])).toEqual([
+      [1, 'left', 313, 998.717, 18, 40.029, 287, 1008.617],
+      [30, 'right', 481, 228.283, 18, 507, 753.971, 238.183],
+    ]);
+  });
+
   it('every journey has a layout that fits (the longest, 30 books, is the tightest)', () => {
     for (const journey of JOURNEYS) {
       const slots = layoutSlots(journey.steps, journey.direction);
