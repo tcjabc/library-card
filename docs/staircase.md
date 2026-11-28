@@ -159,6 +159,10 @@ three layers (`LAYERS`). Only with the sky on.
   under 30 frames a second keeps counting past the second until it has 30 (`budgetDue`); up to 1.17.0 it reset
   every second and so never got a verdict at all. Never back up. Like the resolution cap it's per visit, never saved. With the clouds or the
   sky off there's no decor to lose, so the resolution steps down at once.
+- **Shared with the journey scenes** (since 1.21.0): the journey screen's scene uses the same rule for its motion
+  (`budgetDue`, `nextBudget`, `SLOW_FRAME_MS`, `budgetFrameMs` from `drawBudget.ts`, through
+  `src/journeys/sceneBudget.ts`): Full → Reduced → None per visit, never back up (docs/journeys.md, "Slow
+  devices"). A change to the rule here changes both; the stack's behaviour and tests are unchanged by it.
 - **Decor in effect**: the least of the setting, this visit's cap and, with reduced motion, Reduced
   (`decorInEffect`, which also says why).
 - **Reduced motion**: no differential parallax (no foreground wisps; the still layer moves 1:1 with the world),

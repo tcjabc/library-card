@@ -2,9 +2,13 @@ import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type Comp
 import type { Journey, JourneyId } from '../../journeys/journeys';
 import { readSeenStep, settleFrom, writeSeenStep } from '../../journeys/journeySeen';
 import { SCENE_LAYERS, SETTLE_MS, layerTravel, sceneFor, sceneMotion, settleOffsets, stepShift, type SceneLayer } from '../../journeys/scene';
+import { FRESH_SCENE_BUDGET, OPEN_SAMPLE_MS, SCROLL_SAMPLE_MS, SETTLE_SAMPLE_EXTRA_MS, sceneFrame, sceneLevel, type SceneBudget } from '../../journeys/sceneBudget';
 import { useStackDecor } from '../../staircase/decorSetting';
+import { decorRank, minDecor, type Decor } from '../../staircase/drawBudget';
 import './journeyScene.css';
-import { browserScrollHost, followScroll, placeLayers } from './sceneScroll';
+import { browserFrameHost, frameSampler, type FrameSampler } from './sceneFrames';
+import { publishSceneMotion, useJourneySlow, type SceneStep } from './sceneMotionDev';
+import { browserScrollHost, layerDriver } from './sceneScroll';
 
 /** One scene's art for one depth layer (src/screens/journeys/scenes/*), loaded on demand: one chunk per scene. */
 type SceneArt = ComponentType<{ layer: SceneLayer }>;
@@ -71,23 +75,61 @@ export function JourneyScene({ journey, progress, readerId, recordId, trackRef }
   const Art = ART[journey.id];
   const decor = useStackDecor();
   const reduced = useReducedMotion();
-  const motion = sceneMotion(decor, reduced);
+  const pretendSlow = useJourneySlow();
+  // This visit's cap (slow frames lower it, never back up; the setting itself is never changed).
+  const [visit, setVisit] = useState<{ cap: Decor; steps: readonly SceneStep[] }>({ cap: 'full', steps: [] });
+  const { level, why } = sceneLevel(decor, visit.cap, reduced);
+  const motion = sceneMotion(level, reduced);
   const layerBoxes = useRef<(HTMLDivElement | null)[]>([]);
   const inners = useRef<(HTMLDivElement | null)[]>([]);
+  const sampler = useRef<FrameSampler | null>(null);
+  const budget = useRef<SceneBudget>(FRESH_SCENE_BUDGET);
+  const openedAt = useRef(0);
+  // One driver per visit: it knows whether the layers have followed the scroll yet (sceneScroll.ts).
+  const [driver] = useState(() => layerDriver(browserScrollHost));
+
+  // Slow devices (sceneBudget.ts): frames are measured only while there's something to measure
+  // (scrolling, the settle, the first seconds with ambient loops), and slow ones lower the motion
+  // for the rest of the visit: Full → Reduced → None. Nothing to measure at None.
+  useEffect(() => {
+    if (!openedAt.current) openedAt.current = performance.now();
+    if (!config || level === 'none') return;
+    budget.current = { ...FRESH_SCENE_BUDGET, cap: budget.current.cap };
+    const s = frameSampler(browserFrameHost(), (dt) => {
+      const next = sceneFrame(budget.current, dt, level, pretendSlow);
+      budget.current = next;
+      if (decorRank(next.cap) >= decorRank(level)) return;
+      s.stop();
+      const step: SceneStep = { from: level, to: next.cap, atMs: Math.round(performance.now() - openedAt.current) };
+      setVisit((prev) => (decorRank(next.cap) < decorRank(prev.cap) ? { cap: minDecor(prev.cap, next.cap), steps: [...prev.steps, step] } : prev));
+    });
+    sampler.current = s;
+    if (motion.loops) s.keepAlive(OPEN_SAMPLE_MS);
+    return () => {
+      s.stop();
+      if (sampler.current === s) sampler.current = null;
+    };
+  }, [config, level, pretendSlow, motion.loops]);
+
+  // What Developer tools shows for the last journey screen (sceneMotionDev.ts); never per frame.
+  useEffect(() => {
+    if (config) publishSceneMotion({ journeyId: journey.id, level, why, setting: decor, cap: visit.cap, steps: visit.steps });
+  }, [config, journey.id, level, why, decor, visit]);
 
   // The shift, written as each layer's own transform (sceneScroll.ts): following the scroll
-  // (parallax), or the current step's, still.
+  // (parallax); still, the current step's place if the scene opened still, or frozen where the
+  // layers were when a slow device stepped down to None (no move).
   useLayoutEffect(() => {
     if (!config) return;
-    const targets = layerBoxes.current.filter((layer): layer is HTMLDivElement => layer !== null);
-    const travels = SCENE_LAYERS.map((layer) => layerTravel(config, layer));
-    const atStep = stepShift(progress, journey.steps, journey.direction);
-    if (!motion.parallax) {
-      placeLayers(targets, travels, atStep);
-      return;
-    }
-    return followScroll(browserScrollHost(), { layers: targets, travels, fallback: atStep, watch: trackRef.current });
-  }, [config, motion.parallax, progress, journey.steps, journey.direction, trackRef]);
+    return driver.drive({
+      parallax: motion.parallax,
+      layers: layerBoxes.current.filter((layer): layer is HTMLDivElement => layer !== null),
+      travels: SCENE_LAYERS.map((layer) => layerTravel(config, layer)),
+      atStep: stepShift(progress, journey.steps, journey.direction),
+      watch: trackRef.current,
+      onScroll: () => sampler.current?.keepAlive(SCROLL_SAMPLE_MS),
+    });
+  }, [config, driver, motion.parallax, progress, journey.steps, journey.direction, trackRef]);
 
   // The settle: once per step change since this reader last saw the screen (the seen step is
   // recorded either way). Decided while rendering, by reading only (as the Family Staircase does),
@@ -119,6 +161,7 @@ export function JourneyScene({ journey, progress, readerId, recordId, trackRef }
     });
     // Start from there, then glide to where the new step puts each layer.
     void layers[0]?.getBoundingClientRect();
+    sampler.current?.keepAlive(SETTLE_MS + SETTLE_SAMPLE_EXTRA_MS);
     const raf = requestAnimationFrame(() => {
       for (const inner of layers) {
         inner.style.transition = `transform ${SETTLE_MS}ms ease-in-out`;
@@ -141,7 +184,7 @@ export function JourneyScene({ journey, progress, readerId, recordId, trackRef }
 
   if (!config || !Art) return null;
   return (
-    <div className={`journey-scene journey-scene--${journey.id}${motion.loops ? ' journey-scene--loops' : ''}`} aria-hidden="true">
+    <div className={`journey-scene journey-scene--${journey.id}${motion.loops ? ' journey-scene--loops' : ''}`} data-motion={level} aria-hidden="true">
       {SCENE_LAYERS.map((layer, i) => (
         <div
           key={layer}

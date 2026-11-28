@@ -52,10 +52,12 @@ export interface FollowScrollOptions {
   fallback: number;
   /** An element whose size changes the page's scroll range (the track); watched when the host can. */
   watch?: Element | null;
+  /** Called in each scroll event, after the position is read (the slow-device frame sampling listens here). */
+  onScroll?: () => void;
 }
 
 /** Follows the page's scroll until the returned stop is called. Places the layers at once. */
-export function followScroll(host: ScrollHost, { layers, travels, fallback, watch }: FollowScrollOptions): () => void {
+export function followScroll(host: ScrollHost, { layers, travels, fallback, watch, onScroll: heard }: FollowScrollOptions): () => void {
   let scrollTop = 0;
   let range = 0;
   let view = 0;
@@ -84,6 +86,7 @@ export function followScroll(host: ScrollHost, { layers, travels, fallback, watc
   const onScroll = () => {
     scrollTop = host.page.scrollTop;
     later();
+    heard?.();
   };
   const onResize = () => {
     measure();
@@ -101,6 +104,38 @@ export function followScroll(host: ScrollHost, { layers, travels, fallback, watc
     unobserve?.();
     if (frame) host.cancelAnimationFrame(frame);
     frame = 0;
+  };
+}
+
+/** What drives the layers for the scene's current motion: following the scroll, or still. */
+export interface LayerDrive {
+  parallax: boolean;
+  layers: readonly LayerTarget[];
+  travels: readonly number[];
+  /** The shift at the reader's step (the still picture, and scrollShift's fallback). */
+  atStep: number;
+  watch?: Element | null;
+  onScroll?: () => void;
+}
+
+/**
+ * One visit's layers (1.21.0): `drive` follows the scroll while there's parallax; still, it places
+ * the layers at the reader's step only if this visit never followed the scroll (the scene opened
+ * still: Sky decoration None, reduced motion). Once the layers have followed the scroll, going still
+ * (the slow-device step from Reduced to None) freezes them exactly where they are, and nothing
+ * moves them again this visit: not a resize, not a step change. Returns the stop.
+ */
+export function layerDriver(host: () => ScrollHost): { drive(options: LayerDrive): () => void } {
+  let followed = false;
+  return {
+    drive({ parallax, layers, travels, atStep, watch, onScroll }) {
+      if (!parallax) {
+        if (!followed) placeLayers(layers, travels, atStep);
+        return () => {};
+      }
+      followed = true;
+      return followScroll(host(), { layers, travels, fallback: atStep, watch, onScroll });
+    },
   };
 }
 

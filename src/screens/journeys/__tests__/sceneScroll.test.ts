@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { getJourney } from '../../../journeys/journeys';
 import { SCENE_LAYERS, layerTravel, sceneFor } from '../../../journeys/scene';
 import { JourneyScene } from '../JourneyScene';
-import { followScroll, placeLayers, type ScrollHost } from '../sceneScroll';
+import { followScroll, layerDriver, placeLayers, type ScrollHost } from '../sceneScroll';
 
 // 1.20.1: the scene's layers get their own transforms, and the frame callback only writes.
 // Tests run in Node: the browser is a fake that counts every read and write.
@@ -205,6 +205,17 @@ describe('followScroll: each layer gets its own transform from the scroll', () =
     expect(b.frames.size).toBe(0);
   });
 
+  it('tells the slow-device sampling about each scroll event, after the position is read (1.21.0)', () => {
+    const b = fakeBrowser({ scrollHeight: 3000, viewHeight: 800 });
+    const heard: number[] = [];
+    followScroll(b.host, { layers: b.layers, travels: TRAVELS, fallback: 0.5, watch: track, onScroll: () => heard.push(b.reads.scrollTop) });
+    b.resetReads();
+    b.fire('scroll');
+    b.fire('scroll');
+    expect(heard).toEqual([1, 2]);
+    expect(b.listeners.get('scroll')?.size).toBe(1);
+  });
+
   it('without a track to watch, or a browser without ResizeObserver, window resizes still update the range', () => {
     const b = fakeBrowser({ scrollTop: 1100, scrollHeight: 3000, viewHeight: 800 });
     const { observeSize, ...host } = b.host;
@@ -227,6 +238,63 @@ describe('placeLayers: the still picture (Sky decoration None, reduced motion)',
   });
 });
 
+describe('layerDriver: one visit’s layers (1.21.0)', () => {
+  const drive = (b: ReturnType<typeof fakeBrowser>, driver: ReturnType<typeof layerDriver>, parallax: boolean, atStep = 0.25) =>
+    driver.drive({ parallax, layers: b.layers, travels: TRAVELS, atStep, watch: track });
+  const writes = (b: ReturnType<typeof fakeBrowser>) => b.layers.reduce((n, layer) => n + layer.writes.length, 0);
+
+  it('opening still (Sky decoration None, reduced motion) places the layers at the reader’s step', () => {
+    const b = fakeBrowser({ scrollTop: 1700, scrollHeight: 3000, viewHeight: 800 });
+    drive(b, layerDriver(() => b.host), false, 0.25);
+    expect(b.transforms()).toEqual(at(-32, -96, -160));
+    expect(b.listeners.get('scroll')).toBeUndefined();
+  });
+
+  it('stepping down from Reduced to None leaves every layer exactly where it was, and stops following', () => {
+    const b = fakeBrowser({ scrollTop: 0, scrollHeight: 3000, viewHeight: 800 });
+    const driver = layerDriver(() => b.host);
+    const stop = drive(b, driver, true);
+    b.state.scrollTop = 1700;
+    b.fire('scroll');
+    b.runFrames();
+    const before = b.transforms();
+    expect(before).toEqual(at(-98.9, -296.7, -494.5));
+    const written = writes(b);
+    stop();
+    drive(b, driver, false, 0.25);
+    expect(b.transforms()).toEqual(before);
+    expect(writes(b)).toBe(written);
+    expect(b.listeners.get('scroll')?.size).toBe(0);
+  });
+
+  it('once frozen, nothing moves the layers again this visit: not a scroll, a resize or a step change', () => {
+    const b = fakeBrowser({ scrollTop: 1100, scrollHeight: 3000, viewHeight: 800 });
+    const driver = layerDriver(() => b.host);
+    drive(b, driver, true)();
+    drive(b, driver, false, 0.25);
+    const frozen = b.transforms();
+    const written = writes(b);
+    b.state.scrollTop = 0;
+    b.fire('scroll');
+    b.state.viewHeight = 1000;
+    b.fire('resize');
+    b.resized();
+    b.runFrames();
+    drive(b, driver, false, 0.9); // a read arrives: the reader's step moves
+    expect(b.transforms()).toEqual(frozen);
+    expect(writes(b)).toBe(written);
+  });
+
+  it('the next visit starts again: a new driver opening still places the layers at the step', () => {
+    const b = fakeBrowser({ scrollTop: 1100, scrollHeight: 3000, viewHeight: 800 });
+    const first = layerDriver(() => b.host);
+    drive(b, first, true)();
+    drive(b, first, false);
+    drive(b, layerDriver(() => b.host), false, 0.25);
+    expect(b.transforms()).toEqual(at(-32, -96, -160));
+  });
+});
+
 describe('JourneyScene: the shift lives on the three layers, not on a parent the art inherits from', () => {
   const realWindow = (globalThis as { window?: unknown }).window;
   beforeAll(() => {
@@ -244,6 +312,9 @@ describe('JourneyScene: the shift lives on the three layers, not on a parent the
     const html = renderToStaticMarkup(createElement(JourneyScene, { journey, progress: 15, readerId: 'r', recordId: 'j', trackRef: { current: null } }));
     expect(html.match(/class="journey-scene__layer journey-scene__layer--(far|mid|near)"/g)).toHaveLength(3);
     expect(html).not.toContain('--journey-shift');
+    // Full motion on a fresh visit (1.21.0: the level is on the root for the developer tools and checks).
+    expect(html).toContain('data-motion="full"');
+    expect(html).toContain('journey-scene--loops');
     expect(html).toContain('--travel:128px');
     expect(html).toContain('--travel:640px');
   });

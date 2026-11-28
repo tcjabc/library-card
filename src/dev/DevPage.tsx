@@ -4,6 +4,7 @@ import { tabPath } from '../grownups/helpers';
 import { getPretendToday, setPretendToday, useToday } from '../lib/clock';
 import { href } from '../router';
 import { fmt, strings } from '../strings';
+import { JourneyMotionPanel } from './JourneyMotionPanel';
 import { SelfTestPanel } from './SelfTestPanel';
 import { StaircasePanel } from './StaircasePanel';
 import '../grownups/grownups.css';
@@ -49,6 +50,7 @@ export default function DevPage() {
           </a>
         </div>
       </section>
+      <JourneyMotionPanel />
       <SelfTestPanel />
     </main>
   );

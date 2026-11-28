@@ -82,6 +82,27 @@ longer than `MAX_TRAVEL` / 28 steps (Ladder to the Moon's 25, Rocket Through Spa
   at most `MAX_LOOPS` 15 per scene) and parallax; Reduced = parallax and the settle, no loops; None = a still
   picture at the reader's step. The system's reduced motion is always still: no loops, no parallax, no settle (and
   the avatar stops bouncing, as before).
+- **Slow devices** (since 1.21.0, `src/journeys/sceneBudget.ts`, `src/screens/journeys/sceneFrames.ts`): the
+  Family Staircase's per-visit drop-out rule, shared from `drawBudget.ts` (`budgetDue`, `nextBudget`,
+  `SLOW_FRAME_MS`; see docs/staircase.md, "Decor level and the drop-out rule"). After about a second of measured
+  frames (at least 1 s over at least 30 frames, so a device under 30 frames a second still gets a verdict),
+  frames averaging over 22 ms lower the scene a level for the rest of the visit: Full → Reduced (the ambient
+  loops stop: the `journey-scene--loops` class goes, nothing re-mounts) → None (the parallax stops and each layer
+  is frozen exactly where it is: no move, and nothing moves it again this visit, not a resize or a step change;
+  `layerDriver` in `sceneScroll.ts`). A scene that opens still (Sky decoration None, reduced motion) has no
+  earlier position, so its layers go to the reader's step's place (`placeLayers`), as before. Never back up within the visit, and
+  the Sky decoration setting is never changed: the next visit starts from it again. The level drawn is the least
+  of the setting, this visit's cap and, with reduced motion, None (`sceneLevel`, which also says why), on the
+  scene's root as `data-motion`. Frames are measured with requestAnimationFrame only while there's something to
+  measure: while the page scrolls (and `SCROLL_SAMPLE_MS`, 250 ms, after the last scroll event), during the
+  settle, and for `OPEN_SAMPLE_MS` (3 s) after the screen opens with loops running; then the loop stops. An idle,
+  healthy screen has no loop and no timer, and at None nothing is measured. A gap over `FRAME_BREAK_MS` (500 ms) is
+  a pause (a hidden tab), not a slow frame.
+- **Developer tools** → Journey scenes on slow devices: "Pretend slow frames on journey screens" (this device only,
+  off unless switched on, `library-card:journey-slow`, separate from the book stack's switch: every measured frame
+  counts as at least 40 ms, so about a second of scrolling lowers the motion a level) and what the last journey
+  screen did this session (its level and why, the setting, this visit's cap, and when it was lowered; kept in
+  memory, never stored).
 - **Colours**: tokens only, `--journey-scene-*` in `src/theme.css` with light and dark (dusk) values; the art never
   holds a colour (`paint('…')` / `ink('…')` in `scenes/art.ts`). Text and dots over a scene sit on a backing
   (`--journey-scene-backing`: the nav row, the title block, stage labels, the start and finish rows, a ring round

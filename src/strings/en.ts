@@ -591,6 +591,17 @@ export const en = {
     staircaseOld: 'Old staircase',
     staircaseOldIntro: 'The zig-zag staircase from before the pile of books, kept for comparison.',
 
+    journeyHeading: 'Journey scenes on slow devices',
+    journeyIntro: 'Slow frames on a journey screen lower its scene’s motion for the rest of the visit, a level at a time: Full (ambient loops and parallax), Reduced (parallax only), None (a still scene at the reader’s step). The Sky decoration setting stays as it is; the next visit starts from it again.',
+    journeySlow: 'Pretend slow frames on journey screens',
+    journeySlowNote: 'This device only, for testing: every measured frame on a journey screen counts as slow, so about a second of scrolling (or the first second after it opens) lowers the motion a level.',
+    journeyLast: 'Last journey screen',
+    journeyLastNone: 'Nothing yet: open a journey screen, scroll it, then come back here.',
+    journeyLastValue: '{journey}: {level}, {why} (setting {setting}, cap this visit {cap})',
+    journeySteps: 'Lowered this visit',
+    journeyStep: '{from} → {to} after {seconds} s',
+    journeyNoSteps: 'Not lowered',
+
     stackHeading: 'Book stack prototype',
     stackIntro: 'The staircase as a pile of pretend books that turn to face you as you scroll, drawn on a canvas, to check it scrolls smoothly on our tablets and phones. The old CSS 3D and flat modes are still there to compare. Pretend books only; nothing is saved.',
     stackOpen: 'Open the book stack',
