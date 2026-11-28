@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { HOUSEHOLD_ID, noteViewId } from '../../DataStore';
-import { rawAll } from '../../testing/fixtures';
+import { rawAll, rawPut } from '../../testing/fixtures';
+import { SYNCED_TABLES } from '../schema';
 import { createSyncStore } from '../adapter';
 import type { SyncDataStore } from '../types';
 import { generateKey } from '../../../sync/vendor/crypto.js';
@@ -559,6 +560,51 @@ describe('sync adapter: two devices converge', () => {
     expect(result.skipped).toBe(4);
     expect((await b.store.getReader(reader.id))?.display_name).toBe('Valid');
     expect(await b.store.getCursor()).toBe(9);
+  });
+
+  it('1.24.1: a device that skipped tables it didn’t know reads the log again once after updating, and ends identical', async () => {
+    const { a, b, reader } = await household();
+    // On A: a collection with a book in it, a note, a note deleted again (a tombstone), and a rename.
+    await a.store.putBook({ isbn: ISBN_A, title: 'Vol 1', authors: [], cover_url: null, source: 'manual' });
+    const set = await a.store.createCollection({ household_id: HOUSEHOLD_ID, title: 'The Set' });
+    await a.store.setBookCollection(ISBN_A, set.id, 1);
+    const note = await a.store.createNote({ household_id: HOUSEHOLD_ID, target: 'everyone', trigger: 'after_book', text: 'Well done!' });
+    const gone = await a.store.createNote({ household_id: HOUSEHOLD_ID, target: 'everyone', trigger: 'after_book', text: 'Deleted' });
+    await a.store.deleteNote(gone.id);
+    await a.store.updateReader(reader.id, { display_name: 'From A' });
+    // The household's log as the relay holds it.
+    const log = await ops(a);
+    const newer = ['collections', 'parent_notes', 'note_views'];
+    const older = SYNCED_TABLES.filter((t) => !newer.includes(t)).sort().join(',');
+
+    // B runs an older version: it skips ops for the tables it doesn't know, and its cursor moves past them.
+    await b.store.applyRemote(log.filter((op) => !newer.some((t) => op.rec.startsWith(`${t}:`))), 40);
+    await rawPut(b.dbName, 'meta', { key: 'sync_tables', value: older });
+    expect(await b.store.getCollection(set.id)).toBeNull();
+    // Meanwhile B renames the reader, later than A did: that must stay the winner.
+    b.at = T0 + 60_000;
+    await b.store.updateReader(reader.id, { display_name: 'From B' });
+
+    // B updates: its first pull starts from 0 and reads the whole log again.
+    expect(await b.store.getCursor()).toBe(0);
+    await b.store.applyRemote(log, 40);
+    expect(await b.store.getCursor()).toBe(40);
+    await send(b, a);
+    expect(await views(b)).toBe(await views(a));
+    expect((await b.store.getCollection(set.id))?.title).toBe('The Set');
+    expect((await b.store.getBook(ISBN_A))?.collection_id).toBe(set.id);
+    expect((await b.store.listNotes(HOUSEHOLD_ID)).map((n) => n.id)).toEqual([note.id]); // the deleted one stays deleted
+    expect((await b.store.getReader(reader.id))?.display_name).toBe('From B');
+
+    // Once: the next start keeps the cursor, and reading the log yet again changes and announces nothing.
+    expect(await b.store.getCursor()).toBe(40);
+    const before = await views(b);
+    const heard: unknown[] = [];
+    const off = b.store.subscribe((c) => heard.push(c));
+    expect((await b.store.applyRemote(log, 40)).changed).toBe(0);
+    off();
+    expect(heard).toEqual([]);
+    expect(await views(b)).toBe(before);
   });
 
   it('re-applying the same ops changes nothing and announces nothing', async () => {

@@ -48,6 +48,8 @@ export const SYNC_META = {
   deleted: 'sync_deleted',
   /** When sync was last turned off on this device (ISO): it was in a household before. */
   wasPaired: 'sync_was_paired',
+  /** The synced tables the version that last moved the cursor knew (schema.ts SYNCED_TABLES_MARKER). */
+  tables: 'sync_tables',
 } as const;
 
 /** Ops in the outbox carry no id; sendable ops get their keyed, deterministic id when sent. */

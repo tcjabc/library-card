@@ -23,7 +23,7 @@ import {
   type RecorderState,
 } from './records';
 import { isWaiting, openPhotoOutbox, type BlobOutboxEntry, type PhotoOutboxDb } from './photoStore';
-import { SYNCED_TABLES, rowToRecord, validate } from './schema';
+import { SYNCED_TABLES, SYNCED_TABLES_MARKER, rowToRecord, syncedTablesGrew, validate } from './schema';
 import type { SyncConfig, SyncDataStore, SyncEngineStore, SyncPhotoStore } from './types';
 
 export type { ApplyResult, SyncConfig, SyncDataStore, SyncEngineStore } from './types';
@@ -321,6 +321,7 @@ function syncMethods(
       if (current && current.householdKey !== householdKey) {
         // Another household is another room: start from its beginning and send it everything.
         await tx.objectStore('meta').put({ key: SYNC_META.cursor, value: 0 });
+        await tx.objectStore('meta').put({ key: SYNC_META.tables, value: SYNCED_TABLES_MARKER });
         requeued = await queueAll(tx);
       }
       await tx.done;
@@ -364,8 +365,21 @@ function syncMethods(
     },
 
     async getCursor() {
-      const value = await readMeta(SYNC_META.cursor);
-      return Number.isSafeInteger(value) ? (value as number) : 0;
+      const [value, marker] = await Promise.all([readMeta(SYNC_META.cursor), readMeta(SYNC_META.tables)]);
+      const cursor = Number.isSafeInteger(value) ? (value as number) : 0;
+      // At 0 the next pull reads everything anyway (and enableSync, replaceWithRemote and requeueAll
+      // write the marker when they start a device from 0).
+      if (marker === SYNCED_TABLES_MARKER || cursor === 0) return cursor;
+      // This version knows a synced table the last pull didn't (an update, or a device that synced
+      // before 1.24.1): ops for it were skipped and the cursor moved past them. Read the household's
+      // ops again from the start, once; applying an op twice changes nothing (schema.ts). A marker
+      // from a newer version (this one is older) only gets replaced, so updating again re-reads.
+      const restart = syncedTablesGrew(marker);
+      const tx = (await raw()).transaction('meta', 'readwrite');
+      if (restart) await tx.objectStore('meta').put({ key: SYNC_META.cursor, value: 0 });
+      await tx.objectStore('meta').put({ key: SYNC_META.tables, value: SYNCED_TABLES_MARKER });
+      await tx.done;
+      return restart ? 0 : cursor;
     },
 
     async applyRemote(ops, cursor) {
@@ -401,6 +415,8 @@ function syncMethods(
         rebuilt = await rebuildViews(tx, outcome.touched);
         await saveClock(tx, outcome.clock);
         await storeOf(tx, 'meta').put({ key: SYNC_META.cursor, value: cursor });
+        // Everything read from the start by this version: nothing it knows was skipped.
+        await storeOf(tx, 'meta').put({ key: SYNC_META.tables, value: SYNCED_TABLES_MARKER });
         if (householdKey) {
           const next: SyncConfig = {
             householdKey,
@@ -427,6 +443,7 @@ function syncMethods(
       const tx = (await raw()).transaction(['records', 'outbox', 'meta'], 'readwrite');
       const queued = await queueAll(tx);
       await tx.objectStore('meta').put({ key: SYNC_META.cursor, value: 0 });
+      await tx.objectStore('meta').put({ key: SYNC_META.tables, value: SYNCED_TABLES_MARKER });
       await tx.done;
       if (queued) notifyEnqueued();
       return queued;
@@ -527,6 +544,7 @@ function syncMethods(
         await storeOf(tx, 'outbox').clear();
         queued = await queueAll(tx);
         await storeOf(tx, 'meta').put({ key: SYNC_META.cursor, value: 0 });
+        await storeOf(tx, 'meta').put({ key: SYNC_META.tables, value: SYNCED_TABLES_MARKER });
         const config: SyncConfig = {
           householdKey: key,
           roomId,

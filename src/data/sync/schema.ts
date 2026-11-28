@@ -31,6 +31,26 @@ export type SyncedTable = (typeof SYNCED_TABLES)[number];
 
 export const isSyncedTable = (name: string): name is SyncedTable => (SYNCED_TABLES as readonly string[]).includes(name);
 
+/**
+ * The synced tables this version knows, as a marker kept with the sync state on each device
+ * (sorted, comma-separated). An older version skips ops for a table it doesn't know, and its pull
+ * cursor still moves past them; so when an update grows this list, the cursor goes back to 0 once
+ * and the household's ops are read again (applying an op twice changes nothing). 1.24.1.
+ */
+export const SYNCED_TABLES_MARKER = [...SYNCED_TABLES].sort().join(',');
+
+/**
+ * Whether this version knows a synced table the stored marker doesn't: the device may have
+ * skipped its ops. No marker (a device that synced before 1.24.1) counts as grown, so every such
+ * device reads the log again once (catching up on collections and notes skipped before). A marker
+ * with tables this version doesn't know (an older version running again) is not growth.
+ */
+export function syncedTablesGrew(marker: unknown, current: readonly string[] = SYNCED_TABLES): boolean {
+  if (typeof marker !== 'string') return true;
+  const known = new Set(marker.split(','));
+  return current.some((table) => !known.has(table));
+}
+
 type Kind =
   | { type: 'text'; max: number; pattern?: RegExp }
   | { type: 'id' }

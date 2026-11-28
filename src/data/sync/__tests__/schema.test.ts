@@ -3,10 +3,12 @@ import { formatStamp } from '../../../sync/vendor/sync-core.js';
 import {
   SCHEMA,
   SYNCED_TABLES,
+  SYNCED_TABLES_MARKER,
   parentOf,
   parseWireId,
   recordToRow,
   rowToRecord,
+  syncedTablesGrew,
   validate,
   wireId,
 } from '../schema';
@@ -181,5 +183,21 @@ describe('rows and records', () => {
     expect(parentOf('loans', { reader_id: UUID })).toBe(`readers:${UUID}`);
     expect(parentOf('reader_journeys', { reader_id: UUID })).toBe(`readers:${UUID}`);
     expect(parentOf('books', {})).toBeUndefined();
+  });
+});
+
+describe('the known-tables marker (1.24.1)', () => {
+  it('lists every synced table, sorted', () => {
+    expect(SYNCED_TABLES_MARKER.split(',')).toEqual([...SYNCED_TABLES].sort());
+  });
+
+  it('grows when this version knows a table the marker lacks, or there is no marker; not for a newer marker', () => {
+    expect(syncedTablesGrew(SYNCED_TABLES_MARKER)).toBe(false);
+    expect(syncedTablesGrew(undefined)).toBe(true);
+    expect(syncedTablesGrew(null)).toBe(true);
+    expect(syncedTablesGrew(SYNCED_TABLES_MARKER.replace('note_views,', ''))).toBe(true);
+    expect(syncedTablesGrew(`${SYNCED_TABLES_MARKER},custom_journeys`)).toBe(false);
+    expect(syncedTablesGrew('a,b', ['a', 'b', 'c'])).toBe(true);
+    expect(syncedTablesGrew('a,b,c', ['b', 'a'])).toBe(false);
   });
 });

@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { HOUSEHOLD_ID, isDataStoreError, type DataChange } from '../../DataStore';
 import { createLocalStore } from '../../adapters/local';
-import { rawAll } from '../../testing/fixtures';
+import { rawAll, rawGet, rawPut } from '../../testing/fixtures';
+import { SYNCED_TABLES_MARKER } from '../schema';
 import { createSyncStore } from '../adapter';
 import { withSyncLock } from '../lock';
 import { isSyncStore, type SyncDataStore } from '../types';
@@ -173,6 +174,63 @@ describe('sync adapter: engine-facing store', () => {
     expect(await store.pendingCount()).toBeGreaterThan(0);
     await expect(store.setConfig({ householdKey: 'not a key' })).rejects.toSatisfy((e) => isDataStoreError(e, 'invalid'));
     await expect(store.enableSync('nope')).rejects.toSatisfy((e) => isDataStoreError(e, 'invalid'));
+  });
+
+  describe('1.24.1: the known-tables marker (one re-read after an update that adds a synced table)', () => {
+    const marker = async (dbName: string) => (await rawGet<{ value: unknown }>(dbName, 'meta', 'sync_tables'))?.value;
+
+    it('starting sync writes it, so a device set up on this version never re-reads', async () => {
+      const { store, dbName } = await withReader();
+      await store.enableSync(generateKey());
+      expect(await marker(dbName)).toBe(SYNCED_TABLES_MARKER);
+      await store.applyRemote([], 12);
+      expect(await store.getCursor()).toBe(12);
+      expect(await store.getCursor()).toBe(12);
+    });
+
+    it('a device that synced before 1.24.1 (a cursor, no marker) reads from 0 once, then keeps its cursor', async () => {
+      const { store, dbName } = await withReader();
+      await store.enableSync(generateKey());
+      await store.applyRemote([], 30);
+      await rawPut(dbName, 'meta', { key: 'sync_tables', value: undefined });
+      const queued = await store.pendingCount();
+      expect(await store.getCursor()).toBe(0);
+      expect(await marker(dbName)).toBe(SYNCED_TABLES_MARKER);
+      expect(await store.pendingCount()).toBe(queued); // only the cursor: nothing is queued to send again
+      await store.applyRemote([], 31);
+      expect(await store.getCursor()).toBe(31);
+      expect(await store.getCursor()).toBe(31);
+    });
+
+    it('an update that adds a table re-reads once; a marker from a newer version is replaced without a re-read', async () => {
+      const { store, dbName } = await withReader();
+      await store.enableSync(generateKey());
+      await store.applyRemote([], 9);
+      await rawPut(dbName, 'meta', { key: 'sync_tables', value: SYNCED_TABLES_MARKER.replace('collections,', '') });
+      expect(await store.getCursor()).toBe(0);
+      await store.applyRemote([], 9);
+      // An older build running again on a device a newer one used (a cached version): no re-read now,
+      // and its own list is stored, so updating again re-reads what it skipped meanwhile.
+      await rawPut(dbName, 'meta', { key: 'sync_tables', value: `${SYNCED_TABLES_MARKER},custom_journeys` });
+      expect(await store.getCursor()).toBe(9);
+      expect(await marker(dbName)).toBe(SYNCED_TABLES_MARKER);
+    });
+
+    it('at cursor 0 nothing is written (the next pull reads everything anyway)', async () => {
+      const { store, dbName } = await open();
+      expect(await store.getCursor()).toBe(0);
+      expect(await marker(dbName)).toBeUndefined();
+    });
+
+    it('joining with the household’s data and requeueing everything write it too', async () => {
+      const { store, dbName } = await withReader();
+      await store.replaceWithRemote([], 40, { householdKey: generateKey() });
+      expect(await marker(dbName)).toBe(SYNCED_TABLES_MARKER);
+      expect(await store.getCursor()).toBe(40);
+      await rawPut(dbName, 'meta', { key: 'sync_tables', value: 'readers' });
+      await store.requeueAll();
+      expect(await marker(dbName)).toBe(SYNCED_TABLES_MARKER);
+    });
   });
 
   it('last synced time is kept', async () => {

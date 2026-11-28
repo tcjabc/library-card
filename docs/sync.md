@@ -122,7 +122,36 @@ borrowed book it puts at Home. Other devices may get those ops in any order or p
 converges on its own, and a book moved on another device meanwhile goes to the later write.
 Progress and the
 trophy are worked out from read summaries on each device, never sent. Versions before collections
-skip `collections` ops as an unknown table and keep the books' new fields as unknown fields.
+skip `collections` ops as an unknown table and keep the books' new fields as unknown fields, and
+catch up when they update (below).
+
+**A new synced table means one re-read (since 1.24.1).** A version that doesn't know a table skips
+its ops, and its pull cursor still moves past them, so after an update those ops would never
+arrive. So each device keeps, with its sync state (meta `sync_tables`, never synced or exported),
+the sorted list of synced tables its last pull knew (`SYNCED_TABLES_MARKER` in schema.ts).
+
+- **The check:** when a pull starts (`getCursor`) and this version knows a table the stored list
+  lacks, the cursor goes back to 0 once and the household's whole log is read again.
+- **Writing the list:** it's written then, and wherever a device starts from 0 or from the whole log
+  (`enableSync`, `replaceWithRemote`, `requeueAll`, a new household key), so a device set up on
+  this version never re-reads.
+- **Devices from before 1.24.1** have no list yet: each reads the log again once on this update,
+  which also brings collections and notes that one of them skipped before it knew those tables.
+- **A list naming tables this version doesn't know** (an older cached version running again) is
+  replaced without a re-read, so updating again re-reads what it skipped meanwhile.
+- **Re-reading is safe:** applying an op again changes nothing.
+  - The same stamp and value is no change.
+  - A tombstone stays deleted.
+  - The completion rules still apply.
+  - A later local edit keeps winning.
+  - Nothing that didn't change rebuilds a view, notifies a screen or runs the engine's "changed"
+    listeners, so no celebration, stack fall or completion check fires for data the device already
+    had.
+- **Data the device really had skipped** arrives like any late sync from another device.
+- **The cost:** one full download of the household's log.
+
+When adding a synced table, add it to `SYNCED_TABLES`. That alone triggers the one re-read on
+every device that updates, so nothing more is needed. Keep this in mind for the relay's load.
 
 **Parent notes** are ordinary records. A child seeing one is a `note_views` record whose id is
 derived from the note and the reader (`noteViewId`: each UUID written in 22 base64url characters,
