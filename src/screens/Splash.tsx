@@ -9,6 +9,7 @@ import { fmt, strings } from '../strings';
 import { Sheet } from '../ui/Sheet';
 import { GrownUpSignIn } from './GrownUpSignIn';
 import { GrownUpsLink } from './GrownUpsLink';
+import { LaunchShelf } from './LaunchShelf';
 import { splashTiles, type SplashTile } from './splashTiles';
 
 const NOTICE_MS = 3500;
@@ -42,9 +43,7 @@ function ReaderPicker() {
   return (
     <main className="page page--kid splash">
       <header className="splash__header">
-        <p className="splash__emoji" aria-hidden="true">
-          📚
-        </p>
+        <LaunchShelf />
         <h1 className="visually-hidden">{strings.app.name}</h1>
       </header>
       <a className="btn btn--primary btn--big splash__scan" href={href('/scan')}>

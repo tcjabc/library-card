@@ -251,6 +251,30 @@
   --journey-scene-rocket-planet: #3b8fd6;
   --journey-scene-rocket-planet-band: #5fb0e8;
 
+  /* The launch shelf: wood, the shelf's back, and eight book colours (each 4:1 or more on the back). */
+  --launch-wood: #b07a45;
+  --launch-wood-shade: #8a5c31;
+  --launch-back: #5a3a22;
+  --launch-shadow: rgba(0, 0, 0, 0.18);
+  --launch-book-1: #f08a5d;
+  --launch-book-2: #f6c744;
+  --launch-book-3: #5cc6a3;
+  --launch-book-4: #7db6ee;
+  --launch-book-5: #f093b8;
+  --launch-book-6: #b9a2e6;
+  --launch-book-7: #a5d56c;
+  --launch-book-8: #ffd98a;
+  --launch-book-band: rgba(255, 255, 255, 0.55);
+  --launch-shelf-width: 15rem;
+  --launch-shelf-height: 6rem;
+  --launch-shelf-width-compact: 9rem;
+  --launch-shelf-height-compact: 3.5rem;
+  --launch-frame: 0.375rem;
+  --launch-book-gap: 0.125rem;
+  --launch-book-radius: 0.125rem;
+  --launch-band-height: 0.1875rem;
+  --launch-shadow-drop: 0.125rem;
+
   /* Family Staircase: a colour per reader (picked from the reader id). */
   /* Eight clearly different hues, so siblings never look alike. */
   --reader-1: #e8590c; /* orange */
@@ -435,6 +459,17 @@
   --duration-scene-blink: 1.2s;
   --duration-scene-fall: 9s;
   --duration-scene-flicker: 0.9s;
+
+  /* The launch shelf (src/screens/launchShelf.css, docs/launch.md): timing, mirrored by LAUNCH_TIMING. */
+  --duration-launch: 1.8s;
+  --duration-launch-side: 250ms;
+  --duration-launch-board: 180ms;
+  --duration-launch-drop: 420ms;
+  --duration-launch-fade: 260ms;
+  --launch-boards-start: 150ms;
+  --launch-books-start: 350ms;
+  --launch-stagger: 60ms;
+  --launch-fade-stagger: 20ms;
 
   /* Layering */
   --z-sheet: 50;
@@ -734,6 +769,20 @@
     --journey-scene-rocket-glow: rgba(120, 170, 220, 0.5);
     --journey-scene-rocket-planet: #1f5f8f;
     --journey-scene-rocket-planet-band: #2f78ad;
+
+    --launch-wood: #7a5332;
+    --launch-wood-shade: #5c3e25;
+    --launch-back: #1c130c;
+    --launch-shadow: rgba(0, 0, 0, 0.4);
+    --launch-book-1: #d06f48;
+    --launch-book-2: #d2a73a;
+    --launch-book-3: #3fa587;
+    --launch-book-4: #5b93cf;
+    --launch-book-5: #c9739a;
+    --launch-book-6: #9a85c6;
+    --launch-book-7: #86b153;
+    --launch-book-8: #d9b56a;
+    --launch-book-band: rgba(255, 255, 255, 0.35);
     /* Clouds at dusk: tinted by the last of the light, shaded towards the evening. */
     --stack-cloud: #8c7c9f;
     --stack-cloud-shade: #5d5578;

@@ -1,0 +1,192 @@
+/*
+ * The launch shelf (LaunchShelf.tsx, docs/launch.md): the splash's header, a bookcase of plain boxes.
+ * Its natural layout is the finished shelf; while it plays (.launch-shelf--full or --reduced) each
+ * part runs one animation with fill-mode backwards, from where it starts to that layout, so
+ * finishing early just removes the class. Only transform and opacity animate (the compositor runs
+ * them, so the app's own start-up work doesn't stall them), and will-change only while it plays.
+ * No viewport units, no newer-than-Chrome-103 features.
+ */
+
+.launch-shelf {
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+/* A fixed width (at most the header's), not a share of it: in a one-row header the shelf is sized by its content. */
+.launch-shelf__case {
+  position: relative;
+  width: var(--launch-shelf-width);
+  max-width: 100%;
+  height: var(--launch-shelf-height);
+}
+
+.launch-shelf__back {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: var(--radius-sm);
+  background: var(--launch-back);
+}
+
+.launch-shelf__side {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: var(--launch-frame);
+  border-radius: var(--launch-frame);
+  background: var(--launch-wood);
+}
+
+.launch-shelf__side--left {
+  left: 0;
+}
+
+.launch-shelf__side--right {
+  right: 0;
+}
+
+.launch-shelf__board {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: var(--launch-frame);
+  border-radius: var(--launch-frame);
+  background: var(--launch-wood);
+  box-shadow: 0 var(--launch-shadow-drop) 0 var(--launch-shadow);
+}
+
+.launch-shelf__board--top {
+  top: 0;
+}
+
+.launch-shelf__board--middle {
+  top: calc(50% - var(--launch-frame) / 2);
+}
+
+.launch-shelf__board--bottom {
+  bottom: 0;
+  background: var(--launch-wood-shade);
+}
+
+/* The books stand on the boards, side by side; a dropping book shows only inside its shelf. */
+.launch-shelf__row {
+  position: absolute;
+  left: calc(var(--launch-frame) + var(--launch-book-gap));
+  right: calc(var(--launch-frame) + var(--launch-book-gap));
+  display: flex;
+  align-items: flex-end;
+  gap: var(--launch-book-gap);
+  overflow: hidden;
+}
+
+.launch-shelf__row--upper {
+  top: var(--launch-frame);
+  bottom: calc(50% + var(--launch-frame) / 2);
+}
+
+.launch-shelf__row--lower {
+  top: calc(50% + var(--launch-frame) / 2);
+  bottom: var(--launch-frame);
+}
+
+.launch-shelf__book {
+  position: relative;
+  flex: none;
+  border-radius: var(--launch-book-radius) var(--launch-book-radius) 0 0;
+}
+
+.launch-shelf__book--band::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 18%;
+  height: var(--launch-band-height);
+  background: var(--launch-book-band);
+}
+
+/* A phone on its side: the splash header is one row, so the shelf is shorter. */
+@media (orientation: landscape) and (max-height: 30rem) {
+  .launch-shelf__case {
+    width: var(--launch-shelf-width-compact);
+    height: var(--launch-shelf-height-compact);
+  }
+}
+
+/* Full: the sides rise, the boards slide in, the books drop in one after another. */
+.launch-shelf--full .launch-shelf__back {
+  animation: launch-fade var(--duration-launch-side) ease-out backwards;
+  will-change: opacity;
+}
+
+.launch-shelf--full .launch-shelf__side {
+  transform-origin: 50% 100%;
+  animation: launch-rise var(--duration-launch-side) ease-out backwards;
+  will-change: transform;
+}
+
+.launch-shelf--full .launch-shelf__board {
+  transform-origin: 0 50%;
+  animation: launch-slide var(--duration-launch-board) ease-out backwards;
+  animation-delay: calc(var(--launch-boards-start) + var(--i) * var(--launch-stagger));
+  will-change: transform;
+}
+
+.launch-shelf--full .launch-shelf__book {
+  animation: launch-drop var(--duration-launch-drop) ease-out backwards;
+  animation-delay: calc(var(--launch-books-start) + var(--i) * var(--launch-stagger));
+  will-change: transform, opacity;
+}
+
+/* Reduced: a built shelf; the books fade in. */
+.launch-shelf--reduced .launch-shelf__book {
+  animation: launch-fade var(--duration-launch-fade) ease-out backwards;
+  animation-delay: calc(var(--i) * var(--launch-fade-stagger));
+  will-change: opacity;
+}
+
+@keyframes launch-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes launch-rise {
+  from {
+    transform: scaleY(0);
+  }
+}
+
+@keyframes launch-slide {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+@keyframes launch-drop {
+  0% {
+    opacity: 0;
+    transform: translateY(-110%);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(6%);
+  }
+  80% {
+    transform: translateY(-3%);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+/* Belt and braces: the shelf already shows finished with reduced motion (launchRule.ts). */
+@media (prefers-reduced-motion: reduce) {
+  .launch-shelf.launch-shelf--full *,
+  .launch-shelf.launch-shelf--reduced * {
+    animation: none;
+  }
+}
