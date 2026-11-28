@@ -37,6 +37,7 @@
   z-index: var(--z-dev-panel);
   width: max-content;
   max-width: min(var(--dev-panel-max), calc(100% - 2 * var(--space-2)));
+  max-height: 50vh;
   max-height: 50dvh;
   margin-left: auto;
   overflow-y: auto;

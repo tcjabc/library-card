@@ -12,7 +12,6 @@ html {
 
 body {
   margin: 0;
-  min-height: 100dvh;
   font-family: var(--font-body);
   font-size: var(--text-md);
   line-height: var(--line-height);
@@ -1273,7 +1272,6 @@ img {
 .sheet {
   width: 100%;
   max-width: var(--content-max);
-  max-height: 92dvh;
   margin: auto auto 0;
   padding: 0;
   border: 0;
@@ -1282,6 +1280,22 @@ img {
   color: var(--color-text);
   box-shadow: var(--shadow-raised);
   z-index: var(--z-sheet);
+}
+
+/*
+ * Only where dvh is known. A vh fallback would be wrong here: on browsers without dvh (Chrome 103)
+ * 100vh is the height with the browser bar hidden, taller than the page you see, so the body would
+ * scroll and a sheet could pass the screen's edge; without it they get the body's own height and
+ * the dialog's built-in limit, as before.
+ */
+@supports (height: 100dvh) {
+  body {
+    min-height: 100dvh;
+  }
+
+  .sheet {
+    max-height: 92dvh;
+  }
 }
 
 .sheet::backdrop {

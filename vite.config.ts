@@ -107,8 +107,15 @@ export default defineConfig(({ mode }) => {
     plugins,
     define: { __BUILD_INFO__: JSON.stringify(buildInfo()) },
     server: { host: mode === 'phone' ? true : undefined },
+    // The oldest browsers the app supports (CSS_TARGETS). Vite's default CSS target treats
+    // dvh/lvh/svh as safe and the minifier then drops the `100vh` line written before each one,
+    // so Chrome 103 got no height at all (1.21.1). Kept in the build by a test (cssFallbacks).
+    build: { cssTarget: CSS_TARGETS },
   };
 });
+
+/** The oldest browsers the app supports: Chrome / Edge 103 (our test tablets and emulators) and Safari 15. */
+const CSS_TARGETS = ['chrome103', 'edge103', 'safari15'];
 
 function normaliseBase(value: string): string {
   let base = value.trim();

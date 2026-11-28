@@ -1,5 +1,11 @@
 # Library Card
 
+## Build
+
+- The production CSS targets the oldest browsers we support, Chrome / Edge 103 and Safari 15 (`CSS_TARGETS`, `build.cssTarget` in `vite.config.ts`). Don't remove it: Vite's default target lets the minifier drop the `vh` fallback before every `dvh`/`lvh`/`svh` and rewrite media queries into range syntax (`width>=48rem`), which Chrome 103 ignores (1.21.1: the journey scenes were 0 px tall there).
+- Write a newer viewport unit with a fallback first (`height: 100vh; height: 100lvh;`) or inside `@supports`. `src/__tests__/cssFallbacks.test.ts` builds the app and fails if a fallback or a min-/max- media query goes missing.
+- The dev server doesn't minify, so check old-browser CSS on the production build (`vite preview`), not on `npm run dev`.
+
 ## Git workflow
 
 - Never commit or push unless asked. Build tasks end with `npm run build`, `npm run lint` and a report, not a commit.

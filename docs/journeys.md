@@ -43,7 +43,8 @@ longer than `MAX_TRAVEL` / 28 steps (Ladder to the Moon's 25, Rocket Through Spa
   (moving the layers with the scroll; the browser is passed in, so it's unit-tested), `src/screens/journeys/scenes/*.tsx` (each scene's art, one lazy chunk each, about
   1.1–1.7 KB gzipped; `parts.tsx` holds the shared cloud, which takes a token pair, and the star sparkle), `src/screens/journeys/journeyScene.css`. The journey screen itself is a lazy chunk too.
 - **Layers**: far (slowest), mid and near (fastest), each an inline SVG group in a fixed backdrop behind the page
-  (`position: fixed`, the large viewport's height, so no gap when a phone's browser bar slides away). The track's
+  (`position: fixed`, the large viewport's height, so no gap when a phone's browser bar slides away; `100vh` first
+  for browsers without `lvh`, kept in the production CSS by its target, see CLAUDE.md "Build"). The track's
   rows (stage label, numbered dot, cover, the reader's avatar) are real DOM rows over it and never move with it.
   Each layer is taller than the view by its travel (`layerTravel`: its factor × the scene's travel, both clamped:
   `MAX_FACTOR` 1.5, `MAX_TRAVEL` 640 px) and sits the shift × its travel up. Near art (hills, sea floor)
